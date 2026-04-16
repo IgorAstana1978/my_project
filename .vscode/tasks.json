@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "pytest",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "pytest", "-q"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "ruff",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "ruff", "check", "src", "tests"],
+      "problemMatcher": []
+    },
+    {
+      "label": "black-check",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "black", "--check", "src", "tests"],
+      "problemMatcher": []
+    },
+    {
+      "label": "mypy",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "mypy"],
+      "problemMatcher": []
+    },
+    {
+      "label": "quality",
+      "dependsOrder": "sequence",
+      "dependsOn": ["ruff", "black-check", "mypy", "pytest"]
+    }
+  ]
+}
