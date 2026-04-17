@@ -11,12 +11,24 @@
       "justMyCode": true
     },
     {
+      "name": "Python: Run main.py + quality checks",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true,
+      "preLaunchTask": "quality"
+    },
+    {
       "name": "Python: Debug current test file",
       "type": "debugpy",
       "request": "launch",
       "module": "pytest",
-      "args": ["${file}", "-q"],
-      "purpose": ["debug-test"],
+      "args": [
+        "${file}",
+        "-q"
+      ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "justMyCode": true
