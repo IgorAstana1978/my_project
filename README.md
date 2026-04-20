@@ -31,4 +31,4 @@ my_project/
 ├── .pre-commit-config.yaml
 ├── pyproject.toml
 ├── pytest.ini
-└── README.md```
+└── README.md
