@@ -1,3 +1,5 @@
+[![CI](https://github.com/IgorAstana1978/my_project/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/IgorAstana1978/my_project/actions/workflows/ci.yml)
+
 # my_project
 
 Учебный Python-проект с настроенным рабочим процессом в VS Code.
