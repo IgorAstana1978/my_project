@@ -34,5 +34,5 @@ jobs:
       - name: Run MyPy
         run: python -m mypy
 
-      - name: Run Pytest
-        run: python -m pytest -q
+      - - name: Run Pytest with coverage
+  run: python -m pytest -q
