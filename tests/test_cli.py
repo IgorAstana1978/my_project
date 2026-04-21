@@ -188,3 +188,58 @@ def test_run_interactive_unknown_operation(
     captured = capsys.readouterr()
     assert "Unknown operation: oops" in captured.out
     assert "Bye!" in captured.out
+
+
+def test_parse_number_invalid_value() -> None:
+    with pytest.raises(ValueError, match="Please enter a valid number"):
+        main_module.parse_number("abc")
+
+
+def test_run_interactive_empty_command_then_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = iter(["", "exit"])
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        lambda _: next(inputs),
+    )
+
+    main_module.run_interactive()
+
+    captured = capsys.readouterr()
+    assert "Interactive calculator mode" in captured.out
+    assert "Bye!" in captured.out
+
+
+def test_run_interactive_eof_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def raise_eof(_: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr(builtins, "input", raise_eof)
+
+    main_module.run_interactive()
+
+    captured = capsys.readouterr()
+    assert "Interactive calculator mode" in captured.out
+    assert "Bye!" in captured.out
+
+
+def test_run_interactive_keyboard_interrupt_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def raise_keyboard_interrupt(_: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(builtins, "input", raise_keyboard_interrupt)
+
+    main_module.run_interactive()
+
+    captured = capsys.readouterr()
+    assert "Interactive calculator mode" in captured.out
+    assert "Bye!" in captured.out
