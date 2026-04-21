@@ -4,12 +4,31 @@
 
 # my_project
 
-Учебный Python-проект с аккуратным workflow в VS Code, качественными проверками и удобным CLI-калькулятором.
+A small Python CLI calculator project with clean structure, automated checks, strict typing, full test coverage, and GitHub Actions CI.
 
-## Quick start
+## Features
 
-### 1. Создать и активировать виртуальное окружение
+- CLI calculator built with `argparse`
+- subcommands and short aliases
+- interactive mode
+- command history and history reset
+- function tests and CLI tests
+- clean project structure for learning and practice
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+## Quality
+
+- formatting with `black`
+- linting with `ruff`
+- type checking with `mypy`
+- testing with `pytest`
+- coverage with `pytest-cov`
+- enforced **100% coverage**
+- pre-commit hooks
+- GitHub Actions on `push` and `pull_request`
+
+## Usage
+
+### Help
+
+```bash
+python -m src.main --help
