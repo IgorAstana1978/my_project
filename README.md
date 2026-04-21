@@ -32,3 +32,18 @@ A small Python CLI calculator project with clean structure, automated checks, st
 
 ```bash
 python -m src.main --help
+```
+
+## Development workflow
+
+For daily work in VS Code on Windows:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m ruff check .
+python -m black --check .
+python -m mypy .
+python -m pytest -q
+python -m pre_commit run --all-files
+```
+You can also run the VS Code `quality` task to execute the main checks in sequence.
