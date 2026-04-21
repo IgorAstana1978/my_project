@@ -19,8 +19,18 @@ def test_cli_without_args() -> None:
     result = run_cli()
 
     assert result.returncode == 0
-    assert "Simple calculator CLI" in result.stdout
-    assert "python -m src.main add 2 3" in result.stdout
+    assert "usage:" in result.stdout
+    assert "interactive" in result.stdout
+    assert result.stderr == ""
+
+
+def test_cli_help() -> None:
+    result = run_cli("--help")
+
+    assert result.returncode == 0
+    assert "Simple calculator CLI with subcommands." in result.stdout
+    assert "interactive" in result.stdout
+    assert "add" in result.stdout
     assert result.stderr == ""
 
 
@@ -85,14 +95,14 @@ def test_cli_unknown_operation() -> None:
 
     assert result.returncode != 0
     assert result.stdout == ""
-    assert "Unknown operation: oops" in result.stderr
+    assert "invalid choice" in result.stderr
 
 
 def test_cli_missing_argument() -> None:
     result = run_cli("add", "2")
 
     assert result.returncode != 0
-    assert "Operation and two numbers are required in normal mode" in result.stderr
+    assert "the following arguments are required: b" in result.stderr
 
 
 def test_main_interactive_mode(
@@ -104,7 +114,11 @@ def test_main_interactive_mode(
     try:
         sys.argv = ["prog", "interactive"]
         inputs = iter(["exit"])
-        monkeypatch.setattr(builtins, "input", lambda _: next(inputs))
+        monkeypatch.setattr(
+            builtins,
+            "input",
+            lambda _: next(inputs),
+        )
 
         main_module.main()
 
@@ -119,16 +133,43 @@ def test_run_interactive_help_and_calculation(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    inputs = iter(["help", "add", "2", "3", "exit"])
-    monkeypatch.setattr(builtins, "input", lambda _: next(inputs))
+    inputs = iter(["help", "add", "2", "3", "history", "exit"])
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        lambda _: next(inputs),
+    )
 
     main_module.run_interactive()
 
     captured = capsys.readouterr()
     assert "Interactive calculator mode" in captured.out
-    assert "Available operations: add, sub, mul, div, pow, mod" in captured.out
-    assert "= 5" in captured.out
+    assert (
+        "Commands: add, sub, mul, div, pow, mod, history, clear, help, exit"
+        in captured.out
+    )
+    assert "add 2 3 = 5" in captured.out
+    assert "History:" in captured.out
     assert "Bye!" in captured.out
+
+
+def test_run_interactive_clear_history(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = iter(["add", "2", "3", "clear", "history", "exit"])
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        lambda _: next(inputs),
+    )
+
+    main_module.run_interactive()
+
+    captured = capsys.readouterr()
+    assert "add 2 3 = 5" in captured.out
+    assert "History cleared." in captured.out
+    assert "History is empty." in captured.out
 
 
 def test_run_interactive_unknown_operation(
@@ -136,7 +177,11 @@ def test_run_interactive_unknown_operation(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     inputs = iter(["oops", "exit"])
-    monkeypatch.setattr(builtins, "input", lambda _: next(inputs))
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        lambda _: next(inputs),
+    )
 
     main_module.run_interactive()
 

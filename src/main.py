@@ -1,41 +1,26 @@
 import sys
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from collections.abc import Callable
+from typing import cast
 
 from src.calculator import add, divide, modulo, multiply, power, subtract
 
 OperationFunc = Callable[[float, float], float]
+OperationSpec = tuple[str, list[str], str, OperationFunc]
 
-OPERATIONS: dict[str, tuple[str, OperationFunc]] = {
-    "add": ("add", add),
-    "sum": ("add", add),
-    "subtract": ("subtract", subtract),
-    "sub": ("subtract", subtract),
-    "multiply": ("multiply", multiply),
-    "mul": ("multiply", multiply),
-    "divide": ("divide", divide),
-    "div": ("divide", divide),
-    "power": ("power", power),
-    "pow": ("power", power),
-    "modulo": ("modulo", modulo),
-    "mod": ("modulo", modulo),
-}
+OPERATION_SPECS: tuple[OperationSpec, ...] = (
+    ("add", ["sum"], "Add two numbers", add),
+    ("subtract", ["sub"], "Subtract two numbers", subtract),
+    ("multiply", ["mul"], "Multiply two numbers", multiply),
+    ("divide", ["div"], "Divide two numbers", divide),
+    ("power", ["pow"], "Raise first number to the power of second", power),
+    ("modulo", ["mod"], "Get remainder from division", modulo),
+)
 
 EXIT_COMMANDS = {"exit", "quit", "q"}
-INTERACTIVE_COMMANDS = {"interactive", "i"}
 HELP_COMMANDS = {"help", "h"}
-
-
-def build_parser() -> ArgumentParser:
-    parser = ArgumentParser(description="Simple calculator CLI")
-    parser.add_argument(
-        "operation",
-        nargs="?",
-        help="Operation: add, subtract, multiply, divide, power, modulo or interactive",
-    )
-    parser.add_argument("a", nargs="?", type=float, help="First number")
-    parser.add_argument("b", nargs="?", type=float, help="Second number")
-    return parser
+HISTORY_COMMANDS = {"history"}
+CLEAR_COMMANDS = {"clear"}
 
 
 def format_result(value: float) -> str:
@@ -44,80 +29,148 @@ def format_result(value: float) -> str:
     return str(value)
 
 
-def show_examples() -> None:
-    print("Simple calculator CLI")
-    print("Examples:")
-    print("  python -m src.main add 2 3")
-    print("  python -m src.main sub 10 4")
-    print("  python -m src.main mul 6 7")
-    print("  python -m src.main div 5 2")
-    print("  python -m src.main pow 2 8")
-    print("  python -m src.main mod 10 3")
-    print("  python -m src.main interactive")
-
-
-def get_operation(operation: str) -> tuple[str, OperationFunc]:
-    normalized = operation.strip().lower()
+def parse_number(text: str) -> float:
     try:
-        return OPERATIONS[normalized]
+        return float(text)
+    except ValueError as exc:
+        raise ValueError("Please enter a valid number") from exc
+
+
+def build_operation_maps() -> tuple[dict[str, str], dict[str, OperationFunc]]:
+    aliases_to_name: dict[str, str] = {}
+    funcs_by_name: dict[str, OperationFunc] = {}
+
+    for name, aliases, _, func in OPERATION_SPECS:
+        aliases_to_name[name] = name
+        funcs_by_name[name] = func
+
+        for alias in aliases:
+            aliases_to_name[alias] = name
+
+    return aliases_to_name, funcs_by_name
+
+
+ALIASES_TO_NAME, FUNCS_BY_NAME = build_operation_maps()
+
+
+def resolve_operation(operation: str) -> tuple[str, OperationFunc]:
+    normalized = operation.strip().lower()
+
+    try:
+        canonical_name = ALIASES_TO_NAME[normalized]
     except KeyError as exc:
         raise ValueError(f"Unknown operation: {operation}") from exc
 
+    return canonical_name, FUNCS_BY_NAME[canonical_name]
 
-def calculate(operation: str, a: float, b: float) -> float:
-    _, func = get_operation(operation)
-    return func(a, b)
+
+def build_parser() -> ArgumentParser:
+    parser = ArgumentParser(
+        prog="python -m src.main",
+        description="Simple calculator CLI with subcommands.",
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="command")
+
+    for name, aliases, help_text, func in OPERATION_SPECS:
+        subparser = subparsers.add_parser(
+            name,
+            aliases=aliases,
+            help=help_text,
+            description=help_text,
+        )
+        subparser.add_argument("a", type=float, help="First number")
+        subparser.add_argument("b", type=float, help="Second number")
+        subparser.set_defaults(mode="operation", func=func)
+
+    interactive_parser = subparsers.add_parser(
+        "interactive",
+        aliases=["i"],
+        help="Run interactive calculator mode",
+        description="Run interactive calculator mode",
+    )
+    interactive_parser.set_defaults(mode="interactive")
+
+    return parser
 
 
 def run_interactive() -> None:
+    history: list[str] = []
+
     print("Interactive calculator mode")
-    print("Type help to see operations or exit to quit.")
+    print("Commands: add, sub, mul, div, pow, mod, history, clear, help, exit")
 
     while True:
-        operation = input("operation> ").strip().lower()
+        try:
+            raw_command = input("calc> ").strip()
+        except EOFError, KeyboardInterrupt:
+            print("\nBye!")
+            return
 
-        if operation in EXIT_COMMANDS:
+        if raw_command == "":
+            continue
+
+        command = raw_command.lower()
+
+        if command in EXIT_COMMANDS:
             print("Bye!")
             return
 
-        if operation in HELP_COMMANDS:
-            print("Available operations: add, sub, mul, div, pow, mod")
+        if command in HELP_COMMANDS:
+            print("Commands: add, sub, mul, div, pow, mod, history, clear, help, exit")
+            continue
+
+        if command in HISTORY_COMMANDS:
+            if history:
+                print("History:")
+                for item in history:
+                    print(item)
+            else:
+                print("History is empty.")
+            continue
+
+        if command in CLEAR_COMMANDS:
+            history.clear()
+            print("History cleared.")
             continue
 
         try:
-            _, func = get_operation(operation)
-            a = float(input("a> ").strip())
-            b = float(input("b> ").strip())
+            canonical_name, func = resolve_operation(command)
+            a = parse_number(input("a> ").strip())
+            b = parse_number(input("b> ").strip())
             result = func(a, b)
         except ValueError as exc:
             print(exc)
             continue
 
-        print(f"= {format_result(result)}")
+        entry = (
+            f"{canonical_name} "
+            f"{format_result(a)} {format_result(b)} = {format_result(result)}"
+        )
+        history.append(entry)
+        print(entry)
 
 
 def main() -> None:
+    parser = build_parser()
+
     if len(sys.argv) == 1:
-        show_examples()
+        parser.print_help()
         return
 
-    parser = build_parser()
     args = parser.parse_args()
 
-    if args.operation is not None and args.operation.lower() in INTERACTIVE_COMMANDS:
+    if getattr(args, "mode", None) == "interactive":
         run_interactive()
         return
 
-    if args.operation is None or args.a is None or args.b is None:
-        parser.error("Operation and two numbers are required in normal mode")
-
-    try:
-        result = calculate(args.operation, args.a, args.b)
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-
+    func = cast(OperationFunc, args.func)
+    operation_args = cast(Namespace, args)
+    result = func(operation_args.a, operation_args.b)
     print(format_result(result))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
