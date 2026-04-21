@@ -2,35 +2,48 @@
 
 # my_project
 
-Учебный Python-проект с настроенным рабочим процессом в VS Code.
+Учебный Python-проект с аккуратно настроенным workflow в VS Code, тестами, покрытием и удобным CLI-калькулятором.
 
-## Что уже настроено
+## Что есть в проекте
 
-- Python 3.14
-- виртуальное окружение `.venv`
-- запуск проекта через F5
-- автопроверки через `Ctrl + Shift + B`
-- `ruff` для линтинга
-- `black` для форматирования
-- `mypy` для проверки типов
-- `pytest` для тестов
-- `pre-commit` для автоматических проверок перед коммитом
-- Git и GitHub
-- GitHub Copilot в VS Code
+- CLI-калькулятор на `argparse`
+- подкоманды и алиасы
+- интерактивный режим
+- история операций в интерактивном режиме
+- очистка истории
+- тесты для функций и CLI
+- `ruff`, `black`, `mypy`, `pytest`
+- `pre-commit`
+- GitHub Actions
+- CI badge
+- покрытие тестами **100%**
 
-## Структура проекта
+## Поддерживаемые операции
 
-```text
-my_project/
-├── .venv/
-├── .vscode/
-├── src/
-│   ├── __init__.py
-│   └── main.py
-├── tests/
-│   └── test_main.py
-├── .gitignore
-├── .pre-commit-config.yaml
-├── pyproject.toml
-├── pytest.ini
-└── README.md
+Основные команды:
+
+- `add` — сложение
+- `subtract` — вычитание
+- `multiply` — умножение
+- `divide` — деление
+- `power` — степень
+- `modulo` — остаток от деления
+
+Короткие алиасы:
+
+- `sum`
+- `sub`
+- `mul`
+- `div`
+- `pow`
+- `mod`
+
+## Примеры запуска
+
+```bash
+python -m src.main add 2 3
+python -m src.main sub 10 4
+python -m src.main mul 6 7
+python -m src.main div 5 2
+python -m src.main pow 2 8
+python -m src.main mod 10 3
