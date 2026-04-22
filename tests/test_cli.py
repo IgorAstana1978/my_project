@@ -98,6 +98,30 @@ def test_cli_unknown_operation() -> None:
     assert "invalid choice" in result.stderr
 
 
+def test_cli_sqrt() -> None:
+    result = run_cli("sqrt", "4")
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "2"
+    assert result.stderr == ""
+
+
+def test_cli_abs() -> None:
+    result = run_cli("abs", "-5")
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "5"
+    assert result.stderr == ""
+
+
+def test_cli_sqrt_negative() -> None:
+    result = run_cli("sqrt", "-1")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "Cannot take square root of a negative number" in result.stderr
+
+
 def test_cli_missing_argument() -> None:
     result = run_cli("add", "2")
 
@@ -145,9 +169,9 @@ def test_run_interactive_help_and_calculation(
     captured = capsys.readouterr()
     assert "Interactive calculator mode" in captured.out
     assert (
-        "Commands: add, sub, mul, div, pow, mod, history, clear, help, exit"
-        in captured.out
-    )
+        "Commands: add, sub, mul, div, pow, mod, sqrt, abs, "
+        "history, clear, help, exit"
+    ) in captured.out
     assert "add 2 3 = 5" in captured.out
     assert "History:" in captured.out
     assert "Bye!" in captured.out
@@ -242,4 +266,22 @@ def test_run_interactive_keyboard_interrupt_exit(
 
     captured = capsys.readouterr()
     assert "Interactive calculator mode" in captured.out
+    assert "Bye!" in captured.out
+
+
+def test_run_interactive_unary_calculation(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    inputs = iter(["sqrt", "9", "exit"])
+    monkeypatch.setattr(
+        builtins,
+        "input",
+        lambda _: next(inputs),
+    )
+
+    main_module.run_interactive()
+
+    captured = capsys.readouterr()
+    assert "sqrt 9 = 3" in captured.out
     assert "Bye!" in captured.out

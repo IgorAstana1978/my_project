@@ -1,3 +1,6 @@
+import math
+
+
 def add(a: float, b: float) -> float:
     return a + b
 
@@ -24,3 +27,13 @@ def modulo(a: float, b: float) -> float:
     if b == 0:
         raise ValueError("Cannot take modulo by zero")
     return a % b
+
+
+def sqrt_value(a: float) -> float:
+    if a < 0:
+        raise ValueError("Cannot take square root of a negative number")
+    return math.sqrt(a)
+
+
+def abs_value(a: float) -> float:
+    return abs(a)
