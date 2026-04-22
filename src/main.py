@@ -64,6 +64,19 @@ def resolve_operation(operation: str) -> tuple[str, OperationFunc]:
     return canonical_name, FUNCS_BY_NAME[canonical_name]
 
 
+def build_interactive_help_message() -> str:
+    operation_names = []
+    for name, aliases, _, _ in OPERATION_SPECS:
+        if len(name) <= 3:
+            operation_names.append(name)
+        else:
+            operation_names.append(aliases[0])
+
+    special_commands = ["history", "clear", "help", "exit"]
+    all_commands = operation_names + special_commands
+    return f"Commands: {', '.join(all_commands)}"
+
+
 def build_parser() -> ArgumentParser:
     parser = ArgumentParser(
         prog="python -m src.main",
@@ -97,7 +110,7 @@ def run_interactive() -> None:
     history: list[str] = []
 
     print("Interactive calculator mode")
-    print("Commands: add, sub, mul, div, pow, mod, history, clear, help, exit")
+    print(build_interactive_help_message())
 
     while True:
         try:
@@ -116,7 +129,7 @@ def run_interactive() -> None:
             return
 
         if command in HELP_COMMANDS:
-            print("Commands: add, sub, mul, div, pow, mod, history, clear, help, exit")
+            print(build_interactive_help_message())
             continue
 
         if command in HISTORY_COMMANDS:
