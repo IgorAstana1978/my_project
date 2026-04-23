@@ -84,7 +84,17 @@ def build_interactive_help_message() -> str:
         else:
             display_names.append(name)
 
-    special_commands = ["history", "clear", "help", "exit"]
+    special_commands = [
+        command
+        for command in ("history", "clear", "help", "exit")
+        if (
+            command in HISTORY_COMMANDS
+            or command in CLEAR_COMMANDS
+            or command in HELP_COMMANDS
+            or command in EXIT_COMMANDS
+        )
+    ]
+
     return f"Commands: {', '.join(display_names + special_commands)}"
 
 
