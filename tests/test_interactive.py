@@ -4,6 +4,69 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+def test_interactive_invalid_command_continues() -> None:
+    """Test interactive mode prints error and continues on invalid command."""
+    from src.main import run_interactive
+
+    inputs = iter(
+        [
+            "oops",  # Invalid command
+            "exit",
+        ]
+    )
+
+    with patch("builtins.input", side_effect=lambda prompt: next(inputs)):
+        with patch("src.main.print") as mock_print:
+            run_interactive()
+            output = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
+            # Should print error and continue, not exit
+            assert "Unknown operation" in output
+            assert "Bye!" in output  # Successfully exited after
+
+
+def test_interactive_invalid_number_continues() -> None:
+    """Test interactive mode prints error and continues on invalid number."""
+    from src.main import run_interactive
+
+    inputs = iter(
+        [
+            "add",
+            "not_a_number",  # Invalid number
+            "exit",
+        ]
+    )
+
+    with patch("builtins.input", side_effect=lambda prompt: next(inputs)):
+        with patch("src.main.print") as mock_print:
+            run_interactive()
+            output = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
+            # Should print error and continue, not exit
+            assert "valid number" in output
+            assert "Bye!" in output  # Successfully exited after
+
+
+def test_interactive_division_by_zero_continues() -> None:
+    """Test interactive mode prints error and continues on division by zero."""
+    from src.main import run_interactive
+
+    inputs = iter(
+        [
+            "div",
+            "1",
+            "0",  # Division by zero
+            "exit",
+        ]
+    )
+
+    with patch("builtins.input", side_effect=lambda prompt: next(inputs)):
+        with patch("src.main.print") as mock_print:
+            run_interactive()
+            output = " ".join(str(call.args[0]) for call in mock_print.call_args_list)
+            # Should print error and continue, not exit
+            assert "divide by zero" in output
+            assert "Bye!" in output  # Successfully exited after
+
+
 def test_history_export_empty(tmp_path: Path) -> None:
     """Test exporting when history is empty."""
     from src.main import run_interactive

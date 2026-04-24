@@ -98,6 +98,16 @@ def test_cli_unknown_operation() -> None:
     assert "invalid choice" in result.stderr
 
 
+def test_cli_invalid_argument_count() -> None:
+    """Test CLI exits with error when required arguments are missing."""
+    result = run_cli("add")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    # Argparse shows error about missing required argument
+    assert "required" in result.stderr.lower()
+
+
 def test_cli_missing_argument() -> None:
     result = run_cli("add", "2")
 
