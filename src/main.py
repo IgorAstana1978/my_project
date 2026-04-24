@@ -128,6 +128,23 @@ def run_interactive() -> None:
                 print("History is empty.")
             continue
 
+        if command == "history export" or command.startswith("history export "):
+            path = command[15:].strip() if command.startswith("history export ") else ""
+            if not path:
+                print("Usage: history export <filepath>")
+                continue
+            if not history:
+                print("History is empty. Nothing to export.")
+                continue
+            try:
+                with open(path, "w", encoding="utf-8") as f:
+                    for item in history:
+                        f.write(item + "\n")
+                print(f"History exported to {path}")
+            except OSError as exc:
+                print(f"Failed to export: {exc}")
+            continue
+
         if command in CLEAR_COMMANDS:
             history.clear()
             print("History cleared.")
