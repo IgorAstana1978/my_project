@@ -32,3 +32,14 @@ A small Python CLI calculator project with clean structure, automated checks, st
 
 ```bash
 python -m src.main --help
+```
+
+### Interactive Mode
+
+```bash
+python -m src.main interactive
+```
+
+Commands: `add`, `sub`, `mul`, `div`, `pow`, `mod`, `history`, `history export <filepath>`, `clear`, `help`, `exit`
+
+Invalid input (unknown command, invalid number, division by zero) prints an error and continues, not exit.
