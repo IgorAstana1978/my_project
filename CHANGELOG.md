@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- команда `batch <file>` для пакетного выполнения операций из файла
 - команда `history export <filepath>` для экспорта истории в файл
 
 ### Changed

@@ -34,6 +34,29 @@ A small Python CLI calculator project with clean structure, automated checks, st
 python -m src.main --help
 ```
 
+### Batch Mode
+
+```bash
+python -m src.main batch <file>
+```
+
+Run operations from a file (one per line: `op a b`). Blank lines and lines starting with `#` are ignored. Stops on first invalid line with exit code 1.
+
+**Example input file (`commands.txt`):**
+```text
+add 10 5
+mul 3 7
+# this is a comment
+div 20 4
+```
+
+**Expected output:**
+```text
+add 10 5 = 15
+mul 3 7 = 21
+divide 20 4 = 5
+```
+
 ### Interactive Mode
 
 ```bash
