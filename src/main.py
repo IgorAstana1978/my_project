@@ -90,6 +90,14 @@ def build_parser() -> ArgumentParser:
     )
     interactive_parser.set_defaults(mode="interactive")
 
+    batch_parser = subparsers.add_parser(
+        "batch",
+        help="Run batch operations from file",
+        description="Run batch operations from file",
+    )
+    batch_parser.add_argument("file", type=str, help="Path to batch file")
+    batch_parser.set_defaults(mode="batch")
+
     return parser
 
 
@@ -167,6 +175,38 @@ def run_interactive() -> None:
         print(entry)
 
 
+def run_batch(file_path: str) -> None:
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError as exc:
+        print(f"Error: cannot open file '{file_path}': {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    for idx, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) != 3:
+            print(f"Error: malformed line {idx}: '{line}'", file=sys.stderr)
+            sys.exit(1)
+        op_str, a_str, b_str = parts
+        try:
+            canonical_name, func = resolve_operation(op_str)
+            a = parse_number(a_str)
+            b = parse_number(b_str)
+            result = func(a, b)
+        except Exception as exc:
+            print(f"Error: line {idx}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        output = (
+            f"{canonical_name} {format_result(a)} {format_result(b)} = "
+            f"{format_result(result)}"
+        )
+        print(output)
+
+
 def main() -> None:
     parser = build_parser()
 
@@ -178,6 +218,10 @@ def main() -> None:
 
     if getattr(args, "mode", None) == "interactive":
         run_interactive()
+        return
+
+    if getattr(args, "mode", None) == "batch":
+        run_batch(args.file)
         return
 
     func = cast(OperationFunc, args.func)
