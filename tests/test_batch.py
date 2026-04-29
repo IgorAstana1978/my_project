@@ -19,6 +19,27 @@ def run_batch_file(lines: list[str]) -> CompletedProcess[str]:
         os.remove(path)
 
 
+def test_batch_empty_file() -> None:
+    with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as f:
+        path = f.name
+    try:
+        result = subprocess.run(BATCH_CMD + [path], capture_output=True, text=True)
+    finally:
+        os.remove(path)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "no operations" in result.stderr
+
+
+def test_batch_comments_and_blanks_only() -> None:
+    lines = ["# comment", "", "   ", "# another"]
+    result = run_batch_file(lines)
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "no operations" in result.stderr
+
+
 def test_batch_success() -> None:
     lines = ["add 2 3", "mul 4 5", "div 10 2"]
     result = run_batch_file(lines)

@@ -183,6 +183,8 @@ def run_batch(file_path: str) -> None:
         print(f"Error: cannot open file '{file_path}': {exc}", file=sys.stderr)
         sys.exit(1)
 
+    executed_any = False
+
     for idx, line in enumerate(lines, 1):
         line = line.strip()
         if not line or line.startswith("#"):
@@ -205,6 +207,11 @@ def run_batch(file_path: str) -> None:
             f"{format_result(result)}"
         )
         print(output)
+        executed_any = True
+
+    if not executed_any:
+        print("Error: batch file contains no operations", file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:
