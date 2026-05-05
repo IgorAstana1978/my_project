@@ -53,7 +53,7 @@ div 20 4
 **Expected output:**
 ```text
 add 10 5 = 15
-mul 3 7 = 21
+multiply 3 7 = 21
 divide 20 4 = 5
 ```
 
