@@ -26,6 +26,17 @@ A small Python CLI calculator project with clean structure, automated checks, st
 - pre-commit hooks
 - GitHub Actions on `push` and `pull_request`
 
+### Checks on Windows
+
+Run project checks through the local virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m black --check .
+.\.venv\Scripts\python.exe -m mypy src tests
+```
+
 ## Usage
 
 ### Help
