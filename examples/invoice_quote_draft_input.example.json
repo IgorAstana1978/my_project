@@ -1,0 +1,74 @@
+{
+  "document": {
+    "status": "черновик",
+    "number": null,
+    "date": null,
+    "service_note": "Черновик для внутренней проверки",
+    "warnings": [
+      "Цена, срок и комплектация не утверждены"
+    ]
+  },
+  "customer": {
+    "payer_name": "ТОО Ромашка",
+    "bin_or_iin": null,
+    "contact_name": null,
+    "contact_phone": null,
+    "contact_email": null
+  },
+  "project": {
+    "object_name": "Насосная станция",
+    "basis_or_project": "нужно уточнить",
+    "section_or_project_position": "Шкаф управления насосами",
+    "supply_boundary": "нужно уточнить",
+    "supply_boundary_confirmed_by_igor": false
+  },
+  "items": [
+    {
+      "name": "Шкаф управления насосом",
+      "unit": "шт",
+      "quantity": 1,
+      "instruments_and_devices": "нужно уточнить",
+      "cabinet_type_dimensions_material": "нужно уточнить",
+      "price_kzt": null,
+      "price_confirmed_by_igor": false
+    },
+    {
+      "name": "Шкаф распределительный",
+      "unit": "шт",
+      "quantity": 1,
+      "instruments_and_devices": "нужно уточнить",
+      "cabinet_type_dimensions_material": "нужно уточнить",
+      "price_kzt": null,
+      "price_confirmed_by_igor": false
+    }
+  ],
+  "commercial_terms": {
+    "currency": "KZT",
+    "total_amount_words": "нужно уточнить",
+    "total_amount_confirmed_by_igor": false,
+    "final_price_confirmed_by_igor": false,
+    "delivery_lead_time_working_days": null,
+    "delivery_lead_time_text": "нужно уточнить",
+    "delivery_confirmed_by_igor": false,
+    "payment_terms": null,
+    "notes": "Черновик. Стоимость, срок, комплектующие и граница поставки требуют подтверждения Игоря."
+  },
+  "safety_flags": {
+    "draft_only": true,
+    "max_items": 5,
+    "do_not_write_formula_cells": true,
+    "do_not_write_signatures": true,
+    "do_not_change_header_or_requisites": true,
+    "do_not_add_excel_to_git": true,
+    "customer_equipment_included_in_our_supply": false,
+    "customer_equipment_inclusion_confirmed_by_igor": false
+  },
+  "metadata": {
+    "source": "manual_test",
+    "created_by": "Codex draft contract",
+    "created_at": null,
+    "template_sheet": "Счёт-КП шаблон",
+    "template_path_hint": "C:\\path\\to\\template_test.xlsx",
+    "output_dir_hint": "C:\\path\\to\\outputs\\"
+  }
+}
