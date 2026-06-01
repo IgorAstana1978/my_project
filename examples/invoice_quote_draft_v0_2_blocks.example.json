@@ -1,0 +1,204 @@
+{
+  "document": {
+    "status": "черновик",
+    "number": null,
+    "date": null,
+    "service_note": "Черновик для внутренней проверки",
+    "warnings": [
+      "Цена, срок, комплектация и проектные данные требуют проверки",
+      "PDF-проекты без подтверждённого текстового извлечения"
+    ]
+  },
+  "customer": {
+    "payer_name": "ТОО «Kreativ-SP»",
+    "bin_or_iin": null,
+    "contact_name": null,
+    "contact_phone": null,
+    "contact_email": null
+  },
+  "project": {
+    "object_name": "МЖК пер. ул. Орынбор и №357",
+    "basis_or_project": "нужно уточнить",
+    "section_or_project_position": "ЭОМ",
+    "supply_boundary": "нужно уточнить",
+    "supply_boundary_confirmed_by_igor": false
+  },
+  "output_mode": "single_workbook_sections",
+  "project_blocks": [
+    {
+      "block_name": "orynbor_8",
+      "block_label_for_quote": "Пятно 8",
+      "project_code": "нужно уточнить",
+      "source_file": "Орынбор 8 Блок (29.102025) эом!.pdf",
+      "source_pages": [
+        {
+          "from": 32,
+          "to": 37,
+          "note": "предположительно спецификация, требуется ручная проверка"
+        }
+      ],
+      "subsections": [
+        {
+          "subsection_name": null,
+          "items": [
+            {
+              "name": "ВРУ (ввод)",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит распределительный",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит этажный",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            }
+          ]
+        },
+        {
+          "subsection_name": "Коммерческие помещения",
+          "items": [
+            {
+              "name": "ВРУ-А8",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит автоматики коммерческих помещений",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "block_name": "orynbor_9",
+      "block_label_for_quote": "Пятно 9",
+      "project_code": "нужно уточнить",
+      "source_file": "Орынбор 9 Блок (29.102025) эом!.pdf",
+      "source_pages": [
+        {
+          "from": 34,
+          "to": 39,
+          "note": "предположительно спецификация, требуется ручная проверка"
+        }
+      ],
+      "subsections": [
+        {
+          "subsection_name": null,
+          "items": [
+            {
+              "name": "ВРУ (ввод)",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит распределительный",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит этажный",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            }
+          ]
+        },
+        {
+          "subsection_name": "Коммерческие помещения",
+          "items": [
+            {
+              "name": "ВРУ-А9",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            },
+            {
+              "name": "Щит автоматики коммерческих помещений",
+              "unit": "шт",
+              "quantity": 1,
+              "instruments_and_devices": "нужно уточнить",
+              "cabinet_type_dimensions_material": "нужно уточнить",
+              "price_kzt": null,
+              "price_confirmed_by_igor": false
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "commercial_terms": {
+    "currency": "KZT",
+    "total_amount_words": "нужно уточнить",
+    "total_amount_confirmed_by_igor": false,
+    "final_price_confirmed_by_igor": false,
+    "delivery_lead_time_working_days": null,
+    "delivery_lead_time_text": "нужно уточнить",
+    "delivery_confirmed_by_igor": false,
+    "payment_terms": null,
+    "notes": "Черновик. Стоимость, срок, комплектующие и граница поставки требуют подтверждения."
+  },
+  "safety_flags": {
+    "draft_only": true,
+    "source_data_manually_verified": false,
+    "do_not_write_formula_cells": true,
+    "do_not_write_signatures": true,
+    "do_not_change_header_or_requisites": true,
+    "do_not_add_excel_to_git": true,
+    "prices_require_igor_confirmation": true,
+    "delivery_requires_igor_confirmation": true
+  },
+  "metadata": {
+    "schema_version": "0.2-draft",
+    "source_type": "manual_json_example",
+    "source_references": [
+      "Орынбор 8 Блок",
+      "Орынбор 9 Блок",
+      "КП №268 ТОО «Kreativ-SP»"
+    ],
+    "created_by": "Codex draft contract",
+    "created_at": null,
+    "reviewed_by_igor": false,
+    "review_notes": null,
+    "extraction_report": null
+  }
+}
