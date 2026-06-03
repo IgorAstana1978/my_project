@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import sys
@@ -12,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "fill_invoice_quote_v0_2_separate.py"
 EXAMPLE = PROJECT_ROOT / "examples" / "invoice_quote_draft_v0_2_blocks.example.json"
 DRAFT_TEST = PROJECT_ROOT / "tests" / "test_fill_invoice_quote_draft.py"
+DRAFT_SCRIPT = PROJECT_ROOT / "scripts" / "fill_invoice_quote_draft.py"
 
 
 def load_script_module(module_name: str, path: Path) -> ModuleType:
@@ -84,6 +86,10 @@ def write_placeholder_template(path: Path) -> None:
     path.write_bytes(b"placeholder")
 
 
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def build_plan(tmp_path: Path, data: dict[str, Any]) -> Any:
     input_json = tmp_path / "input.json"
     template = tmp_path / "template.xlsx"
@@ -124,6 +130,19 @@ def test_subsection_name_is_prefixed_to_item_name(tmp_path: Path) -> None:
 
     assert plan.planned_outputs[0].flat_payload["items"][0]["name"] == (
         "Коммерческие помещения: ВРУ-А8"
+    )
+
+
+def test_flat_payload_section_position_contains_block_label(tmp_path: Path) -> None:
+    plan = build_plan(tmp_path, minimal_data())
+
+    assert (
+        plan.planned_outputs[0].flat_payload["project"]["section_or_project_position"]
+        == "ЭОМ / Пятно 8"
+    )
+    assert (
+        plan.planned_outputs[1].flat_payload["project"]["section_or_project_position"]
+        == "ЭОМ / Пятно 9"
     )
 
 
@@ -248,6 +267,7 @@ def test_real_excel_generation_uses_temp_output_dir_and_does_not_overwrite(
     output_dir.mkdir()
     write_json(input_json, data)
     draft_test.write_template(template)
+    draft_script_hash_before = file_sha256(DRAFT_SCRIPT)
 
     exit_code = separate.main(
         [
@@ -269,6 +289,14 @@ def test_real_excel_generation_uses_temp_output_dir_and_does_not_overwrite(
     first_workbook = load_workbook(outputs[0], data_only=False)
     first_sheet = first_workbook["Счёт-КП шаблон"]
     assert first_sheet["C17"].value == "ВРУ-А8"
+    assert first_sheet["C16"].value == (
+        "Раздел / объект / позиция проекта: ЭОМ / Пятно 8"
+    )
+    second_workbook = load_workbook(outputs[1], data_only=False)
+    second_sheet = second_workbook["Счёт-КП шаблон"]
+    assert second_sheet["C16"].value == (
+        "Раздел / объект / позиция проекта: ЭОМ / Пятно 9"
+    )
 
     overwrite_code = separate.main(
         [
@@ -283,6 +311,7 @@ def test_real_excel_generation_uses_temp_output_dir_and_does_not_overwrite(
 
     assert overwrite_code == 1
     assert len(list(output_dir.glob("*.xlsx"))) == 2
+    assert file_sha256(DRAFT_SCRIPT) == draft_script_hash_before
 
 
 def test_failed_generation_removes_registered_temp_output(

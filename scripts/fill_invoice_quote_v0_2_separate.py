@@ -240,6 +240,20 @@ def plan_output_files(
     return tuple(planned_outputs)
 
 
+def fill_visible_project_section(workbook: Any, payload: Mapping[str, Any]) -> None:
+    project = payload.get("project")
+    if not isinstance(project, Mapping):
+        fail("project must be an object")
+
+    project_mapping = cast(Mapping[str, Any], project)
+    section_or_project_position = project_mapping.get("section_or_project_position")
+    worksheet = workbook[draft_filler.SHEET_NAME]
+    worksheet["C16"] = (
+        "Раздел / объект / позиция проекта: "
+        f"{draft_filler.optional_text(section_or_project_position)}"
+    )
+
+
 def build_preflight_plan(
     input_json: Path, template: Path, output_dir: Path
 ) -> PreflightPlan:
@@ -263,6 +277,7 @@ def generate_workbook(template: Path, output: Path, payload: Mapping[str, Any]) 
     before = draft_filler.snapshot_template(template)
     workbook = draft_filler.load_template_workbook(template)
     draft_filler.fill_allowed_cells(workbook, payload)
+    fill_visible_project_section(workbook, payload)
     draft_filler.save_output(workbook, template, output, before)
     results = draft_filler.verify_output(template, output, before)
     draft_filler.print_report(results)
