@@ -81,6 +81,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Existing directory outside the Git project",
     )
+    parser.add_argument(
+        "--template-capacity",
+        type=int,
+        default=MAX_ITEMS_PER_BLOCK,
+        help="Maximum item rows available in the selected template",
+    )
     return parser.parse_args(argv)
 
 
@@ -164,7 +170,9 @@ def ensure_items_within_template_capacity(
         )
 
 
-def flattened_items(block: Mapping[str, Any]) -> list[dict[str, Any]]:
+def flattened_items(
+    block: Mapping[str, Any], template_capacity: int = MAX_ITEMS_PER_BLOCK
+) -> list[dict[str, Any]]:
     block_name = str(block.get("block_name"))
     items: list[dict[str, Any]] = []
     subsections = cast(Sequence[Any], block["subsections"])
@@ -181,19 +189,21 @@ def flattened_items(block: Mapping[str, Any]) -> list[dict[str, Any]]:
     ensure_items_within_template_capacity(
         block_name=block_name,
         items_count=len(items),
-        template_capacity=MAX_ITEMS_PER_BLOCK,
+        template_capacity=template_capacity,
     )
     return items
 
 
 def flat_payload_for_block(
-    data: Mapping[str, Any], block: Mapping[str, Any]
+    data: Mapping[str, Any],
+    block: Mapping[str, Any],
+    template_capacity: int = MAX_ITEMS_PER_BLOCK,
 ) -> dict[str, Any]:
     payload = {
         "document": copy.deepcopy(data["document"]),
         "customer": copy.deepcopy(data["customer"]),
         "project": copy.deepcopy(data["project"]),
-        "items": flattened_items(block),
+        "items": flattened_items(block, template_capacity),
         "commercial_terms": copy.deepcopy(data["commercial_terms"]),
         "safety_flags": copy.deepcopy(data["safety_flags"]),
         "metadata": copy.deepcopy(data["metadata"]),
@@ -221,7 +231,10 @@ def validate_flat_payload(plan: PlannedOutput) -> None:
 
 
 def plan_output_files(
-    data: Mapping[str, Any], template: Path, output_dir: Path
+    data: Mapping[str, Any],
+    template: Path,
+    output_dir: Path,
+    template_capacity: int,
 ) -> tuple[PlannedOutput, ...]:
     planned_outputs: list[PlannedOutput] = []
     seen_paths: set[Path] = set()
@@ -239,7 +252,7 @@ def plan_output_files(
                 block_name=str(block["block_name"]),
                 block_label_for_quote=str(block["block_label_for_quote"]),
                 output_path=output_path,
-                flat_payload=flat_payload_for_block(data, block),
+                flat_payload=flat_payload_for_block(data, block, template_capacity),
             )
         )
 
@@ -270,15 +283,25 @@ def fill_visible_project_section(workbook: Any, payload: Mapping[str, Any]) -> N
 
 
 def build_preflight_plan(
-    input_json: Path, template: Path, output_dir: Path
+    input_json: Path,
+    template: Path,
+    output_dir: Path,
+    template_capacity: int = MAX_ITEMS_PER_BLOCK,
 ) -> PreflightPlan:
+    ensure_items_within_template_capacity(
+        block_name="template_capacity",
+        items_count=0,
+        template_capacity=template_capacity,
+    )
     data = load_json(input_json)
     validate_v0_2_contract(data)
     output_mode, notice = require_supported_output_mode(data)
     template_path, output_directory = validate_template_and_output_dir(
         template, output_dir
     )
-    planned_outputs = plan_output_files(data, template_path, output_directory)
+    planned_outputs = plan_output_files(
+        data, template_path, output_directory, template_capacity
+    )
     return PreflightPlan(
         template=template_path,
         output_dir=output_directory,
@@ -340,6 +363,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             input_json=args.input_json,
             template=args.template,
             output_dir=args.output_dir,
+            template_capacity=args.template_capacity,
         )
         if plan.single_workbook_notice is not None:
             print(plan.single_workbook_notice)

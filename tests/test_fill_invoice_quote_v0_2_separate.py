@@ -90,14 +90,20 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build_plan(tmp_path: Path, data: dict[str, Any]) -> Any:
+def build_plan(
+    tmp_path: Path,
+    data: dict[str, Any],
+    template_capacity: int = separate.MAX_ITEMS_PER_BLOCK,
+) -> Any:
     input_json = tmp_path / "input.json"
     template = tmp_path / "template.xlsx"
     output_dir = tmp_path / "out"
     output_dir.mkdir()
     write_json(input_json, data)
     write_placeholder_template(template)
-    return separate.build_preflight_plan(input_json, template, output_dir)
+    return separate.build_preflight_plan(
+        input_json, template, output_dir, template_capacity
+    )
 
 
 def test_valid_example_with_separate_mode_passes_preflight(tmp_path: Path) -> None:
@@ -152,6 +158,78 @@ def test_template_capacity_guard_rejects_items_above_capacity() -> None:
         assert "block orynbor_8 has 52 items, template capacity is 50" in str(error)
     else:
         raise AssertionError("items above capacity should fail")
+
+
+def test_default_template_capacity_stays_five(tmp_path: Path) -> None:
+    data = minimal_data()
+    first_block = data["project_blocks"][0]
+    first_block["subsections"] = [
+        {
+            "subsection_name": None,
+            "items": [deepcopy(base_item(f"item-{index}")) for index in range(6)],
+        }
+    ]
+
+    try:
+        build_plan(tmp_path, data)
+    except separate.SeparateFillError as error:
+        assert "block orynbor_8 has 6 items, template capacity is 5" in str(error)
+    else:
+        raise AssertionError("default template capacity should stay 5")
+
+
+def test_explicit_template_capacity_five_matches_default(tmp_path: Path) -> None:
+    data = minimal_data()
+    first_block = data["project_blocks"][0]
+    first_block["subsections"] = [
+        {
+            "subsection_name": None,
+            "items": [deepcopy(base_item(f"item-{index}")) for index in range(6)],
+        }
+    ]
+
+    try:
+        build_plan(tmp_path, data, template_capacity=5)
+    except separate.SeparateFillError as error:
+        assert "block orynbor_8 has 6 items, template capacity is 5" in str(error)
+    else:
+        raise AssertionError("explicit template capacity 5 should match default")
+
+
+def test_template_capacity_fifty_passes_capacity_then_old_mvp_rejects(
+    tmp_path: Path,
+) -> None:
+    data = minimal_data()
+    first_block = data["project_blocks"][0]
+    first_block["subsections"] = [
+        {
+            "subsection_name": None,
+            "items": [deepcopy(base_item(f"item-{index}")) for index in range(6)],
+        }
+    ]
+    input_json = tmp_path / "input.json"
+    template = tmp_path / "template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    write_json(input_json, data)
+    write_placeholder_template(template)
+    draft_script_hash_before = file_sha256(DRAFT_SCRIPT)
+
+    try:
+        separate.build_preflight_plan(
+            input_json,
+            template,
+            output_dir,
+            template_capacity=50,
+        )
+    except separate.SeparateFillError as error:
+        assert "flat payload for block orynbor_8 is invalid" in str(error)
+        assert "items больше 5" in str(error)
+    else:
+        raise AssertionError("old MVP validator should still reject more than 5 items")
+
+    assert list(output_dir.iterdir()) == []
+    assert file_sha256(DRAFT_SCRIPT) == draft_script_hash_before
 
 
 def test_flat_payload_section_position_contains_block_label(tmp_path: Path) -> None:
@@ -278,6 +356,36 @@ def test_capacity_error_via_main_creates_no_output_or_partial_files(
 
     assert exit_code == 1
     assert list(output_dir.iterdir()) == []
+
+
+def test_zero_template_capacity_via_main_creates_no_output_or_partial_files(
+    tmp_path: Path,
+) -> None:
+    data = minimal_data()
+    input_json = tmp_path / "input.json"
+    template = tmp_path / "template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    write_json(input_json, data)
+    draft_test.write_template(template)
+    draft_script_hash_before = file_sha256(DRAFT_SCRIPT)
+
+    exit_code = separate.main(
+        [
+            "--input-json",
+            str(input_json),
+            "--template",
+            str(template),
+            "--output-dir",
+            str(output_dir),
+            "--template-capacity",
+            "0",
+        ]
+    )
+
+    assert exit_code == 1
+    assert list(output_dir.iterdir()) == []
+    assert file_sha256(DRAFT_SCRIPT) == draft_script_hash_before
 
 
 def test_invalid_json_by_validator_returns_error(tmp_path: Path) -> None:
