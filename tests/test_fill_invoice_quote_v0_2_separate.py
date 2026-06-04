@@ -133,6 +133,27 @@ def test_subsection_name_is_prefixed_to_item_name(tmp_path: Path) -> None:
     )
 
 
+def test_template_capacity_guard_allows_items_at_capacity() -> None:
+    separate.ensure_items_within_template_capacity(
+        block_name="orynbor_8",
+        items_count=50,
+        template_capacity=50,
+    )
+
+
+def test_template_capacity_guard_rejects_items_above_capacity() -> None:
+    try:
+        separate.ensure_items_within_template_capacity(
+            block_name="orynbor_8",
+            items_count=52,
+            template_capacity=50,
+        )
+    except separate.SeparateFillError as error:
+        assert "block orynbor_8 has 52 items, template capacity is 50" in str(error)
+    else:
+        raise AssertionError("items above capacity should fail")
+
+
 def test_flat_payload_section_position_contains_block_label(tmp_path: Path) -> None:
     plan = build_plan(tmp_path, minimal_data())
 
@@ -220,9 +241,42 @@ def test_block_with_more_than_five_items_fails_before_output_planning(
     try:
         separate.build_preflight_plan(input_json, template, output_dir)
     except separate.SeparateFillError as error:
-        assert "block orynbor_8 has more than 5 items." in str(error)
+        assert "block orynbor_8 has 6 items, template capacity is 5" in str(error)
     else:
         raise AssertionError("block with more than 5 items should fail")
+    assert list(output_dir.iterdir()) == []
+
+
+def test_capacity_error_via_main_creates_no_output_or_partial_files(
+    tmp_path: Path,
+) -> None:
+    data = minimal_data()
+    first_block = data["project_blocks"][0]
+    first_block["subsections"] = [
+        {
+            "subsection_name": None,
+            "items": [deepcopy(base_item(f"item-{index}")) for index in range(6)],
+        }
+    ]
+    input_json = tmp_path / "input.json"
+    template = tmp_path / "template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    write_json(input_json, data)
+    draft_test.write_template(template)
+
+    exit_code = separate.main(
+        [
+            "--input-json",
+            str(input_json),
+            "--template",
+            str(template),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert exit_code == 1
     assert list(output_dir.iterdir()) == []
 
 

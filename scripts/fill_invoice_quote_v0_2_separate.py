@@ -152,6 +152,18 @@ def safe_filename_component(value: Any) -> str:
     return cleaned
 
 
+def ensure_items_within_template_capacity(
+    block_name: str, items_count: int, template_capacity: int
+) -> None:
+    if template_capacity < 1:
+        fail(f"template capacity must be positive: {template_capacity}")
+    if items_count > template_capacity:
+        fail(
+            f"block {block_name} has {items_count} items, "
+            f"template capacity is {template_capacity}"
+        )
+
+
 def flattened_items(block: Mapping[str, Any]) -> list[dict[str, Any]]:
     block_name = str(block.get("block_name"))
     items: list[dict[str, Any]] = []
@@ -166,8 +178,11 @@ def flattened_items(block: Mapping[str, Any]) -> list[dict[str, Any]]:
                 item["name"] = f"{subsection_name}: {item['name']}"
             items.append(item)
 
-    if len(items) > MAX_ITEMS_PER_BLOCK:
-        fail(f"block {block_name} has more than 5 items.")
+    ensure_items_within_template_capacity(
+        block_name=block_name,
+        items_count=len(items),
+        template_capacity=MAX_ITEMS_PER_BLOCK,
+    )
     return items
 
 
