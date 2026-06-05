@@ -42,6 +42,7 @@ class WorkbookSnapshot:
     formulas: dict[str, Any]
     signature_values: dict[str, Any]
     header_values: dict[str, Any]
+    merged_ranges: tuple[str, ...]
 
 
 def fail(message: str) -> None:
@@ -135,6 +136,7 @@ def snapshot_workbook(worksheet: Worksheet, layout: ExtendedLayout) -> WorkbookS
         formulas={cell: worksheet[cell].value for cell in layout.formula_cells},
         signature_values=value_map(worksheet, (layout.signature_range,)),
         header_values=value_map(worksheet, layout.header_ranges),
+        merged_ranges=tuple(str(item) for item in worksheet.merged_cells.ranges),
     )
 
 
@@ -189,6 +191,8 @@ def verify_output(
         fail("signature range changed")
     if after.header_values != before.header_values:
         fail("header ranges changed")
+    if after.merged_ranges != before.merged_ranges:
+        fail("merged ranges changed")
 
 
 def generate_extended_workbook(

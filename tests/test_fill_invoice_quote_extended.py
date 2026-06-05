@@ -104,6 +104,12 @@ def workbook_values(path: Path) -> dict[str, Any]:
     }
 
 
+def merged_ranges(path: Path) -> tuple[str, ...]:
+    workbook = load_workbook(path, data_only=False)
+    worksheet = workbook[extended.SHEET_NAME]
+    return tuple(str(item) for item in worksheet.merged_cells.ranges)
+
+
 def test_extended_template_is_created_in_tmp_path(tmp_path: Path) -> None:
     template = tmp_path / "extended_template.xlsx"
 
@@ -137,6 +143,25 @@ def test_writes_six_items_to_extended_template(tmp_path: Path) -> None:
     assert values["I25"] == "=SUM(I17:I24)"
     assert values["B28"] == "signature"
     assert values["C2"] == "header-2-3"
+
+
+def test_merged_ranges_are_preserved_after_generation(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    before = merged_ranges(template)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert before == (layout.signature_range,)
+    assert merged_ranges(output) == before
 
 
 def test_items_above_capacity_stop_before_output(tmp_path: Path) -> None:
