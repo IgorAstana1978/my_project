@@ -164,6 +164,43 @@ def test_merged_ranges_are_preserved_after_generation(tmp_path: Path) -> None:
     assert merged_ranges(output) == before
 
 
+def test_merged_range_change_fails_closed_and_removes_temp_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    original_fill_item_rows = extended.fill_item_rows
+
+    def fill_and_change_merged_ranges(
+        worksheet: Any,
+        items: Any,
+        layout: Any,
+    ) -> None:
+        original_fill_item_rows(worksheet, items, layout)
+        worksheet.merge_cells("B31:C31")
+
+    monkeypatch.setattr(extended, "fill_item_rows", fill_and_change_merged_ranges)
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(6),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "merged ranges changed" in str(error)
+    else:
+        raise AssertionError("merged range change should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
 def test_items_above_capacity_stop_before_output(tmp_path: Path) -> None:
     template = tmp_path / "extended_template.xlsx"
     output_dir = tmp_path / "out"
