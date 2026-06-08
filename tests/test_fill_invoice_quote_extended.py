@@ -407,6 +407,60 @@ def test_cli_removes_temp_output_when_generation_fails(
     assert list(output_dir.iterdir()) == []
 
 
+def test_cli_subprocess_successfully_creates_output_for_six_items(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)]
+        + cli_args(payload_json, layout_json_path, template, output),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "CREATED:" in result.stdout
+    assert "ERROR:" not in result.stderr
+    assert output.is_file()
+    assert workbook_values(output)["C22"] == "ВРУ-6"
+
+
+def test_cli_subprocess_missing_payload_returns_one_without_output(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "missing_payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(layout_json_path, layout_json(layout))
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)]
+        + cli_args(payload_json, layout_json_path, template, output),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
 def test_items_above_capacity_stop_before_output(tmp_path: Path) -> None:
     template = tmp_path / "extended_template.xlsx"
     output_dir = tmp_path / "out"
