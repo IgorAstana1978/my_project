@@ -1,11 +1,14 @@
 """Minimal isolated extended invoice-quote writer.
 
-This module intentionally has no CLI and is not connected to the v0.2 separate
+This module has a minimal isolated CLI and is not connected to the v0.2 separate
 layer. It writes only to an explicitly provided test/extended layout.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
+import sys
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -49,6 +52,27 @@ def fail(message: str) -> None:
     raise ExtendedFillError(message)
 
 
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate an isolated extended invoice-quote draft workbook."
+    )
+    parser.add_argument(
+        "--payload-json",
+        required=True,
+        type=Path,
+        help="Path to internal flat payload JSON",
+    )
+    parser.add_argument(
+        "--layout-json",
+        required=True,
+        type=Path,
+        help="Path to internal extended layout JSON",
+    )
+    parser.add_argument("--template", required=True, type=Path, help="Path to .xlsx")
+    parser.add_argument("--output", required=True, type=Path, help="Output .xlsx path")
+    return parser.parse_args(argv)
+
+
 def resolved(path: Path) -> Path:
     return path.expanduser().resolve(strict=False)
 
@@ -76,6 +100,57 @@ def validate_layout(layout: ExtendedLayout) -> None:
         fail("layout header_ranges must be set")
     if not layout.formula_cells:
         fail("layout formula_cells must be set")
+
+
+def load_json_object(path: Path, label: str) -> Mapping[str, Any]:
+    json_path = resolved(path)
+    if not json_path.is_file():
+        fail(f"{label} JSON does not exist: {json_path}")
+    try:
+        raw_data = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        fail(f"{label} JSON is invalid: {error.msg}")
+    if not isinstance(raw_data, Mapping):
+        fail(f"{label} JSON must be an object")
+    return cast(Mapping[str, Any], raw_data)
+
+
+def required_int(data: Mapping[str, Any], key: str) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        fail(f"layout.{key} must be an integer")
+    return value
+
+
+def required_str(data: Mapping[str, Any], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or value == "":
+        fail(f"layout.{key} must be a non-empty string")
+    return value
+
+
+def required_str_tuple(data: Mapping[str, Any], key: str) -> tuple[str, ...]:
+    value = data.get(key)
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        fail(f"layout.{key} must be a list of strings")
+    items: list[str] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, str) or item == "":
+            fail(f"layout.{key}[{index}] must be a non-empty string")
+        items.append(item)
+    return tuple(items)
+
+
+def layout_from_json(data: Mapping[str, Any]) -> ExtendedLayout:
+    return ExtendedLayout(
+        item_start_row=required_int(data, "item_start_row"),
+        item_end_row=required_int(data, "item_end_row"),
+        capacity=required_int(data, "capacity"),
+        total_row=required_int(data, "total_row"),
+        signature_range=required_str(data, "signature_range"),
+        header_ranges=required_str_tuple(data, "header_ranges"),
+        formula_cells=required_str_tuple(data, "formula_cells"),
+    )
 
 
 def require_items(payload: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
@@ -226,3 +301,27 @@ def generate_extended_workbook(
         raise
 
     return output_path
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    try:
+        payload = load_json_object(args.payload_json, "payload")
+        layout_data = load_json_object(args.layout_json, "layout")
+        layout = layout_from_json(layout_data)
+        output = generate_extended_workbook(
+            template=args.template,
+            output=args.output,
+            payload=payload,
+            layout=layout,
+        )
+    except ExtendedFillError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+
+    print(f"CREATED: {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

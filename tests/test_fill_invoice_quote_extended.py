@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +90,40 @@ def item(index: int) -> dict[str, Any]:
 
 def payload(items_count: int) -> dict[str, Any]:
     return {"items": [item(index) for index in range(1, items_count + 1)]}
+
+
+def layout_json(layout: Any) -> dict[str, Any]:
+    return {
+        "item_start_row": layout.item_start_row,
+        "item_end_row": layout.item_end_row,
+        "capacity": layout.capacity,
+        "total_row": layout.total_row,
+        "signature_range": layout.signature_range,
+        "header_ranges": list(layout.header_ranges),
+        "formula_cells": list(layout.formula_cells),
+    }
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def cli_args(
+    payload_json: Path,
+    layout_json_path: Path,
+    template: Path,
+    output: Path,
+) -> list[str]:
+    return [
+        "--payload-json",
+        str(payload_json),
+        "--layout-json",
+        str(layout_json_path),
+        "--template",
+        str(template),
+        "--output",
+        str(output),
+    ]
 
 
 def workbook_values(path: Path) -> dict[str, Any]:
@@ -197,6 +232,177 @@ def test_merged_range_change_fails_closed_and_removes_temp_output(
     else:
         raise AssertionError("merged range change should fail")
 
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_successfully_creates_output_for_six_items(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 0
+    assert output.is_file()
+    assert workbook_values(output)["C22"] == "ВРУ-6"
+
+
+def test_cli_capacity_overflow_returns_one_without_output(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template, capacity=6)
+    write_json(payload_json, payload(7))
+    write_json(layout_json_path, layout_json(layout))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_existing_output_returns_one_without_overwrite(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    output.write_bytes(b"existing")
+    layout = write_extended_template(template)
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert output.read_bytes() == b"existing"
+    assert list(output_dir.iterdir()) == [output]
+
+
+def test_cli_missing_payload_json_returns_one(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "missing_payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(layout_json_path, layout_json(layout))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_invalid_payload_json_returns_one(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    payload_json.write_text("{invalid", encoding="utf-8")
+    write_json(layout_json_path, layout_json(layout))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_missing_layout_json_returns_one(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "missing_layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    write_extended_template(template)
+    write_json(payload_json, payload(6))
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_invalid_layout_json_returns_one(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    write_extended_template(template)
+    write_json(payload_json, payload(6))
+    layout_json_path.write_text("{invalid", encoding="utf-8")
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_removes_temp_output_when_generation_fails(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    def fail_verification(
+        _output: Path,
+        _layout: Any,
+        _before: Any,
+    ) -> None:
+        raise extended.ExtendedFillError("forced verification failure")
+
+    monkeypatch.setattr(extended, "verify_output", fail_verification)
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
     assert not output.exists()
     assert list(output_dir.iterdir()) == []
 
