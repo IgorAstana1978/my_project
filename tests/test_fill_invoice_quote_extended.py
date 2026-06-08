@@ -435,6 +435,40 @@ def test_cli_subprocess_successfully_creates_output_for_six_items(
     assert workbook_values(output)["C22"] == "ВРУ-6"
 
 
+def test_cli_subprocess_scales_to_fifty_items_when_layout_has_capacity(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template, capacity=50)
+    write_json(payload_json, payload(50))
+    write_json(layout_json_path, layout_json(layout))
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)]
+        + cli_args(payload_json, layout_json_path, template, output),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "CREATED:" in result.stdout
+    assert "ERROR:" not in result.stderr
+    assert output.is_file()
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[extended.SHEET_NAME]
+    assert worksheet["C17"].value == "ВРУ-1"
+    assert worksheet["C66"].value == "ВРУ-50"
+    assert worksheet["I67"].value == "=SUM(I17:I66)"
+    assert worksheet["C2"].value == "header-2-3"
+    assert worksheet["B70"].value == "signature"
+
+
 def test_cli_subprocess_missing_payload_returns_one_without_output(
     tmp_path: Path,
 ) -> None:
