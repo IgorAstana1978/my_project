@@ -1,17 +1,26 @@
 import hashlib
 import importlib.util
+import inspect
 import json
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "fill_invoice_quote_extended.py"
 DRAFT_SCRIPT = PROJECT_ROOT / "scripts" / "fill_invoice_quote_draft.py"
+SNAPSHOT_SCRIPT = PROJECT_ROOT / "scripts" / "drawing_media_snapshot.py"
+TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+    b"\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe"
+    b"\x02\xfeA\xe2d\x9a\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 def load_script_module(module_name: str, path: Path) -> ModuleType:
@@ -25,6 +34,10 @@ def load_script_module(module_name: str, path: Path) -> ModuleType:
 
 
 extended = cast(Any, load_script_module("fill_invoice_quote_extended_for_test", SCRIPT))
+snapshot = cast(
+    Any,
+    load_script_module("drawing_media_snapshot_for_extended_test", SNAPSHOT_SCRIPT),
+)
 
 
 def file_sha256(path: Path) -> str:
@@ -74,6 +87,104 @@ def write_extended_template(path: Path, capacity: int = 8) -> Any:
 
     workbook.save(path)
     return layout
+
+
+def rewrite_xlsx(path: Path, updates: dict[str, bytes]) -> None:
+    temporary_path = path.with_suffix(".tmp.xlsx")
+    with ZipFile(path) as source_archive:
+        source_entries = {
+            name: source_archive.read(name)
+            for name in source_archive.namelist()
+            if name not in updates
+        }
+    with ZipFile(temporary_path, "w", ZIP_DEFLATED) as target_archive:
+        for name, content in source_entries.items():
+            target_archive.writestr(name, content)
+        for name, content in updates.items():
+            target_archive.writestr(name, content)
+    temporary_path.replace(path)
+
+
+def content_types_with_drawing(content: str) -> str:
+    if 'Extension="png"' not in content:
+        content = content.replace(
+            "</Types>",
+            '<Default Extension="png" ContentType="image/png"/></Types>',
+        )
+    if 'PartName="/xl/drawings/drawing1.xml"' not in content:
+        content = content.replace(
+            "</Types>",
+            (
+                '<Override PartName="/xl/drawings/drawing1.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.'
+                'drawing+xml"/></Types>'
+            ),
+        )
+    return content
+
+
+def add_valid_drawing_chain(path: Path) -> None:
+    with ZipFile(path) as archive:
+        sheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+        content_types = archive.read("[Content_Types].xml").decode("utf-8")
+
+    sheet_xml = sheet_xml.replace(
+        "</worksheet>",
+        (
+            '<drawing xmlns:r="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/relationships" r:id="rId1"/>'
+            "</worksheet>"
+        ),
+    )
+    sheet_rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+        '2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/drawing" '
+        'Target="../drawings/drawing1.xml"/>'
+        "</Relationships>"
+    )
+    drawing_xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/'
+        '2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        "<xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col>"
+        "<xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row>"
+        "<xdr:rowOff>0</xdr:rowOff></xdr:from>"
+        '<xdr:ext cx="1" cy="1"/>'
+        '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="2" name="logo"/>'
+        "<xdr:cNvPicPr/></xdr:nvPicPr><xdr:blipFill>"
+        '<a:blip xmlns:r="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships" r:embed="rId1"/>'
+        "<a:stretch><a:fillRect/></a:stretch></xdr:blipFill>"
+        "<xdr:spPr/></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>"
+        "</xdr:wsDr>"
+    )
+    drawing_rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/'
+        '2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/relationships/image" '
+        'Target="../media/image1.png"/>'
+        "</Relationships>"
+    )
+
+    rewrite_xlsx(
+        path,
+        {
+            "xl/worksheets/sheet1.xml": sheet_xml.encode("utf-8"),
+            "xl/worksheets/_rels/sheet1.xml.rels": sheet_rels.encode("utf-8"),
+            "xl/drawings/drawing1.xml": drawing_xml.encode("utf-8"),
+            "xl/drawings/_rels/drawing1.xml.rels": drawing_rels.encode("utf-8"),
+            "xl/media/image1.png": TINY_PNG,
+            "[Content_Types].xml": content_types_with_drawing(content_types).encode(
+                "utf-8"
+            ),
+        },
+    )
 
 
 def item(index: int) -> dict[str, Any]:
@@ -220,6 +331,133 @@ def test_generated_template_without_drawing_media_creates_output(
     assert merged_ranges(output) == (layout.signature_range,)
 
 
+def test_real_drawing_media_round_trip_preserves_template_parts(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    add_valid_drawing_chain(template)
+    before_snapshot = snapshot.build_drawing_media_snapshot(template)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert output.is_file()
+    after_snapshot = snapshot.build_drawing_media_snapshot(output)
+    snapshot.compare_drawing_media_snapshots(before_snapshot, after_snapshot)
+    values = workbook_values(output)
+    assert values["C17"] == "ВРУ-1"
+    assert values["C22"] == "ВРУ-6"
+    assert values["I17"] == "=E17*H17"
+    assert values["I25"] == "=SUM(I17:I24)"
+    assert values["B28"] == "signature"
+    assert values["C2"] == "header-2-3"
+    assert merged_ranges(output) == (layout.signature_range,)
+
+
+def test_build_cell_updates_maps_items_and_unused_rows() -> None:
+    layout = extended_layout()
+    custom_items = payload(6)["items"]
+    custom_items[0]["name"] = "0012"
+    custom_items[0]["instruments_and_devices"] = "Автомат\nQF1"
+    custom_items[5]["cabinet_type_dimensions_material"] = "Шкаф ВРУ"
+
+    updates = extended.build_cell_updates(custom_items, layout)
+
+    assert updates["C17"] == "0012"
+    assert updates["D17"] == "шт."
+    assert updates["E17"] == 1
+    assert isinstance(updates["E17"], int)
+    assert updates["F17"] == "Автомат\nQF1"
+    assert updates["G17"] == "нужно уточнить"
+    assert updates["H17"] == "нужно уточнить"
+    assert updates["C22"] == "ВРУ-6"
+    assert updates["G22"] == "Шкаф ВРУ"
+    assert updates["H22"] == "нужно уточнить"
+    assert updates["C23"] == "нужно уточнить"
+    assert updates["D23"] == "шт"
+    assert updates["E23"] == 1
+    assert updates["F23"] == "нужно уточнить"
+    assert updates["G23"] == "нужно уточнить"
+    assert updates["H23"] == "нужно уточнить"
+    assert updates["C24"] == "нужно уточнить"
+    assert updates["D24"] == "шт"
+    assert updates["E24"] == 1
+
+
+def test_generate_extended_workbook_uses_ooxml_patcher(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    original_patch = extended.patch_existing_cells
+    calls: list[dict[str, Any]] = []
+    verification_seen: list[Path] = []
+
+    def tracking_patch_existing_cells(**kwargs: Any) -> Path:
+        calls.append(kwargs)
+        assert kwargs["template"] == template
+        assert kwargs["sheet_name"] == extended.SHEET_NAME
+        temporary_output = kwargs["output"]
+        assert temporary_output != output
+        assert temporary_output.parent == output.parent
+        assert temporary_output.name.startswith(f".{output.stem}.")
+        assert temporary_output.name.endswith(".tmp.xlsx")
+        assert not output.exists()
+        updates = kwargs["updates"]
+        assert updates["C17"] == "ВРУ-1"
+        assert updates["E17"] == 1
+        assert isinstance(updates["E17"], int)
+        assert updates["C22"] == "ВРУ-6"
+        assert updates["H22"] == "нужно уточнить"
+        return cast(Path, original_patch(**kwargs))
+
+    original_verify_output = extended.verify_output
+
+    def tracking_verify_output(
+        temporary_output: Path,
+        verify_layout: Any,
+        before: Any,
+    ) -> None:
+        assert temporary_output.exists()
+        assert not output.exists()
+        verification_seen.append(temporary_output)
+        original_verify_output(temporary_output, verify_layout, before)
+
+    monkeypatch.setattr(extended, "patch_existing_cells", tracking_patch_existing_cells)
+    monkeypatch.setattr(extended, "verify_output", tracking_verify_output)
+
+    result = extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert result == output
+    assert output.is_file()
+    assert len(calls) == 1
+    assert len(verification_seen) == 1
+    assert not verification_seen[0].exists()
+
+
+def test_generate_extended_workbook_has_no_openpyxl_save_call() -> None:
+    source = inspect.getsource(extended.generate_extended_workbook)
+
+    assert ".save(" not in source
+
+
 def test_drawing_media_snapshot_uses_template_and_temporary_output(
     tmp_path: Path,
     monkeypatch: Any,
@@ -308,6 +546,70 @@ def test_template_drawing_media_snapshot_error_fails_before_temp_output(
     else:
         raise AssertionError("template snapshot error should fail")
 
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_ooxml_patcher_error_becomes_extended_error_and_cleans_outputs(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    def fail_patch_existing_cells(**_kwargs: Any) -> Path:
+        raise extended.OoxmlCellPatcherError("cell does not exist: C17")
+
+    monkeypatch.setattr(extended, "patch_existing_cells", fail_patch_existing_cells)
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(6),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "OOXML patching failed: cell does not exist: C17" in str(error)
+    else:
+        raise AssertionError("OOXML patching error should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_returns_one_without_traceback_for_ooxml_patching_error(
+    tmp_path: Path,
+    monkeypatch: Any,
+    capsys: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    def fail_patch_existing_cells(**_kwargs: Any) -> Path:
+        raise extended.OoxmlCellPatcherError("cell does not exist: C17")
+
+    monkeypatch.setattr(extended, "patch_existing_cells", fail_patch_existing_cells)
+
+    exit_code = extended.main(
+        cli_args(payload_json, layout_json_path, template, output)
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "ERROR:" in captured.err
+    assert "OOXML patching failed: cell does not exist: C17" in captured.err
+    assert "Traceback" not in captured.err
     assert not output.exists()
     assert list(output_dir.iterdir()) == []
 
@@ -434,17 +736,15 @@ def test_merged_range_change_fails_closed_and_removes_temp_output(
     output_dir.mkdir()
     output = output_dir / "draft.xlsx"
     layout = write_extended_template(template)
-    original_fill_item_rows = extended.fill_item_rows
 
-    def fill_and_change_merged_ranges(
-        worksheet: Any,
-        items: Any,
-        layout: Any,
+    def fail_merged_range_verification(
+        _output: Path,
+        _layout: Any,
+        _before: Any,
     ) -> None:
-        original_fill_item_rows(worksheet, items, layout)
-        worksheet.merge_cells("B31:C31")
+        raise extended.ExtendedFillError("merged ranges changed")
 
-    monkeypatch.setattr(extended, "fill_item_rows", fill_and_change_merged_ranges)
+    monkeypatch.setattr(extended, "verify_output", fail_merged_range_verification)
 
     try:
         extended.generate_extended_workbook(

@@ -24,6 +24,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DRAWING_MEDIA_SNAPSHOT_SCRIPT = PROJECT_ROOT / "scripts" / "drawing_media_snapshot.py"
+OOXML_CELL_PATCHER_SCRIPT = PROJECT_ROOT / "scripts" / "ooxml_cell_patcher.py"
 SHEET_NAME = "Счёт-КП шаблон"
 NEEDS_CLARIFICATION = "нужно уточнить"
 
@@ -80,6 +81,18 @@ build_drawing_media_snapshot = cast(
 compare_drawing_media_snapshots = cast(
     Callable[[Any, Any], None],
     drawing_media_snapshot.compare_drawing_media_snapshots,
+)
+ooxml_cell_patcher = cast(
+    Any,
+    load_sibling_module(
+        "ooxml_cell_patcher_for_extended_writer",
+        OOXML_CELL_PATCHER_SCRIPT,
+    ),
+)
+OoxmlCellPatcherError = ooxml_cell_patcher.OoxmlCellPatcherError
+patch_existing_cells = cast(
+    Callable[..., Path],
+    ooxml_cell_patcher.patch_existing_cells,
 )
 
 
@@ -259,29 +272,31 @@ def optional_text(value: Any) -> str:
     return str(value)
 
 
-def fill_item_rows(
-    worksheet: Worksheet,
+def build_cell_updates(
     items: Sequence[Mapping[str, Any]],
     layout: ExtendedLayout,
-) -> None:
+) -> dict[str, str | int]:
+    updates: dict[str, str | int] = {}
     for offset, item in enumerate(items):
         row = layout.item_start_row + offset
-        worksheet[f"C{row}"] = item["name"]
-        worksheet[f"D{row}"] = item["unit"]
-        worksheet[f"E{row}"] = item["quantity"]
-        worksheet[f"F{row}"] = optional_text(item.get("instruments_and_devices"))
-        worksheet[f"G{row}"] = optional_text(
-            item.get("cabinet_type_dimensions_material")
+        updates[f"C{row}"] = str(item["name"])
+        updates[f"D{row}"] = str(item["unit"])
+        updates[f"E{row}"] = cast(int, item["quantity"])
+        updates[f"F{row}"] = optional_text(item.get("instruments_and_devices"))
+        updates[f"G{row}"] = optional_text(
+            item.get("cabinet_type_dimensions_material"),
         )
-        worksheet[f"H{row}"] = NEEDS_CLARIFICATION
+        updates[f"H{row}"] = NEEDS_CLARIFICATION
 
     for row in range(layout.item_start_row + len(items), layout.item_end_row + 1):
-        worksheet[f"C{row}"] = NEEDS_CLARIFICATION
-        worksheet[f"D{row}"] = "шт"
-        worksheet[f"E{row}"] = 1
-        worksheet[f"F{row}"] = NEEDS_CLARIFICATION
-        worksheet[f"G{row}"] = NEEDS_CLARIFICATION
-        worksheet[f"H{row}"] = NEEDS_CLARIFICATION
+        updates[f"C{row}"] = NEEDS_CLARIFICATION
+        updates[f"D{row}"] = "шт"
+        updates[f"E{row}"] = 1
+        updates[f"F{row}"] = NEEDS_CLARIFICATION
+        updates[f"G{row}"] = NEEDS_CLARIFICATION
+        updates[f"H{row}"] = NEEDS_CLARIFICATION
+
+    return updates
 
 
 def verify_output(
@@ -331,13 +346,21 @@ def generate_extended_workbook(
     workbook = load_template_workbook(template_path)
     worksheet = workbook[SHEET_NAME]
     before = snapshot_workbook(worksheet, layout)
-    fill_item_rows(worksheet, items, layout)
+    cell_updates = build_cell_updates(items, layout)
 
     temporary_output = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp.xlsx"
     )
     try:
-        workbook.save(temporary_output)
+        try:
+            patch_existing_cells(
+                template=template_path,
+                output=temporary_output,
+                sheet_name=SHEET_NAME,
+                updates=cell_updates,
+            )
+        except OoxmlCellPatcherError as error:
+            fail(f"OOXML patching failed: {error}")
         verify_output(temporary_output, layout, before)
         verify_drawing_media_output(before_drawing_media, temporary_output)
         if output_path.exists():
