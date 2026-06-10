@@ -6,7 +6,7 @@ import posixpath
 import re
 import uuid
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
@@ -21,7 +21,8 @@ NS = {"main": SPREADSHEET_NS, "rel": OFFICE_REL_NS}
 WORKBOOK_PART = "xl/workbook.xml"
 WORKBOOK_RELS_PART = "xl/_rels/workbook.xml.rels"
 CELL_RE = re.compile(r"^[A-Z]+[1-9][0-9]*$")
-type CellValue = str | int
+ROW_HIDDEN_RE = re.compile(rb'\s+hidden=(["\'])(?:(?!\1).)*\1')
+type CellValue = str | int | None
 
 ElementTree.register_namespace("", SPREADSHEET_NS)
 ElementTree.register_namespace("r", OFFICE_REL_NS)
@@ -34,6 +35,14 @@ class OoxmlCellPatcherError(Exception):
 @dataclass(frozen=True)
 class CellRange:
     coordinate: str
+    start: int
+    end: int
+    xml: bytes
+
+
+@dataclass(frozen=True)
+class RowStartTagRange:
+    row_number: int
     start: int
     end: int
     xml: bytes
@@ -75,7 +84,11 @@ def validate_cell_coordinate(coordinate: str) -> str:
 
 
 def validate_cell_value(value: object, coordinate: str) -> CellValue:
-    if isinstance(value, bool) or not isinstance(value, (str, int)):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, int))
+        and value is not None
+    ):
         fail(f"unsupported value type for {coordinate}: {type(value).__name__}")
     return value
 
@@ -88,6 +101,30 @@ def validate_updates(updates: Mapping[str, object]) -> dict[str, CellValue]:
             fail(f"duplicate normalized cell coordinate: {normalized}")
         normalized_updates[normalized] = validate_cell_value(raw_value, normalized)
     return normalized_updates
+
+
+def validate_row_number(row_number: object) -> int:
+    if isinstance(row_number, bool) or not isinstance(row_number, int):
+        fail(f"invalid row number: {row_number}")
+    if row_number < 1:
+        fail(f"invalid row number: {row_number}")
+    return row_number
+
+
+def validate_row_hidden_updates(
+    row_hidden_updates: Mapping[int, bool] | None,
+) -> dict[int, bool]:
+    if row_hidden_updates is None:
+        return {}
+    checked: dict[int, bool] = {}
+    for raw_row_number, hidden in row_hidden_updates.items():
+        row_number = validate_row_number(raw_row_number)
+        if not isinstance(hidden, bool):
+            fail(
+                "invalid row hidden value for " f"{row_number}: {type(hidden).__name__}"
+            )
+        checked[row_number] = hidden
+    return checked
 
 
 def normalize_workbook_target(target: str) -> str:
@@ -143,11 +180,28 @@ def is_worksheet_cell(name: str) -> bool:
     return name == namespaced_name(SPREADSHEET_NS, "c")
 
 
+def is_worksheet_row(name: str) -> bool:
+    return name == namespaced_name(SPREADSHEET_NS, "row")
+
+
 def attribute_value(attrs: list[str], name: str) -> str | None:
     for index in range(0, len(attrs), 2):
         if attrs[index] == name:
             return attrs[index + 1]
     return None
+
+
+def positive_int_attribute(attrs: list[str], name: str) -> int | None:
+    value = attribute_value(attrs, name)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        fail(f"invalid row number: {value}")
+    if parsed < 1:
+        fail(f"invalid row number: {value}")
+    return parsed
 
 
 def cell_ranges(worksheet_xml: bytes) -> dict[str, list[CellRange]]:
@@ -193,6 +247,36 @@ def cell_ranges(worksheet_xml: bytes) -> dict[str, list[CellRange]]:
     return ranges
 
 
+def row_start_tag_ranges(worksheet_xml: bytes) -> dict[int, list[RowStartTagRange]]:
+    parser = expat.ParserCreate(namespace_separator=" ")
+    parser.ordered_attributes = True
+    ranges: dict[int, list[RowStartTagRange]] = {}
+
+    def start_element(name: str, attrs: list[str]) -> None:
+        if not is_worksheet_row(name):
+            return
+        row_number = positive_int_attribute(attrs, "r")
+        if row_number is None:
+            return
+        start = parser.CurrentByteIndex
+        end = find_markup_end(worksheet_xml, start)
+        ranges.setdefault(row_number, []).append(
+            RowStartTagRange(
+                row_number=row_number,
+                start=start,
+                end=end,
+                xml=worksheet_xml[start:end],
+            )
+        )
+
+    parser.StartElementHandler = start_element
+    try:
+        parser.Parse(worksheet_xml, True)
+    except expat.ExpatError as error:
+        fail(f"invalid worksheet XML: {error}")
+    return ranges
+
+
 def remove_cell_value_nodes(cell: ElementTree.Element) -> None:
     removable_tags = {
         "f",
@@ -227,9 +311,15 @@ def patch_int_cell(cell: ElementTree.Element, value: int) -> None:
     value_node.text = str(value)
 
 
+def patch_empty_cell(cell: ElementTree.Element) -> None:
+    cell.attrib.pop("t", None)
+
+
 def patch_cell(cell: ElementTree.Element, value: CellValue) -> None:
     remove_cell_value_nodes(cell)
-    if isinstance(value, str):
+    if value is None:
+        patch_empty_cell(cell)
+    elif isinstance(value, str):
         patch_string_cell(cell, value)
     else:
         patch_int_cell(cell, value)
@@ -244,11 +334,36 @@ def patched_cell_xml(cell_xml: bytes, value: CellValue) -> bytes:
     return ElementTree.tostring(cell, encoding="utf-8")
 
 
+def hidden_row_start_tag_xml(row_xml: bytes, hidden: bool) -> bytes:
+    if hidden:
+        if ROW_HIDDEN_RE.search(row_xml):
+            return ROW_HIDDEN_RE.sub(b' hidden="1"', row_xml, count=1)
+        closing = b"/>" if row_xml.endswith(b"/>") else b">"
+        return row_xml[: -len(closing)] + b' hidden="1"' + closing
+    return ROW_HIDDEN_RE.sub(b"", row_xml, count=1)
+
+
+def ensure_non_overlapping_replacements(
+    replacements: Sequence[tuple[int, int, bytes]],
+) -> None:
+    ordered = sorted(replacements)
+    previous_end = -1
+    for start, end, _replacement in ordered:
+        if start < previous_end:
+            fail("internal patch ranges overlap")
+        previous_end = end
+
+
 def patched_worksheet_xml(
     worksheet_xml: bytes,
     updates: Mapping[str, object],
+    row_hidden_updates: Mapping[int, bool] | None = None,
 ) -> bytes:
     normalized_updates = validate_updates(updates)
+    normalized_row_updates = validate_row_hidden_updates(row_hidden_updates)
+    if not normalized_updates and not normalized_row_updates:
+        fail("updates must not be empty")
+
     ranges = cell_ranges(worksheet_xml)
     replacements: list[tuple[int, int, bytes]] = []
     for coordinate, value in normalized_updates.items():
@@ -266,6 +381,23 @@ def patched_worksheet_xml(
             )
         )
 
+    row_ranges = row_start_tag_ranges(worksheet_xml)
+    for row_number, hidden in normalized_row_updates.items():
+        matches = row_ranges.get(row_number, [])
+        if not matches:
+            fail(f"row does not exist: {row_number}")
+        if len(matches) > 1:
+            fail(f"duplicate row number in worksheet XML: {row_number}")
+        row_range = matches[0]
+        replacements.append(
+            (
+                row_range.start,
+                row_range.end,
+                hidden_row_start_tag_xml(row_range.xml, hidden),
+            )
+        )
+
+    ensure_non_overlapping_replacements(replacements)
     patched = bytearray(worksheet_xml)
     for start, end, replacement in sorted(replacements, reverse=True):
         patched[start:end] = replacement
@@ -312,8 +444,9 @@ def patch_existing_cells(
     output: Path,
     sheet_name: str,
     updates: Mapping[str, object],
+    row_hidden_updates: Mapping[int, bool] | None = None,
 ) -> Path:
-    if not updates:
+    if not updates and not row_hidden_updates:
         fail("updates must not be empty")
     template_path, output_path = validate_paths(template, output)
     temporary_output = output_path.with_name(
@@ -329,7 +462,11 @@ def patch_existing_cells(
         template_parts = archive_bytes(template_path)
         if worksheet_part not in template_parts:
             fail(f"worksheet part is missing: {worksheet_part}")
-        worksheet_xml = patched_worksheet_xml(template_parts[worksheet_part], updates)
+        worksheet_xml = patched_worksheet_xml(
+            template_parts[worksheet_part],
+            updates,
+            row_hidden_updates,
+        )
         write_patched_package(
             template_parts=template_parts,
             worksheet_part=worksheet_part,

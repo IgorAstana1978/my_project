@@ -275,8 +275,8 @@ def optional_text(value: Any) -> str:
 def build_cell_updates(
     items: Sequence[Mapping[str, Any]],
     layout: ExtendedLayout,
-) -> dict[str, str | int]:
-    updates: dict[str, str | int] = {}
+) -> dict[str, str | int | None]:
+    updates: dict[str, str | int | None] = {}
     for offset, item in enumerate(items):
         row = layout.item_start_row + offset
         updates[f"C{row}"] = str(item["name"])
@@ -289,14 +289,25 @@ def build_cell_updates(
         updates[f"H{row}"] = NEEDS_CLARIFICATION
 
     for row in range(layout.item_start_row + len(items), layout.item_end_row + 1):
-        updates[f"C{row}"] = NEEDS_CLARIFICATION
-        updates[f"D{row}"] = "шт"
-        updates[f"E{row}"] = 1
-        updates[f"F{row}"] = NEEDS_CLARIFICATION
-        updates[f"G{row}"] = NEEDS_CLARIFICATION
-        updates[f"H{row}"] = NEEDS_CLARIFICATION
+        updates[f"C{row}"] = None
+        updates[f"D{row}"] = None
+        updates[f"E{row}"] = None
+        updates[f"F{row}"] = None
+        updates[f"G{row}"] = None
+        updates[f"H{row}"] = None
 
     return updates
+
+
+def build_row_hidden_updates(
+    items: Sequence[Mapping[str, Any]],
+    layout: ExtendedLayout,
+) -> dict[int, bool]:
+    used_rows = {layout.item_start_row + offset for offset in range(len(items))}
+    return {
+        row: row not in used_rows
+        for row in range(layout.item_start_row, layout.item_end_row + 1)
+    }
 
 
 def verify_output(
@@ -347,6 +358,7 @@ def generate_extended_workbook(
     worksheet = workbook[SHEET_NAME]
     before = snapshot_workbook(worksheet, layout)
     cell_updates = build_cell_updates(items, layout)
+    row_hidden_updates = build_row_hidden_updates(items, layout)
 
     temporary_output = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp.xlsx"
@@ -358,6 +370,7 @@ def generate_extended_workbook(
                 output=temporary_output,
                 sheet_name=SHEET_NAME,
                 updates=cell_updates,
+                row_hidden_updates=row_hidden_updates,
             )
         except OoxmlCellPatcherError as error:
             fail(f"OOXML patching failed: {error}")

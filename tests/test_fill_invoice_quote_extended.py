@@ -250,10 +250,17 @@ def workbook_values(path: Path) -> dict[str, Any]:
     }
 
 
+def workbook(path: Path) -> Any:
+    return load_workbook(path, data_only=False)
+
+
+def worksheet(path: Path) -> Any:
+    return workbook(path)[extended.SHEET_NAME]
+
+
 def merged_ranges(path: Path) -> tuple[str, ...]:
-    workbook = load_workbook(path, data_only=False)
-    worksheet = workbook[extended.SHEET_NAME]
-    return tuple(str(item) for item in worksheet.merged_cells.ranges)
+    sheet = worksheet(path)
+    return tuple(str(item) for item in sheet.merged_cells.ranges)
 
 
 def test_extended_template_is_created_in_tmp_path(tmp_path: Path) -> None:
@@ -331,6 +338,137 @@ def test_generated_template_without_drawing_media_creates_output(
     assert merged_ranges(output) == (layout.signature_range,)
 
 
+def test_unused_rows_are_cleared_and_hidden_for_capacity_eight(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    sheet = worksheet(output)
+    for row in range(17, 23):
+        assert sheet.row_dimensions[row].hidden is False
+    for row in range(23, 25):
+        assert sheet.row_dimensions[row].hidden is True
+        for column in "CDEFGH":
+            assert sheet[f"{column}{row}"].value is None
+        assert sheet[f"I{row}"].value == f"=E{row}*H{row}"
+    assert sheet["I25"].value == "=SUM(I17:I24)"
+    assert sheet["C23"].value is None
+    assert sheet["D23"].value is None
+    assert sheet["E23"].value is None
+
+
+def test_pre_hidden_used_row_becomes_visible_after_generation(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    template_workbook = load_workbook(template, data_only=False)
+    template_sheet = template_workbook[extended.SHEET_NAME]
+    template_sheet.row_dimensions[17].hidden = True
+    template_workbook.save(template)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert worksheet(output).row_dimensions[17].hidden is False
+
+
+def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template, capacity=100)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(78),
+        layout=layout,
+    )
+
+    sheet = worksheet(output)
+    assert sheet["C17"].value == "ВРУ-1"
+    assert sheet["C94"].value == "ВРУ-78"
+    for row in range(17, 95):
+        assert sheet.row_dimensions[row].hidden is False
+    for row in range(95, 117):
+        assert sheet.row_dimensions[row].hidden is True
+        for column in "CDEFGH":
+            assert sheet[f"{column}{row}"].value is None
+        assert sheet[f"I{row}"].value == f"=E{row}*H{row}"
+    assert sheet["I117"].value == "=SUM(I17:I116)"
+    assert sheet["B120"].value == "signature"
+    assert merged_ranges(output) == ("B120:I122",)
+
+
+def test_generated_capacity_hundred_with_full_capacity_has_no_unused_rows(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template, capacity=100)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(100),
+        layout=layout,
+    )
+
+    sheet = worksheet(output)
+    assert sheet["C116"].value == "ВРУ-100"
+    for row in range(17, 117):
+        assert sheet.row_dimensions[row].hidden is False
+    assert sheet["I117"].value == "=SUM(I17:I116)"
+    assert sheet["B120"].value == "signature"
+
+
+def test_capacity_hundred_overflow_stops_before_output(tmp_path: Path) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template, capacity=100)
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(101),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "items count 101 exceeds layout capacity 100" in str(error)
+    else:
+        raise AssertionError("items above capacity should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
 def test_real_drawing_media_round_trip_preserves_template_parts(
     tmp_path: Path,
 ) -> None:
@@ -381,15 +519,26 @@ def test_build_cell_updates_maps_items_and_unused_rows() -> None:
     assert updates["C22"] == "ВРУ-6"
     assert updates["G22"] == "Шкаф ВРУ"
     assert updates["H22"] == "нужно уточнить"
-    assert updates["C23"] == "нужно уточнить"
-    assert updates["D23"] == "шт"
-    assert updates["E23"] == 1
-    assert updates["F23"] == "нужно уточнить"
-    assert updates["G23"] == "нужно уточнить"
-    assert updates["H23"] == "нужно уточнить"
-    assert updates["C24"] == "нужно уточнить"
-    assert updates["D24"] == "шт"
-    assert updates["E24"] == 1
+    assert updates["C23"] is None
+    assert updates["D23"] is None
+    assert updates["E23"] is None
+    assert updates["F23"] is None
+    assert updates["G23"] is None
+    assert updates["H23"] is None
+    assert updates["C24"] is None
+    assert updates["D24"] is None
+    assert updates["E24"] is None
+
+
+def test_build_row_hidden_updates_marks_used_visible_and_unused_hidden() -> None:
+    layout = extended_layout()
+
+    updates = extended.build_row_hidden_updates(payload(6)["items"], layout)
+
+    assert updates[17] is False
+    assert updates[22] is False
+    assert updates[23] is True
+    assert updates[24] is True
 
 
 def test_generate_extended_workbook_uses_ooxml_patcher(
@@ -421,6 +570,11 @@ def test_generate_extended_workbook_uses_ooxml_patcher(
         assert isinstance(updates["E17"], int)
         assert updates["C22"] == "ВРУ-6"
         assert updates["H22"] == "нужно уточнить"
+        row_updates = kwargs["row_hidden_updates"]
+        assert row_updates[17] is False
+        assert row_updates[22] is False
+        assert row_updates[23] is True
+        assert row_updates[24] is True
         return cast(Path, original_patch(**kwargs))
 
     original_verify_output = extended.verify_output

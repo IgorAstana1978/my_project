@@ -226,6 +226,19 @@ def target_cell_ranges(
     return selected
 
 
+def target_row_ranges(
+    worksheet_xml: bytes,
+    row_numbers: set[int],
+) -> dict[int, Any]:
+    ranges = patcher.row_start_tag_ranges(worksheet_xml)
+    selected = {}
+    for row_number in row_numbers:
+        matches = ranges[row_number]
+        assert len(matches) == 1
+        selected[row_number] = matches[0]
+    return selected
+
+
 def cell_xml_bytes(worksheet_xml: bytes, coordinate: str) -> bytes:
     ranges = target_cell_ranges(worksheet_xml, {coordinate})
     cell_range = ranges[coordinate]
@@ -242,6 +255,40 @@ def mask_target_cells(worksheet_xml: bytes, coordinates: set[str]) -> bytes:
     ):
         placeholder = f"__PATCHED_CELL_{coordinate}__".encode("ascii")
         masked[cell_range.start : cell_range.end] = placeholder
+    return bytes(masked)
+
+
+def mask_target_cells_and_rows(
+    worksheet_xml: bytes,
+    coordinates: set[str],
+    row_numbers: set[int],
+) -> bytes:
+    masked = bytearray(worksheet_xml)
+    replacements: list[tuple[int, int, bytes]] = []
+    for coordinate, cell_range in target_cell_ranges(
+        worksheet_xml,
+        coordinates,
+    ).items():
+        replacements.append(
+            (
+                cell_range.start,
+                cell_range.end,
+                f"__PATCHED_CELL_{coordinate}__".encode("ascii"),
+            )
+        )
+    for row_number, row_range in target_row_ranges(
+        worksheet_xml,
+        row_numbers,
+    ).items():
+        replacements.append(
+            (
+                row_range.start,
+                row_range.end,
+                f"__PATCHED_ROW_{row_number}__".encode("ascii"),
+            )
+        )
+    for start, end, placeholder in sorted(replacements, reverse=True):
+        masked[start:end] = placeholder
     return bytes(masked)
 
 
@@ -544,6 +591,213 @@ def test_formula_cached_value_and_existing_cell_types_are_replaced_in_target_onl
     assert b's="1"' in c17
     assert b's="1"' in d17
     assert b's="1"' in f17
+
+
+def test_none_clears_string_and_numeric_cells_and_preserves_styles(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    before_styles = cell_styles(template, {"C17", "E17"})
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={"C17": None, "E17": None},
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[SHEET_NAME]
+    assert worksheet["C17"].value is None
+    assert worksheet["E17"].value is None
+    assert cell_styles(output, {"C17", "E17"}) == before_styles
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells(after_xml, {"C17", "E17"}) == mask_target_cells(
+        before_xml,
+        {"C17", "E17"},
+    )
+    c17 = cell_xml_bytes(after_xml, "C17")
+    e17 = cell_xml_bytes(after_xml, "E17")
+    assert b"<v>" not in c17
+    assert b"<is>" not in c17
+    assert b"t=" not in c17
+    assert b"<v>" not in e17
+    assert b"t=" not in e17
+
+
+def test_none_clears_formula_and_cached_value_inside_target_cell(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    replace_cell_xml(
+        template,
+        "C17",
+        b'<c r="C17" s="1"><f>SUM(A1:A2)</f><v>2</v></c>',
+    )
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={"C17": None},
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[SHEET_NAME]
+    assert worksheet["C17"].value is None
+    c17 = cell_xml_bytes(worksheet_xml_bytes(output), "C17")
+    assert b"<f>" not in c17
+    assert b"<v>" not in c17
+    assert b's="1"' in c17
+
+
+def test_row_hidden_updates_patch_existing_row_start_tags_only(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={},
+        row_hidden_updates={17: False, 18: True},
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[SHEET_NAME]
+    assert worksheet.row_dimensions[17].hidden is False
+    assert worksheet.row_dimensions[18].hidden is True
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells_and_rows(after_xml, set(), {17, 18}) == (
+        mask_target_cells_and_rows(before_xml, set(), {17, 18})
+    )
+    row_17 = target_row_ranges(after_xml, {17})[17].xml
+    row_18 = target_row_ranges(after_xml, {18})[18].xml
+    assert b"hidden=" not in row_17
+    assert b'hidden="1"' in row_18
+    assert b'x14ac:dyDescent="0.25"' in row_17
+    assert b'customHeight="1"' in row_17
+
+
+def test_cell_and_row_patching_together_preserves_other_bytes_and_media(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+    before_snapshot = snapshot.build_drawing_media_snapshot(template)
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={"C17": None, "D18": "видимая строка"},
+        row_hidden_updates={17: False, 18: True},
+    )
+
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells_and_rows(after_xml, {"C17", "D18"}, {17, 18}) == (
+        mask_target_cells_and_rows(before_xml, {"C17", "D18"}, {17, 18})
+    )
+    assert_non_target_parts_unchanged(template, output)
+    after_snapshot = snapshot.build_drawing_media_snapshot(output)
+    snapshot.compare_drawing_media_snapshots(before_snapshot, after_snapshot)
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[SHEET_NAME]
+    assert worksheet["C17"].value is None
+    assert worksheet["D18"].value == "видимая строка"
+    assert worksheet.row_dimensions[17].hidden is False
+    assert worksheet.row_dimensions[18].hidden is True
+
+
+def test_missing_row_fails_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+
+    assert_patcher_error(
+        "row does not exist: 999",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_hidden_updates={999: True},
+        ),
+    )
+    assert not output.exists()
+
+
+def test_duplicate_row_number_in_worksheet_xml_fails_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    sheet_part = worksheet_part(template)
+    sheet_xml = worksheet_xml_bytes(template)
+    row_18 = target_row_ranges(sheet_xml, {18})[18]
+    sheet_xml = (
+        sheet_xml[: row_18.start]
+        + row_18.xml.replace(b'r="18"', b'r="17"', 1)
+        + sheet_xml[row_18.end :]
+    )
+    rewrite_xlsx(template, {sheet_part: sheet_xml})
+
+    assert_patcher_error(
+        "duplicate row number in worksheet XML: 17",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_hidden_updates={17: True},
+        ),
+    )
+    assert not output.exists()
+
+
+def test_invalid_row_number_and_visibility_type_fail_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+
+    assert_patcher_error(
+        "invalid row number: 0",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_hidden_updates={0: True},
+        ),
+    )
+    assert not output.exists()
+
+    second_output_dir = tmp_path / "out2"
+    second_output_dir.mkdir()
+    second_output = second_output_dir / "patched.xlsx"
+    assert_patcher_error(
+        "invalid row hidden value for 17: str",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=second_output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_hidden_updates={17: "yes"},
+        ),
+    )
+    assert not second_output.exists()
 
 
 def test_duplicate_normalized_input_coordinate_fails_closed(tmp_path: Path) -> None:
