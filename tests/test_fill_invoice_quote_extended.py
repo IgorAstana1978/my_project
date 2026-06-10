@@ -199,6 +199,232 @@ def test_merged_ranges_are_preserved_after_generation(tmp_path: Path) -> None:
     assert merged_ranges(output) == before
 
 
+def test_generated_template_without_drawing_media_creates_output(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert output.is_file()
+    assert workbook_values(output)["I25"] == "=SUM(I17:I24)"
+    assert merged_ranges(output) == (layout.signature_range,)
+
+
+def test_drawing_media_snapshot_uses_template_and_temporary_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    snapshot_paths: list[Path] = []
+    compared: list[tuple[Any, Any]] = []
+
+    def fake_build_drawing_media_snapshot(path: Path) -> str:
+        snapshot_paths.append(path)
+        return f"snapshot:{path.name}"
+
+    def fake_compare_drawing_media_snapshots(before: Any, after: Any) -> None:
+        compared.append((before, after))
+        temporary_output = snapshot_paths[-1]
+        assert before == f"snapshot:{template.name}"
+        assert after == f"snapshot:{temporary_output.name}"
+        assert temporary_output != output
+        assert temporary_output.parent == output.parent
+        assert temporary_output.name.startswith(f".{output.stem}.")
+        assert temporary_output.name.endswith(".tmp.xlsx")
+        assert temporary_output.exists()
+        assert not output.exists()
+
+    monkeypatch.setattr(
+        extended,
+        "build_drawing_media_snapshot",
+        fake_build_drawing_media_snapshot,
+    )
+    monkeypatch.setattr(
+        extended,
+        "compare_drawing_media_snapshots",
+        fake_compare_drawing_media_snapshots,
+    )
+
+    result = extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=payload(6),
+        layout=layout,
+    )
+
+    assert result == output
+    assert output.is_file()
+    assert snapshot_paths[0] == template
+    assert len(snapshot_paths) == 2
+    assert snapshot_paths[1] != output
+    assert compared == [
+        (f"snapshot:{template.name}", f"snapshot:{snapshot_paths[1].name}")
+    ]
+
+
+def test_template_drawing_media_snapshot_error_fails_before_temp_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    def fail_template_snapshot(_path: Path) -> Any:
+        raise extended.DrawingMediaSnapshotError("template media missing")
+
+    monkeypatch.setattr(
+        extended,
+        "build_drawing_media_snapshot",
+        fail_template_snapshot,
+    )
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(6),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "drawing/media verification failed" in str(error)
+        assert "template media missing" in str(error)
+    else:
+        raise AssertionError("template snapshot error should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_temporary_output_drawing_media_snapshot_error_cleans_temp_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    def fail_temporary_output_snapshot(path: Path) -> object:
+        if path == template:
+            return object()
+        raise extended.DrawingMediaSnapshotError("temporary output unreadable")
+
+    monkeypatch.setattr(
+        extended,
+        "build_drawing_media_snapshot",
+        fail_temporary_output_snapshot,
+    )
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(6),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "drawing/media verification failed" in str(error)
+        assert "temporary output unreadable" in str(error)
+    else:
+        raise AssertionError("temporary output snapshot error should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_drawing_media_compare_error_cleans_temp_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+
+    def fake_build_drawing_media_snapshot(_path: Path) -> object:
+        return object()
+
+    def fail_drawing_media_compare(_before: Any, _after: Any) -> None:
+        raise extended.DrawingMediaSnapshotError("media file hash changed")
+
+    monkeypatch.setattr(
+        extended,
+        "build_drawing_media_snapshot",
+        fake_build_drawing_media_snapshot,
+    )
+    monkeypatch.setattr(
+        extended,
+        "compare_drawing_media_snapshots",
+        fail_drawing_media_compare,
+    )
+
+    try:
+        extended.generate_extended_workbook(
+            template=template,
+            output=output,
+            payload=payload(6),
+            layout=layout,
+        )
+    except extended.ExtendedFillError as error:
+        assert "drawing/media verification failed" in str(error)
+        assert "media file hash changed" in str(error)
+    else:
+        raise AssertionError("drawing/media compare error should fail")
+
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
+def test_cli_returns_one_without_traceback_for_drawing_media_error(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "invalid_template.xlsx"
+    payload_json = tmp_path / "payload.json"
+    layout_json_path = tmp_path / "layout.json"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = extended_layout()
+    template.write_bytes(b"not a zip")
+    write_json(payload_json, payload(6))
+    write_json(layout_json_path, layout_json(layout))
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT)]
+        + cli_args(payload_json, layout_json_path, template, output),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "ERROR:" in result.stderr
+    assert "drawing/media verification failed" in result.stderr
+    assert "invalid xlsx ZIP package" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not output.exists()
+    assert list(output_dir.iterdir()) == []
+
+
 def test_merged_range_change_fails_closed_and_removes_temp_output(
     tmp_path: Path,
     monkeypatch: Any,

@@ -7,13 +7,15 @@ layer. It writes only to an explicitly provided test/extended layout.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from types import ModuleType
+from typing import Any, NoReturn, cast
 
 from openpyxl import load_workbook
 from openpyxl.utils.cell import range_boundaries
@@ -21,6 +23,7 @@ from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DRAWING_MEDIA_SNAPSHOT_SCRIPT = PROJECT_ROOT / "scripts" / "drawing_media_snapshot.py"
 SHEET_NAME = "Счёт-КП шаблон"
 NEEDS_CLARIFICATION = "нужно уточнить"
 
@@ -48,8 +51,36 @@ class WorkbookSnapshot:
     merged_ranges: tuple[str, ...]
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise ExtendedFillError(message)
+
+
+def load_sibling_module(module_name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        fail(f"could not load helper module: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+drawing_media_snapshot = cast(
+    Any,
+    load_sibling_module(
+        "drawing_media_snapshot_for_extended_writer",
+        DRAWING_MEDIA_SNAPSHOT_SCRIPT,
+    ),
+)
+DrawingMediaSnapshotError = drawing_media_snapshot.DrawingMediaSnapshotError
+build_drawing_media_snapshot = cast(
+    Callable[[Path], Any],
+    drawing_media_snapshot.build_drawing_media_snapshot,
+)
+compare_drawing_media_snapshots = cast(
+    Callable[[Any, Any], None],
+    drawing_media_snapshot.compare_drawing_media_snapshots,
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -270,6 +301,21 @@ def verify_output(
         fail("merged ranges changed")
 
 
+def verified_drawing_media_snapshot(path: Path) -> Any:
+    try:
+        return build_drawing_media_snapshot(path)
+    except DrawingMediaSnapshotError as error:
+        fail(f"drawing/media verification failed: {error}")
+
+
+def verify_drawing_media_output(before: Any, output: Path) -> None:
+    after = verified_drawing_media_snapshot(output)
+    try:
+        compare_drawing_media_snapshots(before, after)
+    except DrawingMediaSnapshotError as error:
+        fail(f"drawing/media verification failed: {error}")
+
+
 def generate_extended_workbook(
     template: Path,
     output: Path,
@@ -280,6 +326,7 @@ def generate_extended_workbook(
     items = require_items(payload)
     validate_capacity(items, layout)
     template_path, output_path = validate_template_and_output(template, output)
+    before_drawing_media = verified_drawing_media_snapshot(template_path)
 
     workbook = load_template_workbook(template_path)
     worksheet = workbook[SHEET_NAME]
@@ -292,6 +339,7 @@ def generate_extended_workbook(
     try:
         workbook.save(temporary_output)
         verify_output(temporary_output, layout, before)
+        verify_drawing_media_output(before_drawing_media, temporary_output)
         if output_path.exists():
             fail(f"output already exists: {output_path}")
         temporary_output.replace(output_path)
