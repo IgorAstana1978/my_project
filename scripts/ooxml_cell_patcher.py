@@ -7,8 +7,10 @@ import re
 import uuid
 import zipfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
+from xml.parsers import expat
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -27,6 +29,14 @@ ElementTree.register_namespace("r", OFFICE_REL_NS)
 
 class OoxmlCellPatcherError(Exception):
     """Expected fail-closed OOXML patching error."""
+
+
+@dataclass(frozen=True)
+class CellRange:
+    coordinate: str
+    start: int
+    end: int
+    xml: bytes
 
 
 def fail(message: str) -> None:
@@ -70,6 +80,16 @@ def validate_cell_value(value: object, coordinate: str) -> CellValue:
     return value
 
 
+def validate_updates(updates: Mapping[str, object]) -> dict[str, CellValue]:
+    normalized_updates: dict[str, CellValue] = {}
+    for coordinate, raw_value in updates.items():
+        normalized = validate_cell_coordinate(coordinate)
+        if normalized in normalized_updates:
+            fail(f"duplicate normalized cell coordinate: {normalized}")
+        normalized_updates[normalized] = validate_cell_value(raw_value, normalized)
+    return normalized_updates
+
+
 def normalize_workbook_target(target: str) -> str:
     if target.startswith("/"):
         return target.lstrip("/")
@@ -108,17 +128,76 @@ def worksheet_part_for_sheet(archive: zipfile.ZipFile, sheet_name: str) -> str:
     fail(f"worksheet not found: {sheet_name}")
 
 
-def cell_map(worksheet: ElementTree.Element) -> dict[str, ElementTree.Element]:
-    cells: dict[str, ElementTree.Element] = {}
-    for cell in worksheet.findall(".//main:c", NS):
-        coordinate = cell.get("r")
-        if coordinate:
-            cells[coordinate.upper()] = cell
-    return cells
+def find_markup_end(xml: bytes, start: int) -> int:
+    end = xml.find(b">", start)
+    if end == -1:
+        fail("invalid worksheet XML: cell element is not closed")
+    return end + 1
+
+
+def namespaced_name(uri: str, local_name: str) -> str:
+    return f"{uri} {local_name}"
+
+
+def is_worksheet_cell(name: str) -> bool:
+    return name == namespaced_name(SPREADSHEET_NS, "c")
+
+
+def attribute_value(attrs: list[str], name: str) -> str | None:
+    for index in range(0, len(attrs), 2):
+        if attrs[index] == name:
+            return attrs[index + 1]
+    return None
+
+
+def cell_ranges(worksheet_xml: bytes) -> dict[str, list[CellRange]]:
+    parser = expat.ParserCreate(namespace_separator=" ")
+    parser.ordered_attributes = True
+    open_cells: list[tuple[str, int]] = []
+    ranges: dict[str, list[CellRange]] = {}
+
+    def start_element(name: str, attrs: list[str]) -> None:
+        if not is_worksheet_cell(name):
+            return
+        coordinate = attribute_value(attrs, "r")
+        if coordinate is None:
+            return
+        open_cells.append((coordinate.upper(), parser.CurrentByteIndex))
+
+    def end_element(name: str) -> None:
+        if not is_worksheet_cell(name):
+            return
+        if not open_cells:
+            fail("invalid worksheet XML: unexpected cell close")
+        coordinate, start = open_cells.pop()
+        end = parser.CurrentByteIndex
+        if worksheet_xml[end : end + 2] == b"</":
+            end = find_markup_end(worksheet_xml, end)
+        ranges.setdefault(coordinate, []).append(
+            CellRange(
+                coordinate=coordinate,
+                start=start,
+                end=end,
+                xml=worksheet_xml[start:end],
+            )
+        )
+
+    parser.StartElementHandler = start_element
+    parser.EndElementHandler = end_element
+    try:
+        parser.Parse(worksheet_xml, True)
+    except expat.ExpatError as error:
+        fail(f"invalid worksheet XML: {error}")
+    if open_cells:
+        fail("invalid worksheet XML: unclosed cell element")
+    return ranges
 
 
 def remove_cell_value_nodes(cell: ElementTree.Element) -> None:
     removable_tags = {
+        "f",
+        "v",
+        "is",
         f"{{{SPREADSHEET_NS}}}f",
         f"{{{SPREADSHEET_NS}}}v",
         f"{{{SPREADSHEET_NS}}}is",
@@ -128,17 +207,23 @@ def remove_cell_value_nodes(cell: ElementTree.Element) -> None:
             cell.remove(child)
 
 
+def child_tag(cell: ElementTree.Element, local_name: str) -> str:
+    if cell.tag.startswith("{"):
+        return f"{{{SPREADSHEET_NS}}}{local_name}"
+    return local_name
+
+
 def patch_string_cell(cell: ElementTree.Element, value: str) -> None:
     cell.set("t", "inlineStr")
-    inline_string = ElementTree.SubElement(cell, f"{{{SPREADSHEET_NS}}}is")
-    text = ElementTree.SubElement(inline_string, f"{{{SPREADSHEET_NS}}}t")
+    inline_string = ElementTree.SubElement(cell, child_tag(cell, "is"))
+    text = ElementTree.SubElement(inline_string, child_tag(cell, "t"))
     text.set(f"{{{XML_NS}}}space", "preserve")
     text.text = value
 
 
 def patch_int_cell(cell: ElementTree.Element, value: int) -> None:
     cell.attrib.pop("t", None)
-    value_node = ElementTree.SubElement(cell, f"{{{SPREADSHEET_NS}}}v")
+    value_node = ElementTree.SubElement(cell, child_tag(cell, "v"))
     value_node.text = str(value)
 
 
@@ -150,27 +235,41 @@ def patch_cell(cell: ElementTree.Element, value: CellValue) -> None:
         patch_int_cell(cell, value)
 
 
+def patched_cell_xml(cell_xml: bytes, value: CellValue) -> bytes:
+    try:
+        cell = ElementTree.fromstring(cell_xml)
+    except ElementTree.ParseError as error:
+        fail(f"invalid cell XML: {error}")
+    patch_cell(cell, value)
+    return ElementTree.tostring(cell, encoding="utf-8")
+
+
 def patched_worksheet_xml(
     worksheet_xml: bytes,
     updates: Mapping[str, object],
 ) -> bytes:
-    try:
-        worksheet = ElementTree.fromstring(worksheet_xml)
-    except ElementTree.ParseError as error:
-        fail(f"invalid worksheet XML: {error}")
-
-    cells = cell_map(worksheet)
-    normalized_updates: dict[str, CellValue] = {}
-    for coordinate, raw_value in updates.items():
-        normalized = validate_cell_coordinate(coordinate)
-        if normalized not in cells:
-            fail(f"cell does not exist: {normalized}")
-        normalized_updates[normalized] = validate_cell_value(raw_value, normalized)
-
+    normalized_updates = validate_updates(updates)
+    ranges = cell_ranges(worksheet_xml)
+    replacements: list[tuple[int, int, bytes]] = []
     for coordinate, value in normalized_updates.items():
-        patch_cell(cells[coordinate], value)
+        matches = ranges.get(coordinate, [])
+        if not matches:
+            fail(f"cell does not exist: {coordinate}")
+        if len(matches) > 1:
+            fail(f"duplicate cell coordinate in worksheet XML: {coordinate}")
+        cell_range = matches[0]
+        replacements.append(
+            (
+                cell_range.start,
+                cell_range.end,
+                patched_cell_xml(cell_range.xml, value),
+            )
+        )
 
-    return ElementTree.tostring(worksheet, encoding="utf-8", xml_declaration=True)
+    patched = bytearray(worksheet_xml)
+    for start, end, replacement in sorted(replacements, reverse=True):
+        patched[start:end] = replacement
+    return bytes(patched)
 
 
 def archive_bytes(path: Path) -> dict[str, bytes]:

@@ -155,8 +155,13 @@ def write_template(path: Path) -> None:
     worksheet.merge_cells("B20:I22")
     worksheet.freeze_panes = "C17"
     worksheet.print_title_rows = "1:16"
+    worksheet.print_options.horizontalCentered = True
     worksheet.page_setup.orientation = "landscape"
     worksheet.page_setup.fitToWidth = 1
+    worksheet.page_margins.left = 0.25
+    worksheet.page_margins.right = 0.25
+    worksheet.page_margins.top = 0.5
+    worksheet.page_margins.bottom = 0.5
     worksheet.row_dimensions[17].height = 27
     worksheet.column_dimensions["C"].width = 32
     for row in range(17, 19):
@@ -203,6 +208,51 @@ def worksheet_root(path: Path) -> ElementTree.Element:
         return ElementTree.fromstring(archive.read(part))
 
 
+def worksheet_xml_bytes(path: Path) -> bytes:
+    with ZipFile(path) as archive:
+        return archive.read(worksheet_part(path))
+
+
+def target_cell_ranges(
+    worksheet_xml: bytes,
+    coordinates: set[str],
+) -> dict[str, Any]:
+    ranges = patcher.cell_ranges(worksheet_xml)
+    selected = {}
+    for coordinate in coordinates:
+        matches = ranges[coordinate]
+        assert len(matches) == 1
+        selected[coordinate] = matches[0]
+    return selected
+
+
+def cell_xml_bytes(worksheet_xml: bytes, coordinate: str) -> bytes:
+    ranges = target_cell_ranges(worksheet_xml, {coordinate})
+    cell_range = ranges[coordinate]
+    return worksheet_xml[cell_range.start : cell_range.end]
+
+
+def mask_target_cells(worksheet_xml: bytes, coordinates: set[str]) -> bytes:
+    masked = bytearray(worksheet_xml)
+    ranges = target_cell_ranges(worksheet_xml, coordinates)
+    for coordinate, cell_range in sorted(
+        ranges.items(),
+        key=lambda item: item[1].start,
+        reverse=True,
+    ):
+        placeholder = f"__PATCHED_CELL_{coordinate}__".encode("ascii")
+        masked[cell_range.start : cell_range.end] = placeholder
+    return bytes(masked)
+
+
+def root_start_tag(worksheet_xml: bytes) -> bytes:
+    start = worksheet_xml.find(b"<worksheet")
+    assert start != -1
+    end = worksheet_xml.find(b">", start)
+    assert end != -1
+    return worksheet_xml[start : end + 1]
+
+
 def cell_elements(path: Path) -> dict[str, ElementTree.Element]:
     cells: dict[str, ElementTree.Element] = {}
     for cell in worksheet_root(path).findall(".//main:c", NS):
@@ -235,12 +285,86 @@ def assert_non_target_parts_unchanged(template: Path, output: Path) -> None:
 
 
 def assert_non_target_cells_unchanged(template: Path, output: Path) -> None:
-    before = cell_xml_map(template)
-    after = cell_xml_map(output)
-    assert set(before) == set(after)
-    for coordinate, cell_xml in before.items():
-        if coordinate not in TARGET_CELLS:
-            assert after[coordinate] == cell_xml, coordinate
+    before_xml = worksheet_xml_bytes(template)
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells(before_xml, TARGET_CELLS) == mask_target_cells(
+        after_xml,
+        TARGET_CELLS,
+    )
+
+
+def complex_worksheet_xml(sheet_xml: bytes) -> bytes:
+    sheet_xml = sheet_xml.replace(
+        b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/'
+        b'2006/main">',
+        (
+            b'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/'
+            b'2006/main" xmlns:mc="http://schemas.openxmlformats.org/'
+            b'markup-compatibility/2006" xmlns:x14ac="http://schemas.microsoft.'
+            b'com/office/spreadsheetml/2009/9/ac" xmlns:xr="http://schemas.'
+            b'microsoft.com/office/spreadsheetml/2014/revision" xmlns:xr2='
+            b'"http://schemas.microsoft.com/office/spreadsheetml/2015/revision2" '
+            b'mc:Ignorable="x14ac xr xr2" xr:uid="{11111111-1111-1111-1111-'
+            b'111111111111}">'
+        ),
+        1,
+    )
+    sheet_xml = sheet_xml.replace(
+        b'<row r="17"',
+        b'<row r="17" hidden="1" x14ac:dyDescent="0.25"',
+        1,
+    )
+    sheet_xml = sheet_xml.replace(
+        b"</worksheet>",
+        (
+            b'<extLst><ext uri="{TEST-EXT}" xmlns:mx="http://example.com/'
+            b'custom-main"><mx:payload xr2:uid="{22222222-2222-2222-2222-'
+            b'222222222222}">keep-me</mx:payload></ext></extLst>'
+            b"</worksheet>"
+        ),
+        1,
+    )
+    return sheet_xml
+
+
+def add_complex_worksheet_markup(path: Path) -> None:
+    sheet_part = worksheet_part(path)
+    with ZipFile(path) as archive:
+        sheet_xml = archive.read(sheet_part)
+    rewrite_xlsx(path, {sheet_part: complex_worksheet_xml(sheet_xml)})
+
+
+def make_cell_self_closing(path: Path, coordinate: str) -> None:
+    sheet_part = worksheet_part(path)
+    sheet_xml = worksheet_xml_bytes(path)
+    cell_range = target_cell_ranges(sheet_xml, {coordinate})[coordinate]
+    replacement = b'<c r="' + coordinate.encode("ascii") + b'" s="1" customWidth="1"/>'
+    rewrite_xlsx(
+        path,
+        {
+            sheet_part: (
+                sheet_xml[: cell_range.start]
+                + replacement
+                + sheet_xml[cell_range.end :]
+            )
+        },
+    )
+
+
+def replace_cell_xml(path: Path, coordinate: str, replacement: bytes) -> None:
+    sheet_part = worksheet_part(path)
+    sheet_xml = worksheet_xml_bytes(path)
+    cell_range = target_cell_ranges(sheet_xml, {coordinate})[coordinate]
+    rewrite_xlsx(
+        path,
+        {
+            sheet_part: (
+                sheet_xml[: cell_range.start]
+                + replacement
+                + sheet_xml[cell_range.end :]
+            )
+        },
+    )
 
 
 def assert_patcher_error(expected: str, call: Any) -> None:
@@ -296,6 +420,169 @@ def test_patch_existing_cells_preserves_drawing_media_and_other_parts(
     assert "&lt;" in output_xml
     assert "&gt;" in output_xml
     assert 'xml:space="preserve"' in output_xml
+
+
+def test_patch_existing_cells_preserves_worksheet_bytes_outside_target_cells(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+    before_snapshot = snapshot.build_drawing_media_snapshot(template)
+    before_xml = worksheet_xml_bytes(template)
+    before_root = root_start_tag(before_xml)
+    before_masked = mask_target_cells(before_xml, TARGET_CELLS)
+    before_cells = {
+        coordinate: cell_xml_bytes(before_xml, coordinate)
+        for coordinate in TARGET_CELLS
+    }
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates=updates(),
+    )
+
+    after_xml = worksheet_xml_bytes(output)
+    after_masked = mask_target_cells(after_xml, TARGET_CELLS)
+    after_cells = {
+        coordinate: cell_xml_bytes(after_xml, coordinate) for coordinate in TARGET_CELLS
+    }
+    assert after_masked == before_masked
+    assert root_start_tag(after_xml) == before_root
+    assert b'mc:Ignorable="x14ac xr xr2"' in after_xml
+    assert b"keep-me" in after_xml
+    assert b"<drawing " in after_xml
+    assert b"<mergeCell " in after_xml
+    assert b'hidden="1"' in after_xml
+    assert b'x14ac:dyDescent="0.25"' in after_xml
+    assert b"<pageMargins " in after_xml
+    assert b"<pageSetup " in after_xml
+    assert b"<printOptions " in after_xml
+    for coordinate, before_cell_xml in before_cells.items():
+        assert after_cells[coordinate] != before_cell_xml, coordinate
+    assert_non_target_parts_unchanged(template, output)
+    after_snapshot = snapshot.build_drawing_media_snapshot(output)
+    snapshot.compare_drawing_media_snapshots(before_snapshot, after_snapshot)
+
+
+def test_self_closing_target_cell_is_patched_without_touching_other_bytes(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    make_cell_self_closing(template, "C17")
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={"C17": "  self closing  "},
+    )
+
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells(after_xml, {"C17"}) == mask_target_cells(
+        before_xml,
+        {"C17"},
+    )
+    patched_cell = cell_xml_bytes(after_xml, "C17")
+    assert b't="inlineStr"' in patched_cell
+    assert b'customWidth="1"' in patched_cell
+    assert b"  self closing  " in patched_cell
+    assert b'xml:space="preserve"' in patched_cell
+
+
+def test_formula_cached_value_and_existing_cell_types_are_replaced_in_target_only(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    replace_cell_xml(
+        template,
+        "C17",
+        b'<c r="C17" s="1"><f>SUM(A1:A2)</f><v>2</v></c>',
+    )
+    replace_cell_xml(
+        template,
+        "D17",
+        b'<c r="D17" s="1" t="s"><v>0</v></c>',
+    )
+    replace_cell_xml(
+        template,
+        "F17",
+        (b'<c r="F17" s="1" t="inlineStr"><is><t>old</t></is>' b"</c>"),
+    )
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={"C17": 9, "D17": "новый текст", "F17": "inline"},
+    )
+
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells(after_xml, {"C17", "D17", "F17"}) == mask_target_cells(
+        before_xml,
+        {"C17", "D17", "F17"},
+    )
+    c17 = cell_xml_bytes(after_xml, "C17")
+    d17 = cell_xml_bytes(after_xml, "D17")
+    f17 = cell_xml_bytes(after_xml, "F17")
+    assert b"<f>" not in c17
+    assert b"<v>9</v>" in c17
+    assert b"t=" not in c17
+    assert b't="inlineStr"' in d17
+    assert "новый текст".encode() in d17
+    assert b't="inlineStr"' in f17
+    assert b">inline<" in f17
+    assert b's="1"' in c17
+    assert b's="1"' in d17
+    assert b's="1"' in f17
+
+
+def test_duplicate_normalized_input_coordinate_fails_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+
+    assert_patcher_error(
+        "duplicate normalized cell coordinate: C17",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={"c17": "первое", "C17": "второе"},
+        ),
+    )
+    assert not output.exists()
+
+
+def test_duplicate_coordinate_in_worksheet_xml_fails_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    sheet_part = worksheet_part(template)
+    sheet_xml = worksheet_xml_bytes(template)
+    c18 = cell_xml_bytes(sheet_xml, "C18")
+    sheet_xml = sheet_xml.replace(c18, c18.replace(b'r="C18"', b'r="C17"'), 1)
+    rewrite_xlsx(template, {sheet_part: sheet_xml})
+
+    assert_patcher_error(
+        "duplicate cell coordinate in worksheet XML: C17",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={"C17": "ambiguous"},
+        ),
+    )
+    assert not output.exists()
 
 
 def test_missing_template_fails_closed(tmp_path: Path) -> None:
