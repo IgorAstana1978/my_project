@@ -43,6 +43,7 @@ SAMPLE_ROW = 19
 SHIFT = 95
 CHANGED_PART = "xl/worksheets/sheet1.xml"
 CONTENT_TYPES_PART = "[Content_Types].xml"
+STYLES_PART = "xl/styles.xml"
 CALC_CHAIN_PART = "xl/calcChain.xml"
 CALC_CHAIN_REL_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain"
@@ -51,9 +52,12 @@ CALC_CHAIN_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"
 )
 EXPECTED_SOURCE_FORMULA_REFS = {f"I{row}" for row in range(17, 23)}
+DEFAULT_UNIT = "шт."
+TARGET_ITEM_ROW_HEIGHT = "24"
 ALLOWED_CHANGED_PARTS = {
     CHANGED_PART,
     CONTENT_TYPES_PART,
+    STYLES_PART,
     WORKBOOK_RELS_PART,
     CALC_CHAIN_PART,
 }
@@ -281,6 +285,14 @@ def cell_text(cell_xml: bytes, tag: str) -> str | None:
     if child is None:
         child = cell.find(tag)
     return None if child is None else child.text
+
+
+def cell_has_value(cell_xml: bytes) -> bool:
+    return (
+        cell_text(cell_xml, "v") is not None
+        or cell_text(cell_xml, "t") is not None
+        or b"<is" in cell_xml
+    )
 
 
 def formula_for_row(row: int) -> str:
@@ -585,6 +597,10 @@ def formula_cell(cell_xml: bytes, coordinate: str, formula: str) -> bytes:
     return cell_xml[:start_end] + formula_xml + cell_xml[end_start:]
 
 
+def text_cell_from_template(cell_xml: bytes, coordinate: str) -> bytes:
+    return replace_cell_ref(cell_xml, coordinate)
+
+
 def shifted_cell(cell_xml: bytes, old_coordinate: str) -> bytes:
     new_coordinate = shift_row_references(old_coordinate)
     shifted = replace_cell_ref(cell_xml, new_coordinate)
@@ -604,8 +620,20 @@ def row_start_with_number(row_xml: bytes, row_number: int) -> bytes:
     return replace_attr(row_xml[:start_end], "r", str(row_number)) + row_xml[start_end:]
 
 
+def row_start_with_height(row_xml: bytes, height: str) -> bytes:
+    start_end = markup_end(row_xml, 0)
+    start_tag = replace_attr(row_xml[:start_end], "ht", height)
+    start_tag = replace_attr(start_tag, "customHeight", "1")
+    return start_tag + row_xml[start_end:]
+
+
+def tune_item_row_xml(row_xml: bytes, row_number: int) -> bytes:
+    row_xml = row_start_with_number(row_xml, row_number)
+    return row_start_with_height(row_xml, TARGET_ITEM_ROW_HEIGHT)
+
+
 def build_position_row(sample_row: ElementRange, row_number: int) -> bytes:
-    row_xml = row_start_with_number(sample_row.xml, row_number)
+    row_xml = tune_item_row_xml(sample_row.xml, row_number)
     cells = cell_refs(ElementRange("row", {}, 0, 0, len(row_xml), row_xml))
     replacements: list[tuple[int, int, bytes]] = []
     for column in "BCDEFGHI":
@@ -614,6 +642,8 @@ def build_position_row(sample_row: ElementRange, row_number: int) -> bytes:
         new_coordinate = f"{column}{row_number}"
         if column == "B":
             replacement = int_cell(cell.xml, new_coordinate, row_number - 16)
+        elif column == "D":
+            replacement = text_cell_from_template(cell.xml, new_coordinate)
         elif column == "I":
             replacement = formula_cell(
                 cell.xml,
@@ -626,6 +656,19 @@ def build_position_row(sample_row: ElementRange, row_number: int) -> bytes:
     data = bytearray(row_xml)
     for start, end, replacement in sorted(replacements, reverse=True):
         data[start:end] = replacement
+    return bytes(data)
+
+
+def tune_existing_position_row(row: ElementRange) -> bytes:
+    row_number = int(row.attrs["r"])
+    row_xml = tune_item_row_xml(row.xml, row_number)
+    cells = cell_refs(ElementRange("row", {}, 0, 0, len(row_xml), row_xml))
+    cell = cells.get(f"D{row_number}")
+    if cell is None:
+        fail(f"expected unit cell is missing: D{row_number}")
+    replacement = text_cell_from_template(cell.xml, f"D{row_number}")
+    data = bytearray(row_xml)
+    data[cell.start : cell.end] = replacement
     return bytes(data)
 
 
@@ -656,7 +699,7 @@ def build_sheet_data(sheet_data: ElementRange, rows: dict[int, ElementRange]) ->
         fail("unexpected source row set in table/lower block")
     output_rows = [rows[row].xml for row in range(1, 17) if row in rows]
     for row in range(17, 22):
-        output_rows.append(rows[row].xml)
+        output_rows.append(tune_existing_position_row(rows[row]))
     for row in range(22, 117):
         output_rows.append(build_position_row(rows[SAMPLE_ROW], row))
     for row in range(22, 37):
@@ -755,14 +798,63 @@ def without_calc_chain_relationship(workbook_rels_xml: bytes) -> bytes:
     return result
 
 
+def tuned_styles_xml(styles_xml: bytes) -> bytes:
+    try:
+        root = ElementTree.fromstring(styles_xml)
+    except ElementTree.ParseError as error:
+        fail(f"invalid styles XML: {error}")
+    fonts = root.find(f"{{{WORKSHEET_NS}}}fonts")
+    if fonts is None:
+        fail("styles fonts element is missing")
+    changed = False
+    for font in fonts.findall(f"{{{WORKSHEET_NS}}}font"):
+        size = font.find(f"{{{WORKSHEET_NS}}}sz")
+        if size is None:
+            continue
+        if set(size.attrib) != {"val"}:
+            fail("font size structure is unsupported")
+        if size.get("val") in {"10", "11"}:
+            changed = True
+    if not changed:
+        fail("font sizes 10/11 were not found")
+
+    def replace_size(match: re.Match[bytes]) -> bytes:
+        return match.group(1) + match.group(2) + b"12" + match.group(2)
+
+    tuned = re.sub(
+        rb"(<(?:\w+:)?sz\b[^>]*\bval=)([\"'])(?:10|11)\2",
+        replace_size,
+        styles_xml,
+    )
+    try:
+        tuned_root = ElementTree.fromstring(tuned)
+    except ElementTree.ParseError as error:
+        fail(f"invalid tuned styles XML: {error}")
+    tuned_fonts = tuned_root.find(f"{{{WORKSHEET_NS}}}fonts")
+    if tuned_fonts is None:
+        fail("tuned styles fonts element is missing")
+    remaining = [
+        size.get("val")
+        for font in tuned_fonts.findall(f"{{{WORKSHEET_NS}}}font")
+        for size in [font.find(f"{{{WORKSHEET_NS}}}sz")]
+        if size is not None and size.get("val") in {"10", "11"}
+    ]
+    if remaining:
+        fail("font sizes 10/11 remain in tuned styles")
+    return tuned
+
+
 def output_parts_for_source(
     source_parts: dict[str, bytes],
     worksheet_xml: bytes,
 ) -> dict[str, bytes]:
     if CALC_CHAIN_PART not in source_parts:
         fail("calcChain part is missing")
+    if STYLES_PART not in source_parts:
+        fail("styles part is missing")
     output_parts = dict(source_parts)
     output_parts[CHANGED_PART] = worksheet_xml
+    output_parts[STYLES_PART] = tuned_styles_xml(source_parts[STYLES_PART])
     output_parts[CONTENT_TYPES_PART] = without_calc_chain_override(
         source_parts[CONTENT_TYPES_PART]
     )
@@ -797,6 +889,11 @@ def verify_non_target_parts(source_parts: dict[str, bytes], output: Path) -> Non
         fail("content types still contain calcChain")
     if b"calcChain" in output_parts[WORKBOOK_RELS_PART]:
         fail("workbook relationships still contain calcChain")
+    if (
+        b'val="10"' in output_parts[STYLES_PART]
+        or b'val="11"' in output_parts[STYLES_PART]
+    ):
+        fail("font sizes 10/11 remain in output styles")
 
 
 def verify_output_contract(output: Path) -> None:
@@ -807,6 +904,8 @@ def verify_output_contract(output: Path) -> None:
         fail("output content types calcChain verification failed")
     if b"calcChain" in parts[WORKBOOK_RELS_PART]:
         fail("output workbook relationships calcChain verification failed")
+    if b'val="10"' in parts[STYLES_PART] or b'val="11"' in parts[STYLES_PART]:
+        fail("output styles font size verification failed")
     root = read_xml(parts, CHANGED_PART)
     dimension = root.find("main:dimension", MAIN)
     if dimension is None or dimension.get("ref") != TARGET_DIMENSION:
@@ -816,9 +915,15 @@ def verify_output_contract(output: Path) -> None:
     for row_number in TARGET_ITEM_ROWS:
         if row_number not in rows:
             fail(f"output item row is missing: {row_number}")
+        if rows[row_number].attrs.get("ht") != TARGET_ITEM_ROW_HEIGHT:
+            fail(f"output item row height is invalid: {row_number}")
+        if rows[row_number].attrs.get("customHeight") != "1":
+            fail(f"output item row customHeight is invalid: {row_number}")
         cells = cell_refs(rows[row_number])
         if cell_text(cells[f"B{row_number}"].xml, "v") != str(row_number - 16):
             fail(f"output item number is invalid: {row_number}")
+        if not cell_has_value(cells[f"D{row_number}"].xml):
+            fail(f"output item unit is invalid: {row_number}")
         if cell_text(cells[f"I{row_number}"].xml, "f") != formula_for_row(row_number):
             fail(f"output item formula is invalid: {row_number}")
     total_cells = cell_refs(rows[TARGET_TOTAL_ROW])

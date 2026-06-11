@@ -60,7 +60,7 @@ def row_xml(row: int, item_number: int | None = None) -> str:
         values = (
             cell("B", row, f"<v>{item_number}</v>", 12)
             + cell("C", row, "", 13)
-            + cell("D", row, "<v>0</v>", 12)
+            + f'<c r="D{row}" s="12" t="inlineStr"><is><t>шт.</t></is></c>'
             + cell("E", row, "", 12)
             + cell("F", row, "", 14)
             + cell("G", row, "", 14)
@@ -154,6 +154,8 @@ def package_parts(
             b'<Default Extension="png" ContentType="image/png"/>'
             b'<Override PartName="/xl/workbook.xml" ContentType="application/'
             b'vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            b'<Override PartName="/xl/styles.xml" ContentType="application/'
+            b'vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
             b'<Override PartName="/xl/calcChain.xml" ContentType="application/'
             b'vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/>'
             b'<Override PartName="/xl/worksheets/sheet1.xml" '
@@ -173,6 +175,37 @@ def package_parts(
             b"</Relationships>"
         ),
         "xl/workbook.xml": workbook_xml,
+        "xl/styles.xml": (
+            b'<?xml version="1.0" encoding="UTF-8"?>'
+            b'<styleSheet xmlns="http://schemas.openxmlformats.org/'
+            b'spreadsheetml/2006/main">'
+            b'<fonts count="8">'
+            b'<font><name val="Calibri"/><sz val="11"/><color theme="1"/></font>'
+            b'<font><name val="Arial"/><sz val="10"/><b/></font>'
+            b'<font><name val="Calibri"/><sz val="16"/><i/></font>'
+            b'<font><name val="Calibri"/><sz val="11"/><u/></font>'
+            b'<font><name val="Calibri"/><sz val="11"/><color rgb="FFFF0000"/></font>'
+            b'<font><name val="Calibri"/><sz val="10"/></font>'
+            b'<font><name val="Calibri"/><sz val="10"/><b/><i/></font>'
+            b'<font><name val="Calibri"/><sz val="11"/><family val="2"/></font>'
+            b"</fonts>"
+            b'<fills count="1"><fill><patternFill patternType="none"/></fill></fills>'
+            b'<borders count="1"><border><left/><right/><top/><bottom/>'
+            b"</border></borders>"
+            b'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" '
+            b'borderId="0"/></cellStyleXfs>'
+            b'<cellXfs count="18">'
+            + b"".join(
+                (
+                    f'<xf numFmtId="0" fontId="{font_id}" fillId="0" '
+                    'borderId="0" xfId="0" applyFont="1"/>'
+                ).encode()
+                for font_id in [0, 1, 2, 3, 2, 3, 4, 1, 5, 6, 3, 1, 1, 1, 1, 3, 3, 0]
+            )
+            + b"</cellXfs>"
+            b'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/>'
+            b"</cellStyles></styleSheet>"
+        ),
         "xl/_rels/workbook.xml.rels": (
             b'<?xml version="1.0" encoding="UTF-8"?>'
             b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -300,6 +333,13 @@ def zip_parts(path: Path) -> dict[str, bytes]:
         return {name: archive.read(name) for name in archive.namelist()}
 
 
+def tuned_style_bytes(styles_xml: bytes) -> bytes:
+    return styles_xml.replace(b'val="10"', b'val="12"').replace(
+        b'val="11"',
+        b'val="12"',
+    )
+
+
 def assert_no_partial(output: Path) -> None:
     assert not output.exists()
     assert list(output.parent.iterdir()) == []
@@ -329,9 +369,10 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
     all_cells = cells(root)
     for row in range(17, 117):
         assert cell_value(all_cells[f"B{row}"], "v") == str(row - 16)
+        assert sheet[f"D{row}"].value == "шт."
         assert cell_value(all_cells[f"I{row}"], "f") == formula(row)
     for row in range(22, 117):
-        for column in "CDEFGH":
+        for column in "CEFGH":
             element = all_cells[f"{column}{row}"]
             assert element.find("main:v", NS) is None
             assert element.find("main:f", NS) is None
@@ -358,10 +399,10 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
         "B129:I129",
     }.issubset(merge_refs)
     rows = root.findall(".//main:row", NS)
-    row_19 = next(row for row in rows if row.get("r") == "19")
-    row_22 = next(row for row in rows if row.get("r") == "22")
-    assert row_22.get("ht") == row_19.get("ht") == "54"
-    assert row_22.get("customHeight") == row_19.get("customHeight") == "1"
+    for row_number in range(17, 117):
+        row_element = next(row for row in rows if row.get("r") == str(row_number))
+        assert row_element.get("ht") == "24"
+        assert row_element.get("customHeight") == "1"
     assert all_cells["C22"].get("s") == all_cells["C19"].get("s")
     assert all_cells["F22"].get("s") == all_cells["F19"].get("s")
     assert b'mc:Ignorable="x14ac"' in worksheet_bytes(output)
@@ -371,10 +412,17 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
     assert "xl/calcChain.xml" not in after_parts
     assert b"calcChain" not in after_parts["[Content_Types].xml"]
     assert b"calcChain" not in after_parts["xl/_rels/workbook.xml.rels"]
+    assert b'val="10"' not in after_parts["xl/styles.xml"]
+    assert b'val="11"' not in after_parts["xl/styles.xml"]
+    assert b'val="12"' in after_parts["xl/styles.xml"]
+    assert after_parts["xl/styles.xml"] == tuned_style_bytes(
+        before_parts["xl/styles.xml"]
+    )
     assert set(after_parts) == set(before_parts) - {"xl/calcChain.xml"}
     allowed_changed = {
         "xl/worksheets/sheet1.xml",
         "[Content_Types].xml",
+        "xl/styles.xml",
         "xl/_rels/workbook.xml.rels",
         "xl/calcChain.xml",
     }
