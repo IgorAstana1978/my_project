@@ -55,10 +55,11 @@ def cell(column: str, row: int, body: str = "", style: int = 12) -> str:
 
 def row_xml(row: int, item_number: int | None = None) -> str:
     if item_number is None:
-        values = "".join(cell(column, row) for column in "BCDEFGHI")
+        values = "".join(cell(column, row) for column in "ABCDEFGHI")
     else:
         values = (
-            cell("B", row, f"<v>{item_number}</v>", 12)
+            cell("A", row, "", 1)
+            + cell("B", row, f"<v>{item_number}</v>", 12)
             + cell("C", row, "", 13)
             + f'<c r="D{row}" s="12" t="inlineStr"><is><t>шт.</t></is></c>'
             + cell("E", row, "", 12)
@@ -323,9 +324,72 @@ def cells(root: ElementTree.Element) -> dict[str, ElementTree.Element]:
     }
 
 
+def column_number(column: str) -> int:
+    number = 0
+    for letter in column:
+        number = number * 26 + ord(letter) - ord("A") + 1
+    return number
+
+
+def split_ref(reference: str) -> tuple[str, int]:
+    match = re.fullmatch(r"([A-Z]{1,3})([0-9]+)", reference)
+    assert match is not None
+    return match.group(1), int(match.group(2))
+
+
 def cell_value(cell_element: ElementTree.Element, tag: str) -> str | None:
     child = cell_element.find(f"main:{tag}", NS)
     return None if child is None else child.text
+
+
+def assert_strict_cell_records(path: Path) -> None:
+    parts = zip_parts(path)
+    root = ElementTree.fromstring(parts["xl/worksheets/sheet1.xml"])
+    styles = ElementTree.fromstring(parts["xl/styles.xml"])
+    cell_xfs = styles.find("main:cellXfs", NS)
+    assert cell_xfs is not None
+    style_count = len(cell_xfs.findall("main:xf", NS))
+    shared_count = 0
+    if "xl/sharedStrings.xml" in parts:
+        shared_strings = ElementTree.fromstring(parts["xl/sharedStrings.xml"])
+        shared_count = len(shared_strings.findall("main:si", NS))
+    seen: set[str] = set()
+    previous_row = 0
+    for row_element in root.findall("main:sheetData/main:row", NS):
+        row_number = int(cast(str, row_element.get("r")))
+        assert row_number > previous_row
+        previous_row = row_number
+        previous_column = 0
+        for cell_element in row_element.findall("main:c", NS):
+            reference = cast(str, cell_element.get("r"))
+            column, cell_row = split_ref(reference)
+            assert cell_row == row_number
+            current_column = column_number(column)
+            assert current_column > previous_column
+            previous_column = current_column
+            assert reference not in seen
+            seen.add(reference)
+
+            style = cell_element.get("s")
+            if style is not None:
+                assert int(style) < style_count
+            cell_type = cell_element.get("t")
+            formula_element = cell_element.find("main:f", NS)
+            value_element = cell_element.find("main:v", NS)
+            inline_element = cell_element.find("main:is", NS)
+            if formula_element is not None:
+                assert cell_type is None
+            if cell_type == "inlineStr":
+                assert inline_element is not None
+                assert inline_element.find("main:t", NS) is not None
+            elif cell_type == "s":
+                assert value_element is not None
+                assert value_element.text is not None
+                assert 0 <= int(value_element.text) < shared_count
+            elif cell_type == "str":
+                assert value_element is not None
+            elif cell_type is not None:
+                assert list(cell_element)
 
 
 def zip_parts(path: Path) -> dict[str, bytes]:
@@ -359,6 +423,7 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
     assert "CREATED:" in result.stdout
     assert output.is_file()
     assert sha(source) == source_sha
+    assert_strict_cell_records(output)
     root = worksheet_root(output)
     dimension = root.find("main:dimension", NS)
     assert dimension is not None
@@ -368,15 +433,21 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
     assert sheet.max_row == 131
     all_cells = cells(root)
     for row in range(17, 117):
+        assert f"A{row}" in all_cells
         assert cell_value(all_cells[f"B{row}"], "v") == str(row - 16)
         assert sheet[f"D{row}"].value == "шт."
-        assert cell_value(all_cells[f"I{row}"], "f") == formula(row)
+        formula_cell = all_cells[f"I{row}"]
+        assert formula_cell.get("t") is None
+        assert formula_cell.find("main:v", NS) is None
+        assert cell_value(formula_cell, "f") == formula(row)
     for row in range(22, 117):
         for column in "CEFGH":
             element = all_cells[f"{column}{row}"]
             assert element.find("main:v", NS) is None
             assert element.find("main:f", NS) is None
             assert element.find("main:is", NS) is None
+    assert all_cells["I117"].get("t") is None
+    assert all_cells["I117"].find("main:v", NS) is None
     assert cell_value(all_cells["I117"], "f") == total_formula(17, 116)
     assert cell_value(all_cells["C119"], "t") is None
     assert sheet["C119"].value == "Всего прописью"

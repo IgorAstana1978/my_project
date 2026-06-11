@@ -276,6 +276,20 @@ def cell_refs(row: ElementRange) -> dict[str, ElementRange]:
     return refs
 
 
+def split_cell_ref(reference: str) -> tuple[str, int]:
+    match = re.fullmatch(r"([A-Z]{1,3})([0-9]+)", reference)
+    if match is None:
+        fail(f"invalid cell reference: {reference}")
+    return match.group(1), int(match.group(2))
+
+
+def column_number_from_letters(column: str) -> int:
+    number = 0
+    for letter in column:
+        number = number * 26 + ord(letter) - ord("A") + 1
+    return number
+
+
 def cell_text(cell_xml: bytes, tag: str) -> str | None:
     try:
         cell = ElementTree.fromstring(cell_xml)
@@ -589,7 +603,7 @@ def empty_cell(cell_xml: bytes, coordinate: str) -> bytes:
 
 def formula_cell(cell_xml: bytes, coordinate: str, formula: str) -> bytes:
     cell_xml = replace_cell_ref(cell_xml, coordinate)
-    cell_xml = replace_attr(cell_xml, "t", "str")
+    cell_xml = re.sub(rb'\s+t=(["\'])(?:(?!\1).)*\1', b"", cell_xml, count=1)
     cell_xml = remove_children(cell_xml)
     start_end = markup_end(cell_xml, 0)
     end_start = cell_xml.rfind(b"</")
@@ -636,9 +650,10 @@ def build_position_row(sample_row: ElementRange, row_number: int) -> bytes:
     row_xml = tune_item_row_xml(sample_row.xml, row_number)
     cells = cell_refs(ElementRange("row", {}, 0, 0, len(row_xml), row_xml))
     replacements: list[tuple[int, int, bytes]] = []
-    for column in "BCDEFGHI":
-        old_coordinate = f"{column}{SAMPLE_ROW}"
-        cell = cells[old_coordinate]
+    for old_coordinate, cell in cells.items():
+        column, old_row = split_cell_ref(old_coordinate)
+        if old_row != SAMPLE_ROW:
+            fail(f"sample row contains mismatched cell reference: {old_coordinate}")
         new_coordinate = f"{column}{row_number}"
         if column == "B":
             replacement = int_cell(cell.xml, new_coordinate, row_number - 16)
@@ -650,8 +665,10 @@ def build_position_row(sample_row: ElementRange, row_number: int) -> bytes:
                 new_coordinate,
                 formula_for_row(row_number),
             )
-        else:
+        elif column in "CEFGH":
             replacement = empty_cell(cell.xml, new_coordinate)
+        else:
+            replacement = replace_cell_ref(cell.xml, new_coordinate)
         replacements.append((cell.start, cell.end, replacement))
     data = bytearray(row_xml)
     for start, end, replacement in sorted(replacements, reverse=True):
@@ -667,8 +684,23 @@ def tune_existing_position_row(row: ElementRange) -> bytes:
     if cell is None:
         fail(f"expected unit cell is missing: D{row_number}")
     replacement = text_cell_from_template(cell.xml, f"D{row_number}")
+    formula = cells.get(f"I{row_number}")
+    if formula is None:
+        fail(f"expected formula cell is missing: I{row_number}")
+    formula_replacement = formula_cell(
+        formula.xml,
+        f"I{row_number}",
+        formula_for_row(row_number),
+    )
     data = bytearray(row_xml)
-    data[cell.start : cell.end] = replacement
+    for start, end, cell_replacement in sorted(
+        [
+            (cell.start, cell.end, replacement),
+            (formula.start, formula.end, formula_replacement),
+        ],
+        reverse=True,
+    ):
+        data[start:end] = cell_replacement
     return bytes(data)
 
 
@@ -896,6 +928,81 @@ def verify_non_target_parts(source_parts: dict[str, bytes], output: Path) -> Non
         fail("font sizes 10/11 remain in output styles")
 
 
+def cell_xfs_count(parts: dict[str, bytes]) -> int:
+    styles = read_xml(parts, STYLES_PART)
+    cell_xfs = styles.find("main:cellXfs", MAIN)
+    if cell_xfs is None:
+        fail("styles cellXfs element is missing")
+    return len(cell_xfs.findall("main:xf", MAIN))
+
+
+def shared_strings_count(parts: dict[str, bytes]) -> int:
+    shared_strings = parts.get("xl/sharedStrings.xml")
+    if shared_strings is None:
+        return 0
+    root = ElementTree.fromstring(shared_strings)
+    return len(root.findall("main:si", MAIN))
+
+
+def validate_output_cell_records(
+    root: ElementTree.Element,
+    parts: dict[str, bytes],
+) -> None:
+    style_count = cell_xfs_count(parts)
+    shared_count = shared_strings_count(parts)
+    seen_refs: set[str] = set()
+    previous_row_number = 0
+    for row in root.findall("main:sheetData/main:row", MAIN):
+        raw_row = row.get("r")
+        if raw_row is None:
+            fail("output row is missing r attribute")
+        row_number = int(raw_row)
+        if row_number <= previous_row_number:
+            fail(f"output row order is invalid: {row_number}")
+        previous_row_number = row_number
+        previous_column_number = 0
+        for cell in row.findall("main:c", MAIN):
+            reference = cell.get("r")
+            if reference is None:
+                fail("output cell is missing r attribute")
+            column, cell_row = split_cell_ref(reference)
+            if cell_row != row_number:
+                fail(f"output cell reference does not match row: {reference}")
+            column_number = column_number_from_letters(column)
+            if column_number <= previous_column_number:
+                fail(f"output cell order is invalid: {reference}")
+            previous_column_number = column_number
+            if reference in seen_refs:
+                fail(f"duplicate output cell reference: {reference}")
+            seen_refs.add(reference)
+
+            style = cell.get("s")
+            if style is not None and int(style) >= style_count:
+                fail(f"output cell style is out of range: {reference}")
+
+            cell_type = cell.get("t")
+            formula = cell.find("main:f", MAIN)
+            value = cell.find("main:v", MAIN)
+            inline = cell.find("main:is", MAIN)
+            if formula is not None and cell_type is not None:
+                fail(f"output formula cell has type attribute: {reference}")
+            if cell_type is not None and not list(cell):
+                fail(f"output typed cell has no body: {reference}")
+            if cell_type == "inlineStr":
+                if inline is None or inline.find("main:t", MAIN) is None:
+                    fail(f"output inlineStr cell is invalid: {reference}")
+            elif cell_type == "s":
+                if value is None or value.text is None:
+                    fail(f"output shared string cell has no value: {reference}")
+                shared_index = int(value.text)
+                if shared_index < 0 or shared_index >= shared_count:
+                    fail(f"output shared string reference is invalid: {reference}")
+            elif cell_type == "str" and value is None:
+                fail(f"output str cell has no cached value: {reference}")
+            elif cell_type not in {None, "b", "d", "e", "n", "str"}:
+                fail(f"output cell type is unsupported: {reference}")
+
+
 def verify_output_contract(output: Path) -> None:
     parts = archive_bytes(output)
     if CALC_CHAIN_PART in parts:
@@ -910,6 +1017,7 @@ def verify_output_contract(output: Path) -> None:
     dimension = root.find("main:dimension", MAIN)
     if dimension is None or dimension.get("ref") != TARGET_DIMENSION:
         fail("output dimension verification failed")
+    validate_output_cell_records(root, parts)
     ranges = element_ranges(parts[CHANGED_PART])
     rows = rows_by_number(ranges)
     for row_number in TARGET_ITEM_ROWS:
