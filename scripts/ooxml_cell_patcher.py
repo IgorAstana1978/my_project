@@ -8,6 +8,7 @@ import uuid
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from xml.etree import ElementTree
 from xml.parsers import expat
@@ -22,6 +23,8 @@ WORKBOOK_PART = "xl/workbook.xml"
 WORKBOOK_RELS_PART = "xl/_rels/workbook.xml.rels"
 CELL_RE = re.compile(r"^[A-Z]+[1-9][0-9]*$")
 ROW_HIDDEN_RE = re.compile(rb'\s+hidden=(["\'])(?:(?!\1).)*\1')
+ROW_HT_RE = re.compile(rb'\s+ht=(["\'])(?:(?!\1).)*\1')
+ROW_CUSTOM_HEIGHT_RE = re.compile(rb'\s+customHeight=(["\'])(?:(?!\1).)*\1')
 type CellValue = str | int | None
 
 ElementTree.register_namespace("", SPREADSHEET_NS)
@@ -124,6 +127,36 @@ def validate_row_hidden_updates(
                 "invalid row hidden value for " f"{row_number}: {type(hidden).__name__}"
             )
         checked[row_number] = hidden
+    return checked
+
+
+def height_text(value: int | float | str | Decimal) -> str:
+    try:
+        decimal = Decimal(str(value))
+    except InvalidOperation:
+        fail(f"invalid row height: {value}")
+    if not decimal.is_finite() or decimal <= 0:
+        fail(f"invalid row height: {value}")
+    return format(decimal.normalize(), "f")
+
+
+def validate_row_height_updates(
+    row_height_updates: Mapping[int, int | float | str] | None,
+) -> dict[int, str]:
+    if row_height_updates is None:
+        return {}
+    checked: dict[int, str] = {}
+    for raw_row_number, raw_height in row_height_updates.items():
+        row_number = validate_row_number(raw_row_number)
+        if isinstance(raw_height, bool) or not isinstance(
+            raw_height,
+            (int, float, str),
+        ):
+            fail(
+                "invalid row height value for "
+                f"{row_number}: {type(raw_height).__name__}"
+            )
+        checked[row_number] = height_text(raw_height)
     return checked
 
 
@@ -343,6 +376,29 @@ def hidden_row_start_tag_xml(row_xml: bytes, hidden: bool) -> bytes:
     return ROW_HIDDEN_RE.sub(b"", row_xml, count=1)
 
 
+def set_row_start_tag_attr(
+    row_xml: bytes,
+    pattern: re.Pattern[bytes],
+    attr: str,
+    value: str,
+) -> bytes:
+    replacement = f' {attr}="{value}"'.encode("ascii")
+    if pattern.search(row_xml):
+        return pattern.sub(replacement, row_xml, count=1)
+    closing = b"/>" if row_xml.endswith(b"/>") else b">"
+    return row_xml[: -len(closing)] + replacement + closing
+
+
+def height_row_start_tag_xml(row_xml: bytes, height: str) -> bytes:
+    row_xml = set_row_start_tag_attr(row_xml, ROW_HT_RE, "ht", height)
+    return set_row_start_tag_attr(
+        row_xml,
+        ROW_CUSTOM_HEIGHT_RE,
+        "customHeight",
+        "1",
+    )
+
+
 def ensure_non_overlapping_replacements(
     replacements: Sequence[tuple[int, int, bytes]],
 ) -> None:
@@ -358,10 +414,16 @@ def patched_worksheet_xml(
     worksheet_xml: bytes,
     updates: Mapping[str, object],
     row_hidden_updates: Mapping[int, bool] | None = None,
+    row_height_updates: Mapping[int, int | float | str] | None = None,
 ) -> bytes:
     normalized_updates = validate_updates(updates)
     normalized_row_updates = validate_row_hidden_updates(row_hidden_updates)
-    if not normalized_updates and not normalized_row_updates:
+    normalized_row_height_updates = validate_row_height_updates(row_height_updates)
+    if (
+        not normalized_updates
+        and not normalized_row_updates
+        and not normalized_row_height_updates
+    ):
         fail("updates must not be empty")
 
     ranges = cell_ranges(worksheet_xml)
@@ -382,18 +444,30 @@ def patched_worksheet_xml(
         )
 
     row_ranges = row_start_tag_ranges(worksheet_xml)
-    for row_number, hidden in normalized_row_updates.items():
+    target_rows = set(normalized_row_updates) | set(normalized_row_height_updates)
+    for row_number in target_rows:
         matches = row_ranges.get(row_number, [])
         if not matches:
             fail(f"row does not exist: {row_number}")
         if len(matches) > 1:
             fail(f"duplicate row number in worksheet XML: {row_number}")
         row_range = matches[0]
+        row_xml = row_range.xml
+        if row_number in normalized_row_updates:
+            row_xml = hidden_row_start_tag_xml(
+                row_xml,
+                normalized_row_updates[row_number],
+            )
+        if row_number in normalized_row_height_updates:
+            row_xml = height_row_start_tag_xml(
+                row_xml,
+                normalized_row_height_updates[row_number],
+            )
         replacements.append(
             (
                 row_range.start,
                 row_range.end,
-                hidden_row_start_tag_xml(row_range.xml, hidden),
+                row_xml,
             )
         )
 
@@ -445,8 +519,9 @@ def patch_existing_cells(
     sheet_name: str,
     updates: Mapping[str, object],
     row_hidden_updates: Mapping[int, bool] | None = None,
+    row_height_updates: Mapping[int, int | float | str] | None = None,
 ) -> Path:
-    if not updates and not row_hidden_updates:
+    if not updates and not row_hidden_updates and not row_height_updates:
         fail("updates must not be empty")
     template_path, output_path = validate_paths(template, output)
     temporary_output = output_path.with_name(
@@ -466,6 +541,7 @@ def patch_existing_cells(
             template_parts[worksheet_part],
             updates,
             row_hidden_updates,
+            row_height_updates,
         )
         write_patched_package(
             template_parts=template_parts,

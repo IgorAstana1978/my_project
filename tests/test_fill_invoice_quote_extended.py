@@ -357,8 +357,10 @@ def test_unused_rows_are_cleared_and_hidden_for_capacity_eight(
     sheet = worksheet(output)
     for row in range(17, 23):
         assert sheet.row_dimensions[row].hidden is False
+        assert sheet.row_dimensions[row].height == 24
     for row in range(23, 25):
         assert sheet.row_dimensions[row].hidden is True
+        assert sheet.row_dimensions[row].height == 24
         for column in "CDEFGH":
             assert sheet[f"{column}{row}"].value is None
         assert sheet[f"I{row}"].value == f"=E{row}*H{row}"
@@ -366,6 +368,38 @@ def test_unused_rows_are_cleared_and_hidden_for_capacity_eight(
     assert sheet["C23"].value is None
     assert sheet["D23"].value is None
     assert sheet["E23"].value is None
+
+
+def test_generated_rows_get_adaptive_heights(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+    output = output_dir / "draft.xlsx"
+    layout = write_extended_template(template)
+    custom_payload = payload(6)
+    custom_payload["items"][0]["name"] = "ЩР"
+    custom_payload["items"][1]["name"] = "Щит распределительный этажный навесной"
+    custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
+    custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
+    custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 8))
+
+    extended.generate_extended_workbook(
+        template=template,
+        output=output,
+        payload=custom_payload,
+        layout=layout,
+    )
+
+    sheet = worksheet(output)
+    assert sheet.row_dimensions[17].height == 24
+    assert sheet.row_dimensions[18].height == 36
+    assert sheet.row_dimensions[19].height == 54
+    assert sheet.row_dimensions[20].height == 72
+    assert sheet.row_dimensions[21].height == 90
+    assert sheet.row_dimensions[23].hidden is True
+    assert sheet.row_dimensions[23].height == 24
 
 
 def test_pre_hidden_used_row_becomes_visible_after_generation(
@@ -399,21 +433,33 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     output_dir.mkdir()
     output = output_dir / "draft.xlsx"
     layout = write_extended_template(template, capacity=100)
+    custom_payload = payload(78)
+    custom_payload["items"][0]["name"] = "ЩР"
+    custom_payload["items"][1]["name"] = "Щит распределительный этажный навесной"
+    custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
+    custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
+    custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 8))
 
     extended.generate_extended_workbook(
         template=template,
         output=output,
-        payload=payload(78),
+        payload=custom_payload,
         layout=layout,
     )
 
     sheet = worksheet(output)
-    assert sheet["C17"].value == "ВРУ-1"
+    assert sheet["C17"].value == "ЩР"
     assert sheet["C94"].value == "ВРУ-78"
+    assert sheet.row_dimensions[17].height == 24
+    assert sheet.row_dimensions[18].height == 36
+    assert sheet.row_dimensions[19].height == 54
+    assert sheet.row_dimensions[20].height == 72
+    assert sheet.row_dimensions[21].height == 90
     for row in range(17, 95):
         assert sheet.row_dimensions[row].hidden is False
     for row in range(95, 117):
         assert sheet.row_dimensions[row].hidden is True
+        assert sheet.row_dimensions[row].height == 24
         for column in "CDEFGH":
             assert sheet[f"{column}{row}"].value is None
         assert sheet[f"I{row}"].value == f"=E{row}*H{row}"
@@ -541,6 +587,48 @@ def test_build_row_hidden_updates_marks_used_visible_and_unused_hidden() -> None
     assert updates[24] is True
 
 
+def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None:
+    short = item(1)
+    short["name"] = "ЩР"
+    short["instruments_and_devices"] = "Автомат"
+    short["cabinet_type_dimensions_material"] = "Навесной"
+    medium = item(2)
+    medium["name"] = "Щит распределительный этажный навесной"
+    long = item(3)
+    long["instruments_and_devices"] = "А" * 100
+    line_breaks = item(4)
+    line_breaks["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
+    capped = item(5)
+    capped["name"] = "\n".join(str(index) for index in range(1, 8))
+
+    assert extended.estimate_item_row_height(short) == 24
+    assert extended.estimate_item_row_height(medium) == 36
+    assert extended.estimate_item_row_height(long) == 54
+    assert extended.estimate_item_row_height(line_breaks) == 72
+    assert extended.estimate_item_row_height(capped) == 90
+
+
+def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> None:
+    layout = extended_layout()
+    custom_items = payload(6)["items"]
+    custom_items[0]["name"] = "ЩР"
+    custom_items[1]["name"] = "Щит распределительный этажный навесной"
+    custom_items[2]["instruments_and_devices"] = "А" * 100
+    custom_items[3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
+    custom_items[4]["name"] = "\n".join(str(index) for index in range(1, 8))
+
+    updates = extended.build_row_height_updates(custom_items, layout)
+
+    assert updates[17] == 24
+    assert updates[18] == 36
+    assert updates[19] == 54
+    assert updates[20] == 72
+    assert updates[21] == 90
+    assert updates[22] == 24
+    assert updates[23] == 24
+    assert updates[24] == 24
+
+
 def test_generate_extended_workbook_uses_ooxml_patcher(
     tmp_path: Path,
     monkeypatch: Any,
@@ -575,6 +663,11 @@ def test_generate_extended_workbook_uses_ooxml_patcher(
         assert row_updates[22] is False
         assert row_updates[23] is True
         assert row_updates[24] is True
+        height_updates = kwargs["row_height_updates"]
+        assert height_updates[17] == 24
+        assert height_updates[22] == 24
+        assert height_updates[23] == 24
+        assert height_updates[24] == 24
         return cast(Path, original_patch(**kwargs))
 
     original_verify_output = extended.verify_output

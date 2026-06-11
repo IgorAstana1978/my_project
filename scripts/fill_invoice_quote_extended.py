@@ -27,6 +27,12 @@ DRAWING_MEDIA_SNAPSHOT_SCRIPT = PROJECT_ROOT / "scripts" / "drawing_media_snapsh
 OOXML_CELL_PATCHER_SCRIPT = PROJECT_ROOT / "scripts" / "ooxml_cell_patcher.py"
 SHEET_NAME = "Счёт-КП шаблон"
 NEEDS_CLARIFICATION = "нужно уточнить"
+ITEM_ROW_HEIGHTS = (24, 36, 54, 72, 90)
+ROW_HEIGHT_TEXT_WIDTHS = {
+    "name": 30,
+    "instruments_and_devices": 42,
+    "cabinet_type_dimensions_material": 26,
+}
 
 
 class ExtendedFillError(Exception):
@@ -272,6 +278,31 @@ def optional_text(value: Any) -> str:
     return str(value)
 
 
+def visual_line_count(value: Any, width: int) -> int:
+    text = optional_text(value)
+    return sum(max(1, (len(line) + width - 1) // width) for line in text.split("\n"))
+
+
+def height_for_visual_lines(lines: int) -> int:
+    if lines <= 1:
+        return 24
+    if lines == 2:
+        return 36
+    if lines == 3:
+        return 54
+    if lines <= 5:
+        return 72
+    return 90
+
+
+def estimate_item_row_height(item: Mapping[str, Any]) -> int:
+    visual_lines = max(
+        visual_line_count(item.get(field), width)
+        for field, width in ROW_HEIGHT_TEXT_WIDTHS.items()
+    )
+    return height_for_visual_lines(visual_lines)
+
+
 def build_cell_updates(
     items: Sequence[Mapping[str, Any]],
     layout: ExtendedLayout,
@@ -308,6 +339,22 @@ def build_row_hidden_updates(
         row: row not in used_rows
         for row in range(layout.item_start_row, layout.item_end_row + 1)
     }
+
+
+def build_row_height_updates(
+    items: Sequence[Mapping[str, Any]],
+    layout: ExtendedLayout,
+) -> dict[int, int]:
+    updates: dict[int, int] = {}
+    for offset, item in enumerate(items):
+        row = layout.item_start_row + offset
+        height = estimate_item_row_height(item)
+        if height not in ITEM_ROW_HEIGHTS:
+            fail(f"unsupported item row height: {height}")
+        updates[row] = height
+    for row in range(layout.item_start_row + len(items), layout.item_end_row + 1):
+        updates[row] = 24
+    return updates
 
 
 def verify_output(
@@ -359,6 +406,7 @@ def generate_extended_workbook(
     before = snapshot_workbook(worksheet, layout)
     cell_updates = build_cell_updates(items, layout)
     row_hidden_updates = build_row_hidden_updates(items, layout)
+    row_height_updates = build_row_height_updates(items, layout)
 
     temporary_output = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.tmp.xlsx"
@@ -371,6 +419,7 @@ def generate_extended_workbook(
                 sheet_name=SHEET_NAME,
                 updates=cell_updates,
                 row_hidden_updates=row_hidden_updates,
+                row_height_updates=row_height_updates,
             )
         except OoxmlCellPatcherError as error:
             fail(f"OOXML patching failed: {error}")

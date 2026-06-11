@@ -722,6 +722,182 @@ def test_cell_and_row_patching_together_preserves_other_bytes_and_media(
     assert worksheet.row_dimensions[18].hidden is True
 
 
+def test_row_height_updates_patch_existing_row_start_tags_only(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+    before_xml = worksheet_xml_bytes(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={},
+        row_height_updates={17: 36, 18: "54"},
+    )
+
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[SHEET_NAME]
+    assert worksheet.row_dimensions[17].height == 36
+    assert worksheet.row_dimensions[18].height == 54
+    after_xml = worksheet_xml_bytes(output)
+    assert mask_target_cells_and_rows(after_xml, set(), {17, 18}) == (
+        mask_target_cells_and_rows(before_xml, set(), {17, 18})
+    )
+    row_17 = target_row_ranges(after_xml, {17})[17].xml
+    row_18 = target_row_ranges(after_xml, {18})[18].xml
+    assert b'ht="36"' in row_17
+    assert b'customHeight="1"' in row_17
+    assert b'customHeight="1"' in row_18
+    assert b'x14ac:dyDescent="0.25"' in row_17
+
+
+def test_row_hidden_and_height_updates_work_on_same_row(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={},
+        row_hidden_updates={17: True},
+        row_height_updates={17: 72},
+    )
+
+    worksheet = load_workbook(output, data_only=False)[SHEET_NAME]
+    assert worksheet.row_dimensions[17].hidden is True
+    assert worksheet.row_dimensions[17].height == 72
+    row_17 = target_row_ranges(worksheet_xml_bytes(output), {17})[17].xml
+    assert b'hidden="1"' in row_17
+    assert b'ht="72"' in row_17
+    assert b'customHeight="1"' in row_17
+
+
+def test_row_height_updates_preserve_hidden_and_drawing_media(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+    add_complex_worksheet_markup(template)
+    before_snapshot = snapshot.build_drawing_media_snapshot(template)
+
+    patcher.patch_existing_cells(
+        template=template,
+        output=output,
+        sheet_name=SHEET_NAME,
+        updates={},
+        row_height_updates={17: 90},
+    )
+
+    worksheet = load_workbook(output, data_only=False)[SHEET_NAME]
+    assert worksheet.row_dimensions[17].hidden is True
+    assert worksheet.row_dimensions[17].height == 90
+    row_17 = target_row_ranges(worksheet_xml_bytes(output), {17})[17].xml
+    assert b'hidden="1"' in row_17
+    assert b'x14ac:dyDescent="0.25"' in row_17
+    assert_non_target_parts_unchanged(template, output)
+    after_snapshot = snapshot.build_drawing_media_snapshot(output)
+    snapshot.compare_drawing_media_snapshots(before_snapshot, after_snapshot)
+
+
+def test_row_height_update_missing_duplicate_and_invalid_rows_fail_closed(
+    tmp_path: Path,
+) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+
+    assert_patcher_error(
+        "row does not exist: 999",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_height_updates={999: 24},
+        ),
+    )
+    assert not output.exists()
+
+    second_output = tmp_path / "out2" / "patched.xlsx"
+    second_output.parent.mkdir()
+    assert_patcher_error(
+        "invalid row number: True",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=second_output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_height_updates={True: 24},
+        ),
+    )
+    assert not second_output.exists()
+
+    sheet_part = worksheet_part(template)
+    sheet_xml = worksheet_xml_bytes(template)
+    row_18 = target_row_ranges(sheet_xml, {18})[18]
+    sheet_xml = (
+        sheet_xml[: row_18.start]
+        + row_18.xml.replace(b'r="18"', b'r="17"', 1)
+        + sheet_xml[row_18.end :]
+    )
+    rewrite_xlsx(template, {sheet_part: sheet_xml})
+    third_output = tmp_path / "out3" / "patched.xlsx"
+    third_output.parent.mkdir()
+    assert_patcher_error(
+        "duplicate row number in worksheet XML: 17",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=third_output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_height_updates={17: 24},
+        ),
+    )
+    assert not third_output.exists()
+
+
+def test_invalid_row_height_values_fail_closed(tmp_path: Path) -> None:
+    template = tmp_path / "template.xlsx"
+    output = patch_output_path(tmp_path)
+    write_template(template)
+
+    assert_patcher_error(
+        "invalid row height: 0",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_height_updates={17: 0},
+        ),
+    )
+    assert not output.exists()
+
+    second_output = tmp_path / "out2" / "patched.xlsx"
+    second_output.parent.mkdir()
+    assert_patcher_error(
+        "invalid row height value for 17: bool",
+        lambda: patcher.patch_existing_cells(
+            template=template,
+            output=second_output,
+            sheet_name=SHEET_NAME,
+            updates={},
+            row_height_updates={17: True},
+        ),
+    )
+    assert not second_output.exists()
+
+
 def test_missing_row_fails_closed(tmp_path: Path) -> None:
     template = tmp_path / "template.xlsx"
     output = patch_output_path(tmp_path)
