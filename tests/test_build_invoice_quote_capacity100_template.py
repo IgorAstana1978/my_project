@@ -22,6 +22,30 @@ TINY_PNG = (
     b"\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe"
     b"\x02\xfeA\xe2d\x9a\x00\x00\x00\x00IEND\xaeB`\x82"
 )
+SAFE_DRAFT_LOWER_BLOCK = {
+    "C119": (
+        "Всего прописью: нужно уточнить вручную после подтверждения итоговой суммы."
+    ),
+    "C121": "Счёт действителен: нужно уточнить перед отправкой клиенту.",
+    "C122": "Условия оплаты: нужно уточнить. Условия поставки: нужно уточнить.",
+    "C123": (
+        "Предположительный срок изготовления: нужно уточнить после проверки схемы, "
+        "комплектации, наличия комплектующих и загрузки производства."
+    ),
+    "C124": "Спецификация и условия подлежат проверке перед отправкой клиенту.",
+    "C125": (
+        "Документ является внутренним черновиком. Клиенту не отправлять без "
+        "подтверждения Игоря."
+    ),
+}
+COMMERCIAL_LOWER_BLOCK_PHRASES = (
+    "3 банковских дней",
+    "30-40 рабочих дней",
+    "EXW",
+    "предоплаты изменению не подлежит",
+    "выше одного миллиона",
+    "НДС 16%",
+)
 
 
 def load_script_module(module_name: str, path: Path) -> ModuleType:
@@ -97,14 +121,17 @@ def source_sheet_xml(*, sheet_name: str = SHEET_NAME) -> bytes:
         )
     rows.append('<row r="31" ht="8.1" customHeight="1"/>')
     rows.append(
-        '<row r="32"><c r="B32" t="inlineStr"><is>' "<t>Директор</t></is></c></row>"
+        '<row r="32"><c r="B32" t="inlineStr"><is><t>Директор</t></is></c>'
+        '<c r="F32" t="inlineStr"><is><t>Никольченко И.В.</t></is></c></row>'
     )
     rows.append(
-        '<row r="33"><c r="B33" t="inlineStr"><is>' "<t>Исполнитель</t></is></c></row>"
+        '<row r="33"><c r="B33" t="inlineStr"><is><t>Исполнитель:</t></is></c>'
+        '<c r="F33" t="inlineStr"><is>'
+        "<t>Менеджер производства Назиев Г.К.</t></is></c></row>"
     )
     rows.append(
         '<row r="34"><c r="B34" t="inlineStr"><is>'
-        "<t>Дата проверки</t></is></c></row>"
+        "<t>Дата проверки: ____ / ____ / 2026</t></is></c></row>"
     )
     rows.append('<row r="35" ht="8.1" customHeight="1"/>')
     rows.append('<row r="36" ht="8.1" customHeight="1"/>')
@@ -449,8 +476,27 @@ def test_cli_builds_capacity100_template_and_preserves_source(tmp_path: Path) ->
     assert all_cells["I117"].get("t") is None
     assert all_cells["I117"].find("main:v", NS) is None
     assert cell_value(all_cells["I117"], "f") == total_formula(17, 116)
-    assert cell_value(all_cells["C119"], "t") is None
-    assert sheet["C119"].value == "Всего прописью"
+    for coordinate, expected_text in SAFE_DRAFT_LOWER_BLOCK.items():
+        assert sheet[coordinate].value == expected_text
+    assert sheet["B127"].value == "Директор"
+    assert sheet["F127"].value == "Никольченко И.В."
+    assert sheet["B128"].value == "Исполнитель:"
+    assert sheet["F128"].value == "Менеджер производства Назиев Г.К."
+    assert sheet["B129"].value == "Дата проверки: ____ / ____ / 2026"
+    lower_text = "\n".join(
+        str(sheet[coordinate].value)
+        for coordinate in [
+            *SAFE_DRAFT_LOWER_BLOCK,
+            "B127",
+            "F127",
+            "B128",
+            "F128",
+            "B129",
+        ]
+        if sheet[coordinate].value is not None
+    )
+    for phrase in COMMERCIAL_LOWER_BLOCK_PHRASES:
+        assert phrase not in lower_text
     merge_cells = root.find("main:mergeCells", NS)
     assert merge_cells is not None
     merge_refs = {

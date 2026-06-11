@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 from xml.parsers import expat
+from xml.sax.saxutils import escape
 
 PROJECT_ROOT = Path(
     os.environ.get(
@@ -54,6 +55,22 @@ CALC_CHAIN_CONTENT_TYPE = (
 EXPECTED_SOURCE_FORMULA_REFS = {f"I{row}" for row in range(17, 23)}
 DEFAULT_UNIT = "шт."
 TARGET_ITEM_ROW_HEIGHT = "24"
+SAFE_DRAFT_LOWER_BLOCK = {
+    "C119": (
+        "Всего прописью: нужно уточнить вручную после подтверждения итоговой суммы."
+    ),
+    "C121": "Счёт действителен: нужно уточнить перед отправкой клиенту.",
+    "C122": "Условия оплаты: нужно уточнить. Условия поставки: нужно уточнить.",
+    "C123": (
+        "Предположительный срок изготовления: нужно уточнить после проверки схемы, "
+        "комплектации, наличия комплектующих и загрузки производства."
+    ),
+    "C124": "Спецификация и условия подлежат проверке перед отправкой клиенту.",
+    "C125": (
+        "Документ является внутренним черновиком. Клиенту не отправлять без "
+        "подтверждения Игоря."
+    ),
+}
 ALLOWED_CHANGED_PARTS = {
     CHANGED_PART,
     CONTENT_TYPES_PART,
@@ -611,6 +628,17 @@ def formula_cell(cell_xml: bytes, coordinate: str, formula: str) -> bytes:
     return cell_xml[:start_end] + formula_xml + cell_xml[end_start:]
 
 
+def inline_string_cell(cell_xml: bytes, coordinate: str, value: str) -> bytes:
+    cell_xml = replace_cell_ref(cell_xml, coordinate)
+    cell_xml = replace_attr(cell_xml, "t", "inlineStr")
+    cell_xml = remove_children(cell_xml)
+    start_end = markup_end(cell_xml, 0)
+    end_start = cell_xml.rfind(b"</")
+    escaped_value = escape(value).encode("utf-8")
+    string_xml = b'<is><t xml:space="preserve">' + escaped_value + b"</t></is>"
+    return cell_xml[:start_end] + string_xml + cell_xml[end_start:]
+
+
 def text_cell_from_template(cell_xml: bytes, coordinate: str) -> bytes:
     return replace_cell_ref(cell_xml, coordinate)
 
@@ -711,8 +739,15 @@ def shift_lower_row(row: ElementRange) -> bytes:
     cells = cell_refs(ElementRange("row", {}, 0, 0, len(row_xml), row_xml))
     replacements: list[tuple[int, int, bytes]] = []
     for coordinate, cell in cells.items():
+        new_coordinate = shift_row_references(coordinate)
         if coordinate == "I22":
             replacement = formula_cell(cell.xml, "I117", total_formula())
+        elif new_coordinate in SAFE_DRAFT_LOWER_BLOCK:
+            replacement = inline_string_cell(
+                cell.xml,
+                new_coordinate,
+                SAFE_DRAFT_LOWER_BLOCK[new_coordinate],
+            )
         else:
             replacement = shifted_cell(cell.xml, coordinate)
         replacements.append((cell.start, cell.end, replacement))
