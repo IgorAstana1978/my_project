@@ -378,12 +378,15 @@ def test_generated_rows_get_adaptive_heights(
     output_dir.mkdir()
     output = output_dir / "draft.xlsx"
     layout = write_extended_template(template)
-    custom_payload = payload(6)
+    custom_payload = payload(8)
     custom_payload["items"][0]["name"] = "ЩР"
     custom_payload["items"][1]["name"] = "Щит распределительный этажный навесной"
     custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
     custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
-    custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 8))
+    custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 7))
+    custom_payload["items"][5]["name"] = "\n".join(str(index) for index in range(1, 8))
+    custom_payload["items"][6]["name"] = "\n".join(str(index) for index in range(1, 9))
+    custom_payload["items"][7]["name"] = "\n".join(str(index) for index in range(1, 10))
 
     extended.generate_extended_workbook(
         template=template,
@@ -398,8 +401,9 @@ def test_generated_rows_get_adaptive_heights(
     assert sheet.row_dimensions[19].height == 54
     assert sheet.row_dimensions[20].height == 72
     assert sheet.row_dimensions[21].height == 90
-    assert sheet.row_dimensions[23].hidden is True
-    assert sheet.row_dimensions[23].height == 24
+    assert sheet.row_dimensions[22].height == 108
+    assert sheet.row_dimensions[23].height == 108
+    assert sheet.row_dimensions[24].height == 120
 
 
 def test_pre_hidden_used_row_becomes_visible_after_generation(
@@ -439,6 +443,7 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
     custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
     custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 8))
+    custom_payload["items"][5]["name"] = "\n".join(str(index) for index in range(1, 10))
 
     extended.generate_extended_workbook(
         template=template,
@@ -454,7 +459,8 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     assert sheet.row_dimensions[18].height == 36
     assert sheet.row_dimensions[19].height == 54
     assert sheet.row_dimensions[20].height == 72
-    assert sheet.row_dimensions[21].height == 90
+    assert sheet.row_dimensions[21].height == 108
+    assert sheet.row_dimensions[22].height == 120
     for row in range(17, 95):
         assert sheet.row_dimensions[row].hidden is False
     for row in range(95, 117):
@@ -598,14 +604,25 @@ def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None
     long["instruments_and_devices"] = "А" * 100
     line_breaks = item(4)
     line_breaks["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
-    capped = item(5)
-    capped["name"] = "\n".join(str(index) for index in range(1, 8))
+    six_lines = item(5)
+    six_lines["name"] = "\n".join(str(index) for index in range(1, 7))
+    seven_lines = item(6)
+    seven_lines["name"] = "\n".join(str(index) for index in range(1, 8))
+    eight_lines_from_seven_breaks = item(7)
+    eight_lines_from_seven_breaks["name"] = "\n".join(
+        str(index) for index in range(1, 9)
+    )
+    capped = item(8)
+    capped["name"] = "\n".join(str(index) for index in range(1, 10))
 
     assert extended.estimate_item_row_height(short) == 24
     assert extended.estimate_item_row_height(medium) == 36
     assert extended.estimate_item_row_height(long) == 54
     assert extended.estimate_item_row_height(line_breaks) == 72
-    assert extended.estimate_item_row_height(capped) == 90
+    assert extended.estimate_item_row_height(six_lines) == 90
+    assert extended.estimate_item_row_height(seven_lines) == 108
+    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 108
+    assert extended.estimate_item_row_height(capped) == 120
 
 
 def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> None:
@@ -615,7 +632,8 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     custom_items[1]["name"] = "Щит распределительный этажный навесной"
     custom_items[2]["instruments_and_devices"] = "А" * 100
     custom_items[3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
-    custom_items[4]["name"] = "\n".join(str(index) for index in range(1, 8))
+    custom_items[4]["name"] = "\n".join(str(index) for index in range(1, 7))
+    custom_items[5]["name"] = "\n".join(str(index) for index in range(1, 8))
 
     updates = extended.build_row_height_updates(custom_items, layout)
 
@@ -624,7 +642,7 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     assert updates[19] == 54
     assert updates[20] == 72
     assert updates[21] == 90
-    assert updates[22] == 24
+    assert updates[22] == 108
     assert updates[23] == 24
     assert updates[24] == 24
 
