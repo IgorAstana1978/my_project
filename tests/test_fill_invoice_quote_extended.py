@@ -381,7 +381,7 @@ def test_generated_rows_get_adaptive_heights(
     custom_payload = payload(8)
     custom_payload["items"][0]["name"] = "ЩР"
     custom_payload["items"][1]["name"] = "Щит распределительный этажный навесной"
-    custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
+    custom_payload["items"][2]["instruments_and_devices"] = "А" * 70
     custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
     custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 7))
     custom_payload["items"][5]["name"] = "\n".join(str(index) for index in range(1, 8))
@@ -397,13 +397,13 @@ def test_generated_rows_get_adaptive_heights(
 
     sheet = worksheet(output)
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 36
-    assert sheet.row_dimensions[19].height == 54
-    assert sheet.row_dimensions[20].height == 72
-    assert sheet.row_dimensions[21].height == 90
-    assert sheet.row_dimensions[22].height == 108
-    assert sheet.row_dimensions[23].height == 108
-    assert sheet.row_dimensions[24].height == 120
+    assert sheet.row_dimensions[18].height == 42
+    assert sheet.row_dimensions[19].height == 60
+    assert sheet.row_dimensions[20].height == 78
+    assert sheet.row_dimensions[21].height == 114
+    assert sheet.row_dimensions[22].height == 132
+    assert sheet.row_dimensions[23].height == 150
+    assert sheet.row_dimensions[24].height == 168
 
 
 def test_pre_hidden_used_row_becomes_visible_after_generation(
@@ -440,7 +440,7 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     custom_payload = payload(78)
     custom_payload["items"][0]["name"] = "ЩР"
     custom_payload["items"][1]["name"] = "Щит распределительный этажный навесной"
-    custom_payload["items"][2]["instruments_and_devices"] = "А" * 100
+    custom_payload["items"][2]["instruments_and_devices"] = "А" * 70
     custom_payload["items"][3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
     custom_payload["items"][4]["name"] = "\n".join(str(index) for index in range(1, 8))
     custom_payload["items"][5]["name"] = "\n".join(str(index) for index in range(1, 10))
@@ -456,11 +456,11 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     assert sheet["C17"].value == "ЩР"
     assert sheet["C94"].value == "ВРУ-78"
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 36
-    assert sheet.row_dimensions[19].height == 54
-    assert sheet.row_dimensions[20].height == 72
-    assert sheet.row_dimensions[21].height == 108
-    assert sheet.row_dimensions[22].height == 120
+    assert sheet.row_dimensions[18].height == 42
+    assert sheet.row_dimensions[19].height == 60
+    assert sheet.row_dimensions[20].height == 78
+    assert sheet.row_dimensions[21].height == 132
+    assert sheet.row_dimensions[22].height == 168
     for row in range(17, 95):
         assert sheet.row_dimensions[row].hidden is False
     for row in range(95, 117):
@@ -601,7 +601,7 @@ def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None
     medium = item(2)
     medium["name"] = "Щит распределительный этажный навесной"
     long = item(3)
-    long["instruments_and_devices"] = "А" * 100
+    long["instruments_and_devices"] = "А" * 70
     line_breaks = item(4)
     line_breaks["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
     six_lines = item(5)
@@ -614,15 +614,23 @@ def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None
     )
     capped = item(8)
     capped["name"] = "\n".join(str(index) for index in range(1, 10))
+    long_instruments = item(9)
+    long_instruments["instruments_and_devices"] = (
+        "Вводной автомат, контроллер, релейные модули, блок питания, "
+        "клеммные ряды, сигнальные лампы, маркировка, кабель-канал, "
+        "коммутационные перемычки, сервисная розетка, промежуточные реле, "
+        "модули расширения, резервные клеммы и комплект внутреннего монтажа"
+    )
 
     assert extended.estimate_item_row_height(short) == 24
-    assert extended.estimate_item_row_height(medium) == 36
-    assert extended.estimate_item_row_height(long) == 54
-    assert extended.estimate_item_row_height(line_breaks) == 72
-    assert extended.estimate_item_row_height(six_lines) == 90
-    assert extended.estimate_item_row_height(seven_lines) == 108
-    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 108
-    assert extended.estimate_item_row_height(capped) == 120
+    assert extended.estimate_item_row_height(medium) == 42
+    assert extended.estimate_item_row_height(long) == 60
+    assert extended.estimate_item_row_height(line_breaks) == 78
+    assert extended.estimate_item_row_height(six_lines) == 114
+    assert extended.estimate_item_row_height(seven_lines) == 132
+    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 150
+    assert extended.estimate_item_row_height(capped) == 168
+    assert extended.estimate_item_row_height(long_instruments) >= 132
 
 
 def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> None:
@@ -630,7 +638,7 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     custom_items = payload(6)["items"]
     custom_items[0]["name"] = "ЩР"
     custom_items[1]["name"] = "Щит распределительный этажный навесной"
-    custom_items[2]["instruments_and_devices"] = "А" * 100
+    custom_items[2]["instruments_and_devices"] = "А" * 70
     custom_items[3]["cabinet_type_dimensions_material"] = "1\n2\n3\n4"
     custom_items[4]["name"] = "\n".join(str(index) for index in range(1, 7))
     custom_items[5]["name"] = "\n".join(str(index) for index in range(1, 8))
@@ -638,11 +646,11 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     updates = extended.build_row_height_updates(custom_items, layout)
 
     assert updates[17] == 24
-    assert updates[18] == 36
-    assert updates[19] == 54
-    assert updates[20] == 72
-    assert updates[21] == 90
-    assert updates[22] == 108
+    assert updates[18] == 42
+    assert updates[19] == 60
+    assert updates[20] == 78
+    assert updates[21] == 114
+    assert updates[22] == 132
     assert updates[23] == 24
     assert updates[24] == 24
 
