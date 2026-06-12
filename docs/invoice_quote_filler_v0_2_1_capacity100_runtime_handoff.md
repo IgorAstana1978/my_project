@@ -54,6 +54,14 @@ examples/invoice_quote_items_capacity100_sample.csv
 
 This file contains synthetic test rows only. It is not client data and must not be treated as a client-ready quote.
 
+## User CSV Runbook
+
+Короткая инструкция для Игоря по созданию внутреннего черновика КП из CSV:
+
+```text
+docs/invoice_quote_filler_v0_2_1_user_csv_runbook.md
+```
+
 ## Runtime Guarantees
 
 - Template capacity is `100` item rows.
