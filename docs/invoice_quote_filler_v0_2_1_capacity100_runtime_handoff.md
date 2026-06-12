@@ -44,6 +44,16 @@ Rules:
 - Commercial columns are not allowed.
 - Price, sum, discount, VAT, currency, term, and price confirmation fields must not be accepted as CSV input.
 
+## Sample CSV
+
+Safe sample input for the capacity100 runtime chain:
+
+```text
+examples/invoice_quote_items_capacity100_sample.csv
+```
+
+This file contains synthetic test rows only. It is not client data and must not be treated as a client-ready quote.
+
 ## Runtime Guarantees
 
 - Template capacity is `100` item rows.
