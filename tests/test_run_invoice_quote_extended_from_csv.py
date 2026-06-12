@@ -1,3 +1,4 @@
+import csv
 import importlib.util
 import json
 import subprocess
@@ -11,9 +12,22 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CSV_BRIDGE_SCRIPT = PROJECT_ROOT / "scripts" / "run_invoice_quote_extended_from_csv.py"
+CAPACITY100_SAMPLE_CSV = (
+    PROJECT_ROOT / "examples" / "invoice_quote_items_capacity100_sample.csv"
+)
 ITEMS_BRIDGE_TESTS = (
     PROJECT_ROOT / "tests" / "test_run_invoice_quote_extended_from_items.py"
 )
+FORBIDDEN_SAMPLE_COMMERCIAL_COLUMNS = {
+    "price",
+    "price_kzt",
+    "sum",
+    "vat",
+    "currency",
+    "term",
+    "discount",
+    "price_confirmed_by_igor",
+}
 
 
 def load_script_module(module_name: str, path: Path) -> ModuleType:
@@ -188,6 +202,55 @@ def test_csv_bridge_successfully_runs_fifty_item_job(tmp_path: Path) -> None:
     assert output.is_file()
     assert workbook_value(output, "C66") == "ВРУ-50"
     assert workbook_value(output, "I67") == "=SUM(I17:I66)"
+
+
+def test_capacity100_sample_csv_contract_and_adapter_path(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    template = tmp_path / "extended_template.xlsx"
+    output = output_path(tmp_path)
+    captured: dict[str, Any] = {}
+    sample_text = CAPACITY100_SAMPLE_CSV.read_text(encoding="utf-8-sig")
+    rows = list(
+        csv.reader(
+            sample_text.splitlines(keepends=True),
+            delimiter=";",
+            strict=True,
+        )
+    )
+    header = rows[0]
+    records = rows[1:]
+
+    assert ";".join(header) == csv_header().strip()
+    assert not FORBIDDEN_SAMPLE_COMMERCIAL_COLUMNS.intersection(header)
+    assert len(records) == 7
+    assert all(len(record) == len(header) for record in records)
+    assert all(isinstance(int(record[2]), int) for record in records)
+    assert any(";" in value for record in records for value in record)
+    assert any("\n" in value for record in records for value in record)
+
+    def fake_run_items_bridge(
+        items_json: Path,
+        template: Path,
+        capacity: int,
+        output: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        captured["items_json"] = json.loads(items_json.read_text(encoding="utf-8"))
+        captured["template"] = template
+        captured["capacity"] = capacity
+        captured["output"] = output
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="CREATED\n")
+
+    monkeypatch.setattr(csv_bridge, "run_items_bridge", fake_run_items_bridge)
+
+    exit_code = csv_bridge.main(csv_args(CAPACITY100_SAMPLE_CSV, template, 100, output))
+
+    assert exit_code == 0
+    assert captured["template"] == template
+    assert captured["capacity"] == 100
+    assert captured["output"] == output
+    assert len(captured["items_json"]["items"]) == 7
 
 
 def test_csv_bridge_invokes_existing_items_bridge(
