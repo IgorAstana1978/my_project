@@ -397,13 +397,13 @@ def test_generated_rows_get_adaptive_heights(
 
     sheet = worksheet(output)
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 42
-    assert sheet.row_dimensions[19].height == 60
-    assert sheet.row_dimensions[20].height == 78
-    assert sheet.row_dimensions[21].height == 114
-    assert sheet.row_dimensions[22].height == 132
-    assert sheet.row_dimensions[23].height == 150
-    assert sheet.row_dimensions[24].height == 168
+    assert sheet.row_dimensions[18].height == 44
+    assert sheet.row_dimensions[19].height == 62
+    assert sheet.row_dimensions[20].height == 80
+    assert sheet.row_dimensions[21].height == 116
+    assert sheet.row_dimensions[22].height == 134
+    assert sheet.row_dimensions[23].height == 152
+    assert sheet.row_dimensions[24].height == 170
 
 
 def test_pre_hidden_used_row_becomes_visible_after_generation(
@@ -456,11 +456,11 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     assert sheet["C17"].value == "ЩР"
     assert sheet["C94"].value == "ВРУ-78"
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 42
-    assert sheet.row_dimensions[19].height == 60
-    assert sheet.row_dimensions[20].height == 78
-    assert sheet.row_dimensions[21].height == 132
-    assert sheet.row_dimensions[22].height == 168
+    assert sheet.row_dimensions[18].height == 44
+    assert sheet.row_dimensions[19].height == 62
+    assert sheet.row_dimensions[20].height == 80
+    assert sheet.row_dimensions[21].height == 134
+    assert sheet.row_dimensions[22].height == 170
     for row in range(17, 95):
         assert sheet.row_dimensions[row].hidden is False
     for row in range(95, 117):
@@ -621,16 +621,43 @@ def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None
         "коммутационные перемычки, сервисная розетка, промежуточные реле, "
         "модули расширения, резервные клеммы и комплект внутреннего монтажа"
     )
+    very_tall = item(10)
+    very_tall["name"] = "\n".join(str(index) for index in range(1, 25))
 
     assert extended.estimate_item_row_height(short) == 24
-    assert extended.estimate_item_row_height(medium) == 42
-    assert extended.estimate_item_row_height(long) == 60
-    assert extended.estimate_item_row_height(line_breaks) == 78
-    assert extended.estimate_item_row_height(six_lines) == 114
-    assert extended.estimate_item_row_height(seven_lines) == 132
-    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 150
-    assert extended.estimate_item_row_height(capped) == 168
+    assert extended.estimate_item_row_height(medium) == 44
+    assert extended.estimate_item_row_height(long) == 62
+    assert extended.estimate_item_row_height(line_breaks) == 80
+    assert extended.estimate_item_row_height(six_lines) == 116
+    assert extended.estimate_item_row_height(seven_lines) == 134
+    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 152
+    assert extended.estimate_item_row_height(capped) == 170
     assert extended.estimate_item_row_height(long_instruments) >= 132
+    assert extended.estimate_item_row_height(very_tall) == 360
+
+
+def test_estimate_item_row_height_draft_v3_f23_regression() -> None:
+    draft_v3_f23 = item(1)
+    draft_v3_f23["instruments_and_devices"] = (
+        "ПЛК центральный с резервом питания\n"
+        "Модуль дискретных входов для сигналов аварии\n"
+        "Модуль релейных выходов для команд управления\n"
+        "Блок питания резервированный двадцать четыре вольта\n"
+        "Коммутатор Ethernet для связи с диспетчерской\n"
+        "Клеммы датчиков температуры и давления\n"
+        "Промежуточные реле с ручным управлением\n"
+        "Сервисная розетка и автомат защиты\n"
+        "Маркировка, кабель-канал и комплект перемычек"
+    )
+
+    assert (
+        extended.visual_line_count(
+            draft_v3_f23["instruments_and_devices"],
+            extended.ROW_HEIGHT_TEXT_WIDTHS["instruments_and_devices"],
+        )
+        == 18
+    )
+    assert extended.estimate_item_row_height(draft_v3_f23) == 332
 
 
 def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> None:
@@ -646,11 +673,11 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     updates = extended.build_row_height_updates(custom_items, layout)
 
     assert updates[17] == 24
-    assert updates[18] == 42
-    assert updates[19] == 60
-    assert updates[20] == 78
-    assert updates[21] == 114
-    assert updates[22] == 132
+    assert updates[18] == 44
+    assert updates[19] == 62
+    assert updates[20] == 80
+    assert updates[21] == 116
+    assert updates[22] == 134
     assert updates[23] == 24
     assert updates[24] == 24
 
