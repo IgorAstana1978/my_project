@@ -1,6 +1,6 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `fef8e10` (`fix: size tall wrapped rows by visual line count`).
+Current stable commit: `240fcd2` (`fix: tighten adaptive item row heights`).
 
 ## Stable Runtime Template
 
@@ -75,19 +75,19 @@ docs/invoice_quote_filler_v0_2_1_user_csv_runbook.md
 
 ## Adaptive Row Height
 
-Current conservative width assumptions:
+Current tuned_v3 width assumptions:
 
 ```text
-C / name = 24
-F / instruments_and_devices = 30
-G / cabinet_type_dimensions_material = 22
+C / name = 28
+F / instruments_and_devices = 35
+G / cabinet_type_dimensions_material = 24
 ```
 
 Current height policy:
 
 ```text
 visual_lines <= 1 -> 24
-visual_lines >= 2  -> min(360, visual_lines * 18 + 8)
+visual_lines >= 2  -> min(360, visual_lines * 15 + 6)
 ```
 
 Unused rows always remain:
@@ -117,3 +117,14 @@ C:H = empty
 ```text
 CSV -> run_invoice_quote_extended_from_csv.py -> items bridge -> extended writer -> draft .xlsx
 ```
+
+## Real Visual Acceptance
+
+Real invoice smoke test:
+
+- Source invoice: счёт №475 ТОО «AB COMPANY-01».
+- Extracted CSV: 21 item rows.
+- Compact CSV approach: убрать лишние ручные переносы в длинных описаниях, не меняя смысл позиций.
+- Generated draft: `C:\Users\IgorN\Downloads\КП_475_AB_COMPANY_all21_compact_draft_v2.xlsx` outside Git.
+- Igor visual result: accepted.
+- Adaptive row height tuning is closed for this real invoice.
