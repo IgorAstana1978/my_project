@@ -397,13 +397,13 @@ def test_generated_rows_get_adaptive_heights(
 
     sheet = worksheet(output)
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 44
-    assert sheet.row_dimensions[19].height == 62
-    assert sheet.row_dimensions[20].height == 80
-    assert sheet.row_dimensions[21].height == 116
-    assert sheet.row_dimensions[22].height == 134
-    assert sheet.row_dimensions[23].height == 152
-    assert sheet.row_dimensions[24].height == 170
+    assert sheet.row_dimensions[18].height == 36
+    assert sheet.row_dimensions[19].height == 36
+    assert sheet.row_dimensions[20].height == 66
+    assert sheet.row_dimensions[21].height == 96
+    assert sheet.row_dimensions[22].height == 111
+    assert sheet.row_dimensions[23].height == 126
+    assert sheet.row_dimensions[24].height == 141
 
 
 def test_pre_hidden_used_row_becomes_visible_after_generation(
@@ -456,11 +456,11 @@ def test_generated_capacity_hundred_with_seventy_eight_items_hides_unused_rows(
     assert sheet["C17"].value == "ЩР"
     assert sheet["C94"].value == "ВРУ-78"
     assert sheet.row_dimensions[17].height == 24
-    assert sheet.row_dimensions[18].height == 44
-    assert sheet.row_dimensions[19].height == 62
-    assert sheet.row_dimensions[20].height == 80
-    assert sheet.row_dimensions[21].height == 134
-    assert sheet.row_dimensions[22].height == 170
+    assert sheet.row_dimensions[18].height == 36
+    assert sheet.row_dimensions[19].height == 36
+    assert sheet.row_dimensions[20].height == 66
+    assert sheet.row_dimensions[21].height == 111
+    assert sheet.row_dimensions[22].height == 141
     for row in range(17, 95):
         assert sheet.row_dimensions[row].hidden is False
     for row in range(95, 117):
@@ -625,15 +625,38 @@ def test_estimate_item_row_height_short_medium_long_line_break_and_cap() -> None
     very_tall["name"] = "\n".join(str(index) for index in range(1, 25))
 
     assert extended.estimate_item_row_height(short) == 24
-    assert extended.estimate_item_row_height(medium) == 44
-    assert extended.estimate_item_row_height(long) == 62
-    assert extended.estimate_item_row_height(line_breaks) == 80
-    assert extended.estimate_item_row_height(six_lines) == 116
-    assert extended.estimate_item_row_height(seven_lines) == 134
-    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 152
-    assert extended.estimate_item_row_height(capped) == 170
-    assert extended.estimate_item_row_height(long_instruments) >= 132
+    assert extended.estimate_item_row_height(medium) == 36
+    assert extended.estimate_item_row_height(long) == 36
+    assert extended.estimate_item_row_height(line_breaks) == 66
+    assert extended.estimate_item_row_height(six_lines) == 96
+    assert extended.estimate_item_row_height(seven_lines) == 111
+    assert extended.estimate_item_row_height(eight_lines_from_seven_breaks) == 126
+    assert extended.estimate_item_row_height(capped) == 141
+    assert extended.estimate_item_row_height(long_instruments) == 126
     assert extended.estimate_item_row_height(very_tall) == 360
+
+
+def test_estimate_item_row_height_compacts_long_wrapped_rows_without_clipping() -> None:
+    compact_long = item(1)
+    compact_long["instruments_and_devices"] = "А" * 240
+    hard_newlines = item(2)
+    hard_newlines["instruments_and_devices"] = "\n".join(
+        f"строка {index}" for index in range(1, 8)
+    )
+
+    assert (
+        extended.visual_line_count(
+            compact_long["instruments_and_devices"],
+            extended.ROW_HEIGHT_TEXT_WIDTHS["instruments_and_devices"],
+        )
+        == 7
+    )
+    compact_height = extended.estimate_item_row_height(compact_long)
+    hard_newlines_height = extended.estimate_item_row_height(hard_newlines)
+
+    assert compact_height == 111
+    assert 24 < compact_height < 170
+    assert hard_newlines_height == 111
 
 
 def test_estimate_item_row_height_draft_v3_f23_regression() -> None:
@@ -655,9 +678,9 @@ def test_estimate_item_row_height_draft_v3_f23_regression() -> None:
             draft_v3_f23["instruments_and_devices"],
             extended.ROW_HEIGHT_TEXT_WIDTHS["instruments_and_devices"],
         )
-        == 18
+        == 16
     )
-    assert extended.estimate_item_row_height(draft_v3_f23) == 332
+    assert extended.estimate_item_row_height(draft_v3_f23) == 246
 
 
 def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> None:
@@ -673,11 +696,11 @@ def test_build_row_height_updates_marks_used_adaptive_and_unused_compact() -> No
     updates = extended.build_row_height_updates(custom_items, layout)
 
     assert updates[17] == 24
-    assert updates[18] == 44
-    assert updates[19] == 62
-    assert updates[20] == 80
-    assert updates[21] == 116
-    assert updates[22] == 134
+    assert updates[18] == 36
+    assert updates[19] == 36
+    assert updates[20] == 66
+    assert updates[21] == 96
+    assert updates[22] == 111
     assert updates[23] == 24
     assert updates[24] == 24
 

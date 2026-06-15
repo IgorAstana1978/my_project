@@ -27,14 +27,21 @@ DRAWING_MEDIA_SNAPSHOT_SCRIPT = PROJECT_ROOT / "scripts" / "drawing_media_snapsh
 OOXML_CELL_PATCHER_SCRIPT = PROJECT_ROOT / "scripts" / "ooxml_cell_patcher.py"
 SHEET_NAME = "Счёт-КП шаблон"
 NEEDS_CLARIFICATION = "нужно уточнить"
+BASE_ITEM_ROW_HEIGHT = 24
+ITEM_ROW_VISUAL_LINE_HEIGHT = 15
+ITEM_ROW_VERTICAL_PADDING = 6
 MAX_ITEM_ROW_HEIGHT = 360
-ITEM_ROW_HEIGHTS = (24,) + tuple(
-    min(MAX_ITEM_ROW_HEIGHT, lines * 18 + 8) for lines in range(2, 21)
+ITEM_ROW_HEIGHTS = (BASE_ITEM_ROW_HEIGHT,) + tuple(
+    min(
+        MAX_ITEM_ROW_HEIGHT,
+        lines * ITEM_ROW_VISUAL_LINE_HEIGHT + ITEM_ROW_VERTICAL_PADDING,
+    )
+    for lines in range(2, 25)
 )
 ROW_HEIGHT_TEXT_WIDTHS = {
-    "name": 24,
-    "instruments_and_devices": 30,
-    "cabinet_type_dimensions_material": 22,
+    "name": 28,
+    "instruments_and_devices": 35,
+    "cabinet_type_dimensions_material": 24,
 }
 
 
@@ -288,8 +295,11 @@ def visual_line_count(value: Any, width: int) -> int:
 
 def height_for_visual_lines(lines: int) -> int:
     if lines <= 1:
-        return 24
-    return min(MAX_ITEM_ROW_HEIGHT, lines * 18 + 8)
+        return BASE_ITEM_ROW_HEIGHT
+    return min(
+        MAX_ITEM_ROW_HEIGHT,
+        lines * ITEM_ROW_VISUAL_LINE_HEIGHT + ITEM_ROW_VERTICAL_PADDING,
+    )
 
 
 def estimate_item_row_height(item: Mapping[str, Any]) -> int:
@@ -350,7 +360,7 @@ def build_row_height_updates(
             fail(f"unsupported item row height: {height}")
         updates[row] = height
     for row in range(layout.item_start_row + len(items), layout.item_end_row + 1):
-        updates[row] = 24
+        updates[row] = BASE_ITEM_ROW_HEIGHT
     return updates
 
 
