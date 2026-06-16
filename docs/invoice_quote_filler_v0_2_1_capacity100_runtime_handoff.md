@@ -1,6 +1,6 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `240fcd2` (`fix: tighten adaptive item row heights`).
+Current stable commit: `34e75ec` (`feat: add compact csv runtime runner`).
 
 ## Stable Runtime Template
 
@@ -19,6 +19,28 @@ CSV -> run_invoice_quote_extended_from_csv.py -> items bridge -> extended writer
 ```
 
 The CSV adapter delegates to `run_invoice_quote_extended_from_items.py`, which delegates to the extended writer. Writer logic is not duplicated in the CSV adapter.
+
+## One-command Compact CSV Runner
+
+Primary user-facing runner:
+
+```text
+scripts/run_invoice_quote_extended_from_csv_compact.py
+```
+
+Internal chain:
+
+```text
+input CSV -> temporary compact CSV -> existing CSV bridge -> draft .xlsx
+```
+
+The temporary compact CSV is created in system temp and cleaned up after both success and downstream error. The runner delegates compaction to `compact_invoice_quote_items_csv.py` and generation to `run_invoice_quote_extended_from_csv.py`.
+
+Real visual acceptance:
+
+- Source invoice: счёт №475 ТОО «AB COMPANY-01».
+- Generated draft: `C:\Users\IgorN\Downloads\КП_475_AB_COMPANY_one_command_draft.xlsx` outside Git.
+- Igor visual result: accepted.
 
 ## CSV Contract
 

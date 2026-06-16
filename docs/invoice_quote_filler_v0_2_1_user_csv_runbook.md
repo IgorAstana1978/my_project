@@ -44,10 +44,12 @@ C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_ca
 
 Output нужно сохранять outside Git. Файл output не должен существовать до запуска.
 
+Основной пользовательский путь - one-command runner. На вход можно дать обычный strict items CSV, даже если в длинных descriptions есть ручные переносы. Runner сам создаст temporary compact CSV, затем передаст его в рабочую CSV runtime chain. Temporary compact CSV вручную сохранять не нужно.
+
 Пример:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_invoice_quote_extended_from_csv.py --items-csv examples\invoice_quote_items_capacity100_sample.csv --template "C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx" --template-capacity 100 --output "C:\Users\IgorN\Downloads\Тест_capacity100_sample_csv_draft.xlsx"
+.\.venv\Scripts\python.exe scripts\run_invoice_quote_extended_from_csv_compact.py --items-csv examples\invoice_quote_items_capacity100_sample.csv --template "C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx" --template-capacity 100 --output "C:\Users\IgorN\Downloads\Тест_capacity100_sample_csv_draft.xlsx"
 ```
 
 Скрипт должен вывести `CREATED:` и путь к созданному файлу.
@@ -67,7 +69,7 @@ Output нужно сохранять outside Git. Файл output не долж�
 
 ## 5. Практическая заметка про compact CSV
 
-Если старый счёт или CSV содержит много ручных переносов внутри длинных descriptions, перед генерацией лучше подготовить compact CSV.
+Если старый счёт или CSV содержит много ручных переносов внутри длинных descriptions, one-command runner сам подготовит temporary compact CSV. Ручной compact CSV обычно нужен только для диагностики или визуального сравнения.
 
 При compact CSV:
 
