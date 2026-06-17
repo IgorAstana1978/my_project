@@ -44,15 +44,27 @@ C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_ca
 
 Output нужно сохранять outside Git. Файл output не должен существовать до запуска.
 
-Основной пользовательский путь - one-command runner. На вход можно дать обычный strict items CSV, даже если в длинных descriptions есть ручные переносы. Runner сам создаст temporary compact CSV, затем передаст его в рабочую CSV runtime chain. Temporary compact CSV вручную сохранять не нужно.
+Основной пользовательский путь - короткий Windows launcher. Запускать из repo root:
+
+```text
+C:\Users\IgorN\projects\my_project
+```
+
+На вход можно дать обычный strict items CSV, даже если в длинных descriptions есть ручные переносы. Launcher сам использует default tuned_v3 template из Downloads, default capacity `100`, вызывает one-command compact CSV runner и передаёт результат в рабочую CSV runtime chain. Temporary compact CSV вручную сохранять не нужно.
 
 Пример:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\run_invoice_quote_extended_from_csv_compact.py --items-csv examples\invoice_quote_items_capacity100_sample.csv --template "C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx" --template-capacity 100 --output "C:\Users\IgorN\Downloads\Тест_capacity100_sample_csv_draft.xlsx"
+.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
 
-Скрипт должен вывести `CREATED:` и путь к созданному файлу.
+Если PowerShell policy блокирует запуск `.ps1`, использовать:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+```
+
+Скрипт должен вывести понятное сообщение и путь к созданному файлу.
 
 ## 4. Проверить черновик
 

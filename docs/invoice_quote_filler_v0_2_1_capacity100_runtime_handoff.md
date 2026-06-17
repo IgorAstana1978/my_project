@@ -1,6 +1,6 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `34e75ec` (`feat: add compact csv runtime runner`).
+Current stable commit: `23372a3` (`fix: repair capacity100 powershell launcher`).
 
 ## Stable Runtime Template
 
@@ -22,7 +22,7 @@ The CSV adapter delegates to `run_invoice_quote_extended_from_items.py`, which d
 
 ## One-command Compact CSV Runner
 
-Primary user-facing runner:
+Internal compact runner:
 
 ```text
 scripts/run_invoice_quote_extended_from_csv_compact.py
@@ -41,6 +41,51 @@ Real visual acceptance:
 - Source invoice: счёт №475 ТОО «AB COMPANY-01».
 - Generated draft: `C:\Users\IgorN\Downloads\КП_475_AB_COMPANY_one_command_draft.xlsx` outside Git.
 - Igor visual result: accepted.
+
+## Windows PowerShell Launcher
+
+Primary user-facing launcher:
+
+```text
+scripts/make_quote_capacity100.ps1
+```
+
+User-facing command format:
+
+```powershell
+.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+```
+
+Defaults:
+
+- Template path is built from `$env:USERPROFILE\Downloads\Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx`.
+- Template capacity is `100`.
+- Python defaults to the project venv executable.
+
+Internally, the launcher calls:
+
+```text
+scripts/run_invoice_quote_extended_from_csv_compact.py
+```
+
+Launcher preflight checks:
+
+- input CSV exists;
+- template exists;
+- python executable exists;
+- output does not already exist;
+- output parent directory exists.
+
+Windows PowerShell 5.1 parser compatibility is fixed in the launcher via an ASCII-safe default template filename.
+
+Real visual acceptance:
+
+- Source invoice: счёт №475 ТОО «AB COMPANY-01».
+- Generated draft: `C:\Users\IgorN\Downloads\КП_475_AB_COMPANY_launcher_draft_v2.xlsx` outside Git.
+- Item rows filled: Excel rows 17-37.
+- Unused rows start at row 38, are hidden, and have C:H cleared.
+- Drawing/media preserved.
+- Key row heights accepted visually by Igor.
 
 ## CSV Contract
 
