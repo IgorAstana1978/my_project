@@ -7,7 +7,7 @@ param(
     [string]$Output,
 
     [Parameter(Mandatory = $false)]
-    [string]$Template = (Join-Path $env:USERPROFILE "Downloads\Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx"),
+    [string]$Template = (Join-Path (Join-Path $env:USERPROFILE "Downloads") ([regex]::Unescape("\u0424\u0438\u0440\u043c\u0435\u043d\u043d\u044b\u0439_\u0448\u0430\u0431\u043b\u043e\u043d_\u0441\u0447\u0451\u0442\u0430-\u041a\u041f_v0.3_capacity100_tuned_v3_\u0414\u0438\u041d_\u0412\u0410-\u041a\u042d\u0421.xlsx"))),
 
     [Parameter(Mandatory = $false)]
     [int]$TemplateCapacity = 100,

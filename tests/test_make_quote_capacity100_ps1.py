@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "make_quote_capacity100.ps1"
@@ -24,7 +28,10 @@ def test_launcher_uses_userprofile_for_default_template() -> None:
     text = script_text()
 
     assert "$env:USERPROFILE" in text
-    assert "Фирменный_шаблон_счёта-КП_v0.3_capacity100_tuned_v3_ДиН_ВА-КЭС.xlsx" in text
+    assert "Downloads" in text
+    assert "capacity100_tuned_v3" in text
+    assert "[regex]::Unescape" in text
+    assert "\\u0424\\u0438\\u0440" in text
     assert "C:\\Users\\IgorN" not in text
 
 
@@ -74,3 +81,30 @@ def test_launcher_has_no_git_or_commercial_content() -> None:
     assert "git add" not in text
     for forbidden in ("price", "sum", "vat", "term", "цена", "сумм", "ндс", "срок"):
         assert forbidden not in text
+
+
+def test_launcher_parses_with_available_powershell() -> None:
+    executable = shutil.which("powershell") or shutil.which("pwsh")
+    if executable is None:
+        pytest.skip("PowerShell is not available")
+
+    script_path = str(SCRIPT).replace("'", "''")
+    command = (
+        f"$path = '{script_path}'; "
+        "$tokens = $null; "
+        "$errors = $null; "
+        "[System.Management.Automation.Language.Parser]::ParseFile("
+        "$path, [ref]$tokens, [ref]$errors) | Out-Null; "
+        "if ($errors.Count -gt 0) { "
+        "$errors | ForEach-Object { Write-Error $_.Message }; "
+        "exit 1 "
+        "}"
+    )
+    result = subprocess.run(
+        [executable, "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
