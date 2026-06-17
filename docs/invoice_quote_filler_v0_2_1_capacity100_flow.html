@@ -82,7 +82,15 @@
       color: var(--muted);
     }
 
-    .theme-toggle {
+    .top-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .theme-toggle,
+    .lang-button {
       border: 1px solid var(--line);
       background: var(--panel);
       color: var(--text);
@@ -92,6 +100,27 @@
       box-shadow: var(--shadow);
       font: inherit;
       white-space: nowrap;
+    }
+
+    .lang-toggle {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      background: var(--panel);
+    }
+
+    .lang-button {
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+      min-width: 44px;
+    }
+
+    .lang-button.is-active {
+      background: var(--accent);
+      color: #ffffff;
     }
 
     .grid {
@@ -221,6 +250,10 @@
         grid-template-columns: 1fr;
       }
 
+      .top-actions {
+        justify-content: flex-start;
+      }
+
       .theme-toggle {
         width: max-content;
       }
@@ -235,19 +268,25 @@
   <main class="page">
     <header>
       <div>
-        <h1>invoice_quote_filler v0.2.1 capacity100 flow</h1>
-        <p>Одна страница для безопасной цепочки: CSV input, Windows launcher, runtime chain, draft output и ручная проверка Игоря.</p>
+        <h1 data-i18n="pageTitle">invoice_quote_filler v0.2.1 capacity100 flow</h1>
+        <p data-i18n="introText">Одна страница для безопасной цепочки: CSV input, Windows launcher, runtime chain, draft output и ручная проверка Игоря.</p>
       </div>
-      <button class="theme-toggle" type="button" id="themeToggle" aria-label="Toggle dark mode">Dark mode</button>
+      <div class="top-actions" aria-label="Настройки страницы">
+        <div class="lang-toggle" aria-label="Язык">
+          <button class="lang-button" type="button" id="langRu" data-lang="ru">RU</button>
+          <button class="lang-button" type="button" id="langEn" data-lang="en">EN</button>
+        </div>
+        <button class="theme-toggle" type="button" id="themeToggle" aria-label="Переключить тему">Темная тема</button>
+      </div>
     </header>
 
     <div class="grid">
       <section>
-        <h2>Process Flow</h2>
-        <div class="flow-wrap" aria-label="capacity100 process flow diagram">
+        <h2 data-i18n="processFlowHeading">Схема процесса</h2>
+        <div class="flow-wrap" aria-label="Схема процесса capacity100" data-i18n-aria-label="flowAria">
           <svg viewBox="0 0 1080 760" role="img" aria-labelledby="flowTitle flowDesc">
-            <title id="flowTitle">capacity100 invoice quote flow</title>
-            <desc id="flowDesc">Strict items CSV goes through the PowerShell launcher, temporary compact CSV, CSV runtime, bridge, writer, tuned template, draft xlsx, and manual Igor check.</desc>
+            <title id="flowTitle" data-i18n="flowTitle">capacity100: схема создания КП</title>
+            <desc id="flowDesc" data-i18n="flowDesc">Строгий items CSV проходит через PowerShell launcher, временный compact CSV, CSV runtime, bridge, writer, tuned template, draft xlsx и ручную проверку Игоря.</desc>
             <defs>
               <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
                 <path d="M0,0 L10,4 L0,8 Z" fill="var(--accent)"></path>
@@ -256,20 +295,20 @@
 
             <g class="node" transform="translate(32 44)">
               <rect width="250" height="78"></rect>
-              <text x="18" y="30">strict items CSV</text>
-              <text class="sub" x="18" y="54">5 columns, UTF-8, delimiter ;</text>
+              <text x="18" y="30" data-i18n="nodeStrictCsv">строгий items CSV</text>
+              <text class="sub" x="18" y="54" data-i18n="nodeStrictCsvSub">5 колонок, UTF-8, разделитель ;</text>
             </g>
 
             <g class="node primary" transform="translate(398 44)">
               <rect width="286" height="78"></rect>
               <text x="18" y="30">make_quote_capacity100.ps1</text>
-              <text class="sub" x="18" y="54">short Windows launcher</text>
+              <text class="sub" x="18" y="54" data-i18n="nodeLauncherSub">короткий Windows launcher</text>
             </g>
 
             <g class="node" transform="translate(798 44)">
               <rect width="250" height="78"></rect>
-              <text x="18" y="30">temporary compact CSV</text>
-              <text class="sub" x="18" y="54">system temp, cleaned up</text>
+              <text x="18" y="30" data-i18n="nodeTempCsv">временный compact CSV</text>
+              <text class="sub" x="18" y="54" data-i18n="nodeTempCsvSub">system temp, очищается автоматически</text>
             </g>
 
             <path class="arrow" d="M282 83 H392"></path>
@@ -279,7 +318,7 @@
               <rect width="286" height="86"></rect>
               <text x="18" y="31">run_invoice_quote_extended</text>
               <text x="18" y="50">_from_csv_compact.py</text>
-              <text class="sub" x="18" y="72">delegates compaction + generation</text>
+              <text class="sub" x="18" y="72" data-i18n="nodeCompactRunnerSub">compact + generation</text>
             </g>
 
             <path class="arrow" d="M923 122 V156 H541 V178"></path>
@@ -288,7 +327,7 @@
               <rect width="286" height="78"></rect>
               <text x="18" y="30">run_invoice_quote_extended</text>
               <text x="18" y="49">_from_csv.py</text>
-              <text class="sub" x="18" y="68">existing CSV runtime</text>
+              <text class="sub" x="18" y="68" data-i18n="nodeCsvRuntimeSub">существующий CSV runtime</text>
             </g>
 
             <path class="arrow" d="M541 270 V320"></path>
@@ -296,7 +335,7 @@
             <g class="node" transform="translate(32 326)">
               <rect width="250" height="78"></rect>
               <text x="18" y="31">items bridge</text>
-              <text class="sub" x="18" y="55">passes structured item rows</text>
+              <text class="sub" x="18" y="55" data-i18n="nodeBridgeSub">передаёт структурированные позиции</text>
             </g>
 
             <path class="arrow" d="M398 365 H288"></path>
@@ -305,7 +344,7 @@
               <rect width="250" height="82"></rect>
               <text x="18" y="31">extended writer</text>
               <text x="18" y="50">/ OOXML patcher</text>
-              <text class="sub" x="18" y="70">fills and preserves workbook parts</text>
+              <text class="sub" x="18" y="70" data-i18n="nodeWriterSub">заполняет и сохраняет части workbook</text>
             </g>
 
             <path class="arrow" d="M157 404 V460"></path>
@@ -313,15 +352,15 @@
             <g class="node safe" transform="translate(398 466)">
               <rect width="286" height="82"></rect>
               <text x="18" y="31">tuned_v3 template</text>
-              <text class="sub" x="18" y="55">outside Git, source not overwritten</text>
+              <text class="sub" x="18" y="55" data-i18n="nodeTemplateSub">outside Git, source не перезаписывается</text>
             </g>
 
             <path class="arrow" d="M398 507 H288"></path>
 
             <g class="node safe" transform="translate(798 466)">
               <rect width="250" height="82"></rect>
-              <text x="18" y="31">draft .xlsx outside Git</text>
-              <text class="sub" x="18" y="55">internal draft only</text>
+              <text x="18" y="31" data-i18n="nodeDraft">draft .xlsx outside Git</text>
+              <text class="sub" x="18" y="55" data-i18n="nodeDraftSub">только внутренний черновик</text>
             </g>
 
             <path class="arrow" d="M282 507 H392"></path>
@@ -329,8 +368,8 @@
 
             <g class="node primary" transform="translate(798 624)">
               <rect width="250" height="82"></rect>
-              <text x="18" y="31">manual Igor check</text>
-              <text class="sub" x="18" y="55">required before client use</text>
+              <text x="18" y="31" data-i18n="nodeManualCheck">ручная проверка Игоря</text>
+              <text class="sub" x="18" y="55" data-i18n="nodeManualCheckSub">обязательна перед клиентом</text>
             </g>
 
             <path class="arrow" d="M923 548 V618"></path>
@@ -340,67 +379,203 @@
 
       <aside class="side-stack">
         <section>
-          <h2>Launcher Preflight Checks</h2>
+          <h2 data-i18n="preflightHeading">Проверки launcher перед запуском</h2>
           <ul class="checks">
-            <li>input CSV exists;</li>
-            <li>template exists;</li>
-            <li>python executable exists;</li>
-            <li>output does not already exist;</li>
-            <li>output parent directory exists.</li>
+            <li data-i18n="preflightInput">input CSV существует;</li>
+            <li data-i18n="preflightTemplate">template существует;</li>
+            <li data-i18n="preflightPython">python executable существует;</li>
+            <li data-i18n="preflightOutput">output ещё не существует;</li>
+            <li data-i18n="preflightParent">parent directory для output существует.</li>
           </ul>
         </section>
 
         <section>
-          <h2>Safety Rails</h2>
+          <h2 data-i18n="safetyHeading">Защитные правила</h2>
           <ul class="rails">
-            <li>output <code>.xlsx</code> is internal draft only;</li>
-            <li>no <code>.xlsx</code> in Git;</li>
-            <li>no real source template overwrite;</li>
-            <li>no prices, sums, VAT, or terms confirmation without Igor;</li>
-            <li>no client send without Igor;</li>
-            <li>generated files stay outside Git.</li>
+            <li data-i18n-html="safetyDraft">generated <code>.xlsx</code> — только внутренний черновик;</li>
+            <li data-i18n-html="safetyGit"><code>.xlsx</code> не добавлять в Git;</li>
+            <li data-i18n="safetyTemplate">source template не перезаписывать;</li>
+            <li data-i18n="safetyCommercial">prices/sums/VAT/terms не подтверждать без Игоря;</li>
+            <li data-i18n="safetySend">клиенту не отправлять без Игоря;</li>
+            <li data-i18n="safetyGenerated">generated files держать outside Git.</li>
           </ul>
         </section>
       </aside>
     </div>
 
     <section class="stable">
-      <h2>Current Stable Point</h2>
+      <h2 data-i18n="stableHeading">Текущая стабильная точка</h2>
       <div class="stable-row">
-        <div class="label">Repo head</div>
+        <div class="label" data-i18n="stableRepo">HEAD репозитория</div>
         <div><code>c79bbe6 docs: document capacity100 powershell launcher</code></div>
       </div>
       <div class="stable-row">
-        <div class="label">Functional stable</div>
+        <div class="label" data-i18n="stableFunctional">Функционально стабильно</div>
         <div><code>23372a3 fix: repair capacity100 powershell launcher</code></div>
       </div>
       <div class="stable-row">
-        <div class="label">Real visual acceptance</div>
-        <div>invoice №475, 21 item rows, launcher draft accepted.</div>
+        <div class="label" data-i18n="stableAcceptance">Реальная визуальная приемка</div>
+        <div data-i18n="stableAcceptanceText">invoice №475, 21 item rows, launcher draft принят.</div>
       </div>
-      <p class="note">The visual artifact is documentation only. It does not change runtime behavior, templates, examples, workflows, or generated workbook files.</p>
+      <p class="note" data-i18n="note">The visual artifact is documentation only. It does not change runtime behavior, templates, examples, workflows, or generated workbook files.</p>
     </section>
   </main>
 
   <script>
     (function () {
       var root = document.documentElement;
-      var button = document.getElementById("themeToggle");
-      var stored = window.localStorage.getItem("capacity100-flow-theme");
+      var themeButton = document.getElementById("themeToggle");
+      var langButtons = Array.prototype.slice.call(document.querySelectorAll("[data-lang]"));
+      var storedTheme = window.localStorage.getItem("capacity100-flow-theme");
+      var storedLang = window.localStorage.getItem("capacity100-flow-language");
       var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-      var theme = stored || (prefersDark ? "dark" : "light");
+      var theme = storedTheme || (prefersDark ? "dark" : "light");
+      var language = storedLang === "en" ? "en" : "ru";
+      var dictionary = {
+        ru: {
+          documentTitle: "invoice_quote_filler v0.2.1 capacity100 flow",
+          pageTitle: "invoice_quote_filler v0.2.1 capacity100 flow",
+          introText: "Одна страница для безопасной цепочки: strict items CSV, Windows launcher, runtime chain, draft output и ручная проверка Игоря.",
+          darkMode: "Темная тема",
+          lightMode: "Светлая тема",
+          themeAria: "Переключить тему",
+          flowAria: "Схема процесса capacity100",
+          processFlowHeading: "Схема процесса",
+          flowTitle: "capacity100: схема создания КП",
+          flowDesc: "Строгий items CSV проходит через PowerShell launcher, временный compact CSV, CSV runtime, bridge, writer, tuned template, draft xlsx и ручную проверку Игоря.",
+          nodeStrictCsv: "строгий items CSV",
+          nodeStrictCsvSub: "5 колонок, UTF-8, разделитель ;",
+          nodeLauncherSub: "короткий Windows launcher",
+          nodeTempCsv: "временный compact CSV",
+          nodeTempCsvSub: "system temp, очищается автоматически",
+          nodeCompactRunnerSub: "compact + generation",
+          nodeCsvRuntimeSub: "существующий CSV runtime",
+          nodeBridgeSub: "передаёт структурированные позиции",
+          nodeWriterSub: "заполняет и сохраняет части workbook",
+          nodeTemplateSub: "outside Git, source не перезаписывается",
+          nodeDraft: "draft .xlsx outside Git",
+          nodeDraftSub: "только внутренний черновик",
+          nodeManualCheck: "ручная проверка Игоря",
+          nodeManualCheckSub: "обязательна перед клиентом",
+          preflightHeading: "Проверки launcher перед запуском",
+          preflightInput: "input CSV существует;",
+          preflightTemplate: "template существует;",
+          preflightPython: "python executable существует;",
+          preflightOutput: "output ещё не существует;",
+          preflightParent: "parent directory для output существует.",
+          safetyHeading: "Защитные правила",
+          safetyDraft: "generated <code>.xlsx</code> — только внутренний черновик;",
+          safetyGit: "<code>.xlsx</code> не добавлять в Git;",
+          safetyTemplate: "source template не перезаписывать;",
+          safetyCommercial: "prices/sums/VAT/terms не подтверждать без Игоря;",
+          safetySend: "клиенту не отправлять без Игоря;",
+          safetyGenerated: "generated files держать outside Git.",
+          stableHeading: "Текущая стабильная точка",
+          stableRepo: "HEAD репозитория",
+          stableFunctional: "Функционально стабильно",
+          stableAcceptance: "Реальная визуальная приемка",
+          stableAcceptanceText: "invoice №475, 21 item rows, launcher draft принят.",
+          note: "Этот HTML artifact только документирует процесс. Он не меняет runtime behavior, templates, examples, workflows или generated workbook files."
+        },
+        en: {
+          documentTitle: "invoice_quote_filler v0.2.1 capacity100 flow",
+          pageTitle: "invoice_quote_filler v0.2.1 capacity100 flow",
+          introText: "One page for the safe chain: strict items CSV, Windows launcher, runtime chain, draft output, and manual Igor check.",
+          darkMode: "Dark mode",
+          lightMode: "Light mode",
+          themeAria: "Toggle dark mode",
+          flowAria: "capacity100 process flow diagram",
+          processFlowHeading: "Process Flow",
+          flowTitle: "capacity100 invoice quote flow",
+          flowDesc: "Strict items CSV goes through the PowerShell launcher, temporary compact CSV, CSV runtime, bridge, writer, tuned template, draft xlsx, and manual Igor check.",
+          nodeStrictCsv: "strict items CSV",
+          nodeStrictCsvSub: "5 columns, UTF-8, delimiter ;",
+          nodeLauncherSub: "short Windows launcher",
+          nodeTempCsv: "temporary compact CSV",
+          nodeTempCsvSub: "system temp, cleaned up",
+          nodeCompactRunnerSub: "delegates compaction + generation",
+          nodeCsvRuntimeSub: "existing CSV runtime",
+          nodeBridgeSub: "passes structured item rows",
+          nodeWriterSub: "fills and preserves workbook parts",
+          nodeTemplateSub: "outside Git, source not overwritten",
+          nodeDraft: "draft .xlsx outside Git",
+          nodeDraftSub: "internal draft only",
+          nodeManualCheck: "manual Igor check",
+          nodeManualCheckSub: "required before client use",
+          preflightHeading: "Launcher Preflight Checks",
+          preflightInput: "input CSV exists;",
+          preflightTemplate: "template exists;",
+          preflightPython: "python executable exists;",
+          preflightOutput: "output does not already exist;",
+          preflightParent: "output parent directory exists.",
+          safetyHeading: "Safety Rails",
+          safetyDraft: "output <code>.xlsx</code> is internal draft only;",
+          safetyGit: "no <code>.xlsx</code> in Git;",
+          safetyTemplate: "no source template overwrite;",
+          safetyCommercial: "no prices, sums, VAT, or terms confirmation without Igor;",
+          safetySend: "no client send without Igor;",
+          safetyGenerated: "generated files stay outside Git.",
+          stableHeading: "Current Stable Point",
+          stableRepo: "Repo head",
+          stableFunctional: "Functional stable",
+          stableAcceptance: "Real visual acceptance",
+          stableAcceptanceText: "invoice №475, 21 item rows, launcher draft accepted.",
+          note: "The visual artifact is documentation only. It does not change runtime behavior, templates, examples, workflows, or generated workbook files."
+        }
+      };
+
+      function updateThemeButton() {
+        var text = dictionary[language];
+        var isDark = root.getAttribute("data-theme") === "dark";
+        themeButton.textContent = isDark ? text.lightMode : text.darkMode;
+        themeButton.setAttribute("aria-label", text.themeAria);
+      }
 
       function applyTheme(value) {
         root.setAttribute("data-theme", value);
-        button.textContent = value === "dark" ? "Light mode" : "Dark mode";
+        updateThemeButton();
         window.localStorage.setItem("capacity100-flow-theme", value);
       }
 
-      button.addEventListener("click", function () {
+      function applyLanguage(value) {
+        language = value === "en" ? "en" : "ru";
+        var text = dictionary[language];
+
+        document.title = text.documentTitle;
+        root.setAttribute("lang", language);
+
+        document.querySelectorAll("[data-i18n]").forEach(function (element) {
+          element.textContent = text[element.getAttribute("data-i18n")];
+        });
+        document.querySelectorAll("[data-i18n-html]").forEach(function (element) {
+          element.innerHTML = text[element.getAttribute("data-i18n-html")];
+        });
+        document.querySelectorAll("[data-i18n-aria-label]").forEach(function (element) {
+          element.setAttribute("aria-label", text[element.getAttribute("data-i18n-aria-label")]);
+        });
+
+        langButtons.forEach(function (button) {
+          var isActive = button.getAttribute("data-lang") === language;
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-pressed", String(isActive));
+        });
+
+        updateThemeButton();
+        window.localStorage.setItem("capacity100-flow-language", language);
+      }
+
+      themeButton.addEventListener("click", function () {
         applyTheme(root.getAttribute("data-theme") === "dark" ? "light" : "dark");
       });
 
+      langButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          applyLanguage(button.getAttribute("data-lang"));
+        });
+      });
+
       applyTheme(theme);
+      applyLanguage(language);
     }());
   </script>
 </body>
