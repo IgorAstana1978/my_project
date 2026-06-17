@@ -129,6 +129,14 @@ This file contains synthetic test rows only. It is not client data and must not 
 docs/invoice_quote_filler_v0_2_1_user_csv_runbook.md
 ```
 
+## Visual Flow HTML
+
+Self-contained visual process map for the capacity100 runtime chain:
+
+```text
+docs/invoice_quote_filler_v0_2_1_capacity100_flow.html
+```
+
 ## Runtime Guarantees
 
 - Template capacity is `100` item rows.
