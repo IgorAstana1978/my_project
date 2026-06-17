@@ -359,7 +359,7 @@
 
             <g class="node safe" transform="translate(798 466)">
               <rect width="250" height="82"></rect>
-              <text x="18" y="31" data-i18n="nodeDraft">draft .xlsx outside Git</text>
+              <text x="18" y="31" data-i18n="nodeDraft">draft .xlsx вне Git</text>
               <text class="sub" x="18" y="55" data-i18n="nodeDraftSub">только внутренний черновик</text>
             </g>
 
@@ -369,7 +369,7 @@
             <g class="node primary" transform="translate(798 624)">
               <rect width="250" height="82"></rect>
               <text x="18" y="31" data-i18n="nodeManualCheck">ручная проверка Игоря</text>
-              <text class="sub" x="18" y="55" data-i18n="nodeManualCheckSub">обязательна перед клиентом</text>
+              <text class="sub" x="18" y="55" data-i18n="nodeManualCheckSub">обязательна перед отправкой клиенту</text>
             </g>
 
             <path class="arrow" d="M923 548 V618"></path>
@@ -381,23 +381,23 @@
         <section>
           <h2 data-i18n="preflightHeading">Проверки launcher перед запуском</h2>
           <ul class="checks">
-            <li data-i18n="preflightInput">input CSV существует;</li>
-            <li data-i18n="preflightTemplate">template существует;</li>
-            <li data-i18n="preflightPython">python executable существует;</li>
-            <li data-i18n="preflightOutput">output ещё не существует;</li>
-            <li data-i18n="preflightParent">parent directory для output существует.</li>
+            <li data-i18n="preflightInput">входной CSV существует;</li>
+            <li data-i18n="preflightTemplate">шаблон существует;</li>
+            <li data-i18n="preflightPython">исполняемый файл Python существует;</li>
+            <li data-i18n="preflightOutput">файл результата ещё не существует;</li>
+            <li data-i18n="preflightParent">папка для результата существует.</li>
           </ul>
         </section>
 
         <section>
           <h2 data-i18n="safetyHeading">Защитные правила</h2>
           <ul class="rails">
-            <li data-i18n-html="safetyDraft">generated <code>.xlsx</code> — только внутренний черновик;</li>
+            <li data-i18n-html="safetyDraft">сгенерированный <code>.xlsx</code> — только внутренний черновик;</li>
             <li data-i18n-html="safetyGit"><code>.xlsx</code> не добавлять в Git;</li>
-            <li data-i18n="safetyTemplate">source template не перезаписывать;</li>
-            <li data-i18n="safetyCommercial">prices/sums/VAT/terms не подтверждать без Игоря;</li>
+            <li data-i18n="safetyTemplate">исходный template не перезаписывать;</li>
+            <li data-i18n="safetyCommercial">цены/суммы/НДС/условия не подтверждать без Игоря;</li>
             <li data-i18n="safetySend">клиенту не отправлять без Игоря;</li>
-            <li data-i18n="safetyGenerated">generated files держать outside Git.</li>
+            <li data-i18n="safetyGenerated">сгенерированные файлы держать вне Git.</li>
           </ul>
         </section>
       </aside>
@@ -415,9 +415,9 @@
       </div>
       <div class="stable-row">
         <div class="label" data-i18n="stableAcceptance">Реальная визуальная приемка</div>
-        <div data-i18n="stableAcceptanceText">invoice №475, 21 item rows, launcher draft принят.</div>
+        <div data-i18n="stableAcceptanceText">invoice №475, 21 item rows, launcher draft визуально принят.</div>
       </div>
-      <p class="note" data-i18n="note">The visual artifact is documentation only. It does not change runtime behavior, templates, examples, workflows, or generated workbook files.</p>
+      <p class="note" data-i18n="note">Этот HTML artifact только документирует процесс. Он не меняет runtime behavior, templates, examples, workflows или generated workbook files.</p>
     </section>
   </main>
 
@@ -453,28 +453,28 @@
           nodeBridgeSub: "передаёт структурированные позиции",
           nodeWriterSub: "заполняет и сохраняет части workbook",
           nodeTemplateSub: "outside Git, source не перезаписывается",
-          nodeDraft: "draft .xlsx outside Git",
+          nodeDraft: "draft .xlsx вне Git",
           nodeDraftSub: "только внутренний черновик",
           nodeManualCheck: "ручная проверка Игоря",
-          nodeManualCheckSub: "обязательна перед клиентом",
+          nodeManualCheckSub: "обязательна перед отправкой клиенту",
           preflightHeading: "Проверки launcher перед запуском",
-          preflightInput: "input CSV существует;",
-          preflightTemplate: "template существует;",
-          preflightPython: "python executable существует;",
-          preflightOutput: "output ещё не существует;",
-          preflightParent: "parent directory для output существует.",
+          preflightInput: "входной CSV существует;",
+          preflightTemplate: "шаблон существует;",
+          preflightPython: "исполняемый файл Python существует;",
+          preflightOutput: "файл результата ещё не существует;",
+          preflightParent: "папка для результата существует.",
           safetyHeading: "Защитные правила",
-          safetyDraft: "generated <code>.xlsx</code> — только внутренний черновик;",
+          safetyDraft: "сгенерированный <code>.xlsx</code> — только внутренний черновик;",
           safetyGit: "<code>.xlsx</code> не добавлять в Git;",
-          safetyTemplate: "source template не перезаписывать;",
-          safetyCommercial: "prices/sums/VAT/terms не подтверждать без Игоря;",
+          safetyTemplate: "исходный template не перезаписывать;",
+          safetyCommercial: "цены/суммы/НДС/условия не подтверждать без Игоря;",
           safetySend: "клиенту не отправлять без Игоря;",
-          safetyGenerated: "generated files держать outside Git.",
+          safetyGenerated: "сгенерированные файлы держать вне Git.",
           stableHeading: "Текущая стабильная точка",
           stableRepo: "HEAD репозитория",
           stableFunctional: "Функционально стабильно",
           stableAcceptance: "Реальная визуальная приемка",
-          stableAcceptanceText: "invoice №475, 21 item rows, launcher draft принят.",
+          stableAcceptanceText: "invoice №475, 21 item rows, launcher draft визуально принят.",
           note: "Этот HTML artifact только документирует процесс. Он не меняет runtime behavior, templates, examples, workflows или generated workbook files."
         },
         en: {
