@@ -1,6 +1,6 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `23372a3` (`fix: repair capacity100 powershell launcher`).
+Current stable commit: `0eef3dc` (`test: cover capacity100 short item csv`).
 
 ## Stable Runtime Template
 
@@ -147,6 +147,15 @@ docs/invoice_quote_filler_v0_2_1_capacity100_flow.html
 - Drawing/media parts are preserved.
 - The safe draft lower block is preserved.
 - Output `.xlsx` is an internal draft only, not a client-ready quote.
+
+## Short Item Count Support
+
+- The CSV contract always has exactly 5 allowed columns; this is separate from the number of item rows.
+- Capacity100 supports a practical range of 1 to 100 item rows.
+- Fewer than 5 item rows is valid. A 3-position CSV is a normal scenario.
+- Synthetic regression test: `tests/test_capacity100_short_item_count.py`.
+- The test confirms 3 item rows through the compact CSV runner: rows 17-19 are filled, unused rows start at row 20, rows 20-116 are hidden, and C:H are cleared on unused rows.
+- A second real smoke test with 3 item rows accepted.
 
 ## Adaptive Row Height
 

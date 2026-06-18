@@ -30,6 +30,14 @@ cabinet_type_dimensions_material
 - Коммерческие колонки добавлять нельзя.
 - Нельзя добавлять `price`, `price_kzt`, `sum`, `vat`, `currency`, `term`, `discount`, `price_confirmed_by_igor`.
 
+Важно не путать количество колонок CSV и количество позиций:
+
+- CSV всегда должен иметь ровно 5 разрешённых колонок.
+- Количество item rows может быть меньше 5.
+- Для capacity100 практический диапазон: от 1 до 100 item rows.
+- Если item rows меньше 100, unused rows в шаблоне скрываются.
+- 3 позиции - нормальный сценарий.
+
 ## 2. Использовать tuned_v3 template
 
 Рабочий capacity100 template лежит outside Git:
