@@ -56,7 +56,10 @@ def item_row(index: int) -> list[str]:
 
 
 def extract_rows(rows: list[list[str]]) -> list[dict[str, str]]:
-    return extractor.extract_items_from_matrices(matrix(rows))
+    return cast(
+        list[dict[str, str]],
+        extractor.extract_items_from_matrices(matrix(rows)),
+    )
 
 
 def output_path(tmp_path: Path) -> Path:
