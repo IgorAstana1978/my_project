@@ -1,6 +1,6 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `0eef3dc` (`test: cover capacity100 short item csv`).
+Current stable commit: `55cd055` (`docs: document short item csv support`).
 
 ## Stable Runtime Template
 
@@ -128,6 +128,16 @@ This file contains synthetic test rows only. It is not client data and must not 
 ```text
 docs/invoice_quote_filler_v0_2_1_user_csv_runbook.md
 ```
+
+## Legacy XLS to CSV Plan
+
+Planning doc for a future safe helper that extracts items from old legacy `.xls` invoices into strict 5-column CSV:
+
+```text
+docs/invoice_quote_filler_v0_2_1_legacy_xls_to_csv_plan.md
+```
+
+The helper is not implemented yet. Future implementation requires a separate task and explicit Human Approval.
 
 ## Visual Flow HTML
 
