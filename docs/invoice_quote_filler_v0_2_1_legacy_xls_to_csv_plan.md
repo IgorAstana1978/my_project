@@ -1,6 +1,7 @@
 # invoice_quote_filler v0.2.1: legacy XLS to strict CSV plan
 
-Planning document only. The extractor is not implemented yet.
+Planning document. Phase 1 implementation is completed and CI is green on
+`b02d46f test: fix legacy xls extractor mypy typing`.
 
 ## Purpose
 
@@ -96,17 +97,19 @@ Before running the generated CSV through the launcher, Igor should check:
 - prices, sums, terms, VAT, currencies, and commercial conditions did not enter the CSV;
 - the output CSV runs through `make_quote_capacity100.ps1`.
 
-## Future Implementation Idea
+## Implementation Status
 
-Possible future script name:
+Implemented script:
 
 ```text
 scripts/extract_legacy_xls_items_to_csv.py
 ```
 
-Status: not implemented yet.
+Status: Phase 1 completed. Use the runbook for the safe operator workflow:
 
-Implementation requires a separate task and explicit Human Approval.
+```text
+docs/invoice_quote_filler_v0_2_1_legacy_xls_extractor_runbook.md
+```
 
 ## Suggested Future Tests
 
