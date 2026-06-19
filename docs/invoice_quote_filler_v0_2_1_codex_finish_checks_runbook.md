@@ -1,0 +1,103 @@
+# invoice_quote_filler v0.2.1: Codex finish checks runbook
+
+## 1. Назначение script
+
+`scripts/run_codex_finish_checks.py` запускает стандартные read-only проверки и
+печатает компактный `CODEX_FINISH_REPORT` для передачи в ChatGPT.
+
+Script нужен, чтобы Codex и Игорь не собирали финальный статус вручную из
+разрозненных команд, screenshots и пересказов.
+
+## 2. Когда запускать
+
+Запускать после завершения задачи, перед финальным отчётом, commit или push,
+если нужно быстро проверить состояние repo и получить готовый текстовый блок.
+
+Для маленьких задач обычно достаточно `--mode fast`. Перед commit/push или после
+изменений с большим blast radius лучше запускать `--mode full`.
+
+## 3. Разница `--mode fast` и `--mode full`
+
+`--mode fast` запускает:
+
+- `mypy`;
+- `ruff check`;
+- `black --check .`;
+- `git diff --check`;
+- `scripts/build_repo_handoff.py`.
+
+`--mode full` дополнительно запускает полный `pytest` перед остальными
+проверками.
+
+## 4. Команды запуска
+
+Fast mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode fast
+```
+
+Full mode:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode full
+```
+
+## 5. Что отправлять ChatGPT
+
+Отправлять весь блок между:
+
+```text
+CODEX_FINISH_REPORT_START
+```
+
+и:
+
+```text
+CODEX_FINISH_REPORT_END
+```
+
+Внутри блока уже есть nested `CHATGPT_HANDOFF_START` /
+`CHATGPT_HANDOFF_END`, если repo handoff helper прошёл успешно.
+
+## 6. Что делать при failure
+
+Если какая-либо проверка показывает `fail`, посмотреть раздел `Failures`.
+Script печатает только короткий excerpt, а не полный лог.
+
+После исправления причины failure нужно снова запустить тот же mode. Не делать
+commit/push, пока релевантные проверки не прошли.
+
+## 7. Что script не делает и не должен делать
+
+Script не должен:
+
+- менять файлы;
+- делать commit;
+- делать push;
+- читать содержимое клиентских файлов;
+- читать `.xls`, `.xlsx` или generated `.csv`;
+- печатать commercial data;
+- печатать tokens/secrets/credentials;
+- отправлять данные наружу сам по себе.
+
+Он только запускает локальные read-only проверки и repo handoff helper.
+
+## 8. Запрещённые файлы
+
+Не добавлять и не передавать через finish report:
+
+- `.xls`;
+- `.xlsx`;
+- generated `.csv`;
+- screenshots;
+- client files;
+- temp files;
+- tokens/secrets/credentials.
+
+## 9. Почему это уменьшает копипаст Игоря
+
+Одна команда собирает статусы проверок, короткие failure excerpts и готовый repo
+handoff block. После этого Игорю не нужно вручную копировать выводы из `pytest`,
+`mypy`, `ruff`, `black`, `git status` и GitHub Actions в отдельный статус для
+ChatGPT.
