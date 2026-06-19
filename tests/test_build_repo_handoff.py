@@ -49,6 +49,9 @@ class FakeRunner:
         gh_stdout: str = "",
         gh_returncode: int = 1,
         gh_not_found: bool = False,
+        full_path_gh_stdout: str = "",
+        full_path_gh_returncode: int = 1,
+        full_path_gh_not_found: bool = True,
     ) -> None:
         self.status_stdout = status_stdout
         self.upstream_stdout = upstream_stdout
@@ -56,6 +59,9 @@ class FakeRunner:
         self.gh_stdout = gh_stdout
         self.gh_returncode = gh_returncode
         self.gh_not_found = gh_not_found
+        self.full_path_gh_stdout = full_path_gh_stdout
+        self.full_path_gh_returncode = full_path_gh_returncode
+        self.full_path_gh_not_found = full_path_gh_not_found
         self.commands: list[tuple[str, ...]] = []
 
     def __call__(
@@ -70,6 +76,8 @@ class FakeRunner:
             return completed("main\n")
         if command_tuple == ("git", "log", "-1", "--oneline"):
             return completed("abc1234 feat: demo\n")
+        if command_tuple == ("git", "rev-parse", "HEAD"):
+            return completed("abc1234fullsha\n")
         if command_tuple == ("git", "status", "--short", "--untracked-files=all"):
             return completed(self.status_stdout)
         if command_tuple == (
@@ -87,6 +95,17 @@ class FakeRunner:
             if self.gh_not_found:
                 raise FileNotFoundError("gh")
             return completed(self.gh_stdout, returncode=self.gh_returncode)
+        if command_tuple[:3] == (
+            handoff.STANDARD_WINDOWS_GH,
+            "run",
+            "list",
+        ):
+            if self.full_path_gh_not_found:
+                raise FileNotFoundError(handoff.STANDARD_WINDOWS_GH)
+            return completed(
+                self.full_path_gh_stdout,
+                returncode=self.full_path_gh_returncode,
+            )
         raise AssertionError(f"unexpected command: {command_tuple}")
 
 
@@ -144,6 +163,42 @@ def test_missing_gh_reports_unknown_ci() -> None:
 
 def test_gh_not_found_reports_unknown_ci_with_note() -> None:
     output = render_with_runner(FakeRunner(gh_not_found=True))
+
+    assert "CI:\nunknown" in output
+    assert "GitHub Actions:\nnot available" in output
+    assert "GitHub CLI gh not found." in output
+
+
+def test_full_sha_is_used_for_actions_lookup() -> None:
+    runner = FakeRunner(gh_stdout=gh_run("success"), gh_returncode=0)
+
+    render_with_runner(runner)
+
+    assert ("git", "rev-parse", "HEAD") in runner.commands
+    gh_command = next(
+        command for command in runner.commands if command[:3] == ("gh", "run", "list")
+    )
+    assert gh_command[gh_command.index("--commit") + 1] == "abc1234fullsha"
+
+
+def test_full_path_gh_is_used_when_plain_gh_is_not_found() -> None:
+    output = render_with_runner(
+        FakeRunner(
+            gh_not_found=True,
+            full_path_gh_stdout=gh_run("success"),
+            full_path_gh_returncode=0,
+            full_path_gh_not_found=False,
+        )
+    )
+
+    assert "CI:\nsuccess" in output
+    assert "GitHub Actions:\nhttps://github.example/actions/1" in output
+
+
+def test_both_gh_locations_missing_reports_unknown_ci_with_note() -> None:
+    output = render_with_runner(
+        FakeRunner(gh_not_found=True, full_path_gh_not_found=True)
+    )
 
     assert "CI:\nunknown" in output
     assert "GitHub Actions:\nnot available" in output

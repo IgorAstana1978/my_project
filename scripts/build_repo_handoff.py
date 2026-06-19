@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any
 
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+STANDARD_WINDOWS_GH = r"C:\Program Files\GitHub CLI\gh.exe"
+GH_RUN_JSON_FIELDS = (
+    "databaseId,headSha,status,conclusion,url,workflowName,displayTitle"
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,7 @@ def ci_status_from_run(run: dict[str, Any]) -> str:
 
 def lookup_ci(
     head: str,
+    head_sha: str,
     runner: CommandRunner,
     skip_ci: bool,
 ) -> CiInfo:
@@ -116,25 +121,27 @@ def lookup_ci(
             note="CI lookup skipped by --no-ci.",
         )
 
-    head_sha = head.split(" ", 1)[0]
-    try:
-        result = runner(
-            [
-                "gh",
-                "run",
-                "list",
-                "--commit",
-                head_sha,
-                "--limit",
-                "1",
-                "--json",
-                (
-                    "databaseId,headSha,status,conclusion,url,workflowName,"
-                    "displayTitle"
-                ),
-            ]
-        )
-    except FileNotFoundError:
+    result: subprocess.CompletedProcess[str] | None = None
+    for gh_command in ("gh", STANDARD_WINDOWS_GH):
+        try:
+            result = runner(
+                [
+                    gh_command,
+                    "run",
+                    "list",
+                    "--commit",
+                    head_sha,
+                    "--limit",
+                    "1",
+                    "--json",
+                    GH_RUN_JSON_FIELDS,
+                ]
+            )
+        except FileNotFoundError:
+            continue
+        break
+
+    if result is None:
         return CiInfo(
             status="unknown",
             actions="not available",
@@ -186,6 +193,7 @@ def build_handoff(
     repo_result = require_success(["git", "rev-parse", "--show-toplevel"], runner)
     branch_result = require_success(["git", "branch", "--show-current"], runner)
     head_result = require_success(["git", "log", "-1", "--oneline"], runner)
+    head_sha_result = require_success(["git", "rev-parse", "HEAD"], runner)
     status_result = require_success(
         ["git", "status", "--short", "--untracked-files=all"],
         runner,
@@ -194,10 +202,11 @@ def build_handoff(
     repo = stdout_line(repo_result, str(Path.cwd()))
     branch = stdout_line(branch_result, "unknown")
     head = stdout_line(head_result, "unknown")
+    head_sha = stdout_line(head_sha_result, head.split(" ", 1)[0])
     changed_files = changed_files_from_status(status_result.stdout)
     git_status = "dirty" if changed_files else "clean"
     remote = optional_upstream(runner)
-    ci = lookup_ci(head, runner, skip_ci)
+    ci = lookup_ci(head, head_sha, runner, skip_ci)
     notes = tuple(note for note in (ci.note,) if note)
 
     return RepoHandoff(
