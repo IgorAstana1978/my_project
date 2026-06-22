@@ -17,6 +17,7 @@ def test_references_preflight_and_existing_launcher() -> None:
 
     assert "preflight_quote_input.py" in text
     assert "make_quote_capacity100.ps1" in text
+    assert "inspect_quote_draft.py" in text
 
 
 def test_contains_allow_warn_and_blocks_warn_without_switch() -> None:
@@ -41,6 +42,7 @@ def test_prints_checked_quote_run_report_markers() -> None:
 
     assert "CHECKED_QUOTE_RUN_REPORT_START" in text
     assert "CHECKED_QUOTE_RUN_REPORT_END" in text
+    assert '"Inspection:"' in text
 
 
 def test_supports_pass_through_parameters() -> None:
@@ -72,6 +74,46 @@ def test_uses_python_for_preflight() -> None:
 
     assert "$PreflightOutput = & $Python $PreflightScript" in text
     assert "--input $ItemsCsv --draft-output $Output" in text
+
+
+def test_uses_python_for_draft_inspection() -> None:
+    text = script_text()
+
+    assert "$InspectionScript = Join-Path $ProjectRoot" in text
+    assert "inspect_quote_draft.py" in text
+    assert "$InspectionOutput = & $Python $InspectionScript --input $Output" in text
+    assert "$InspectionLines | ForEach-Object { Write-Host $_ }" in text
+
+
+def test_inspection_runs_only_after_generation_pass_and_output_exists() -> None:
+    text = script_text()
+    generation_gate = (
+        "$GeneratorExitCode -eq 0 -and "
+        "(Test-Path -LiteralPath $Output -PathType Leaf)"
+    )
+
+    assert generation_gate in text
+    assert text.index(generation_gate) < text.index("$InspectionOutput = & $Python")
+    assert '$GenerationStatus = "pass"' in text
+
+
+def test_inspection_status_supports_pass_fail_and_skipped() -> None:
+    text = script_text()
+
+    assert '$InspectionStatus = "skipped"' in text
+    assert '$InspectionStatus = "pass"' in text
+    assert '$InspectionStatus = "fail"' in text
+
+
+def test_inspection_failure_sets_nonzero_exit_and_next_message() -> None:
+    text = script_text()
+
+    assert "$InspectionExitCode -ne 0" in text
+    assert (
+        "$FinalExitCode = if ($InspectionExitCode -ne 0) "
+        "{ $InspectionExitCode } else { 1 }"
+    ) in text
+    assert "draft inspection failed; do not use draft" in text
 
 
 def test_does_not_contain_git_write_commands() -> None:

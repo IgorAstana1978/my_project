@@ -22,6 +22,7 @@ Checked launcher добавляет защитный слой:
 - проверяет draft output path через `--draft-output`;
 - блокирует генерацию при `FAIL`;
 - блокирует генерацию при `WARN` без явного `-AllowWarn`;
+- после successful generation запускает draft inspection;
 - передаёт совместимые параметры в existing launcher.
 
 ## 3. Команда запуска
@@ -61,8 +62,8 @@ Wrapper принимает совместимые параметры existing la
 <ProjectRoot>\.venv\Scripts\python.exe
 ```
 
-Этот же Python используется для preflight и передаётся дальше в
-`make_quote_capacity100.ps1`.
+Этот же Python используется для preflight, draft inspection и передаётся дальше
+в `make_quote_capacity100.ps1`.
 
 Пример:
 
@@ -84,7 +85,14 @@ Wrapper принимает совместимые параметры existing la
 ```
 
 После генерации wrapper проверяет exit code generator и наличие output `.xlsx`.
-Затем печатает `CHECKED_QUOTE_RUN_REPORT`.
+Если output создан, wrapper запускает:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\inspect_quote_draft.py --input "<Output>"
+```
+
+Wrapper печатает полный `QUOTE_DRAFT_INSPECTION_REPORT`, затем печатает
+`CHECKED_QUOTE_RUN_REPORT`.
 
 ## 7. Что происходит при WARN
 
@@ -92,6 +100,7 @@ Wrapper принимает совместимые параметры existing la
 
 - не запускает generator;
 - печатает `Generation: skipped`;
+- печатает `Inspection: skipped`;
 - сообщает, что нужна ручная проверка Игоря и повторный запуск с `-AllowWarn`;
 - завершается с non-zero exit code.
 
@@ -104,11 +113,32 @@ Wrapper принимает совместимые параметры existing la
 
 - не запускает generator;
 - печатает `Generation: skipped`;
+- печатает `Inspection: skipped`;
 - завершается с non-zero exit code.
 
 CSV нужно исправить или пересоздать, затем снова запустить checked launcher.
 
-## 9. Статус generated `.xlsx`
+## 9. Что означает `Inspection`
+
+`Inspection: pass` означает, что generated `.xlsx`:
+
+- существует;
+- находится outside Git;
+- не пустой;
+- открывается через `openpyxl`;
+- содержит минимум один worksheet.
+
+`Inspection: fail` означает, что draft inspection не прошёл. Такой draft нельзя
+использовать. Нужно прочитать `QUOTE_DRAFT_INSPECTION_REPORT`, устранить причину
+и создать draft заново безопасным способом.
+
+`Inspection: skipped` означает, что inspection не запускался, потому что
+preflight заблокировал генерацию или generation failed.
+
+Inspection не читает и не печатает cell values. Даже `Inspection: pass` не
+означает, что КП можно отправлять клиенту.
+
+## 10. Статус generated `.xlsx`
 
 Generated `.xlsx` — только internal draft. Его нельзя считать готовым КП.
 
@@ -120,7 +150,7 @@ Generated `.xlsx` — только internal draft. Его нельзя счит�
 - реквизитов и шаблонных областей;
 - итогового `.xlsx` после генерации.
 
-## 10. Что wrapper не делает
+## 11. Что wrapper не делает
 
 Wrapper не должен:
 
@@ -134,8 +164,9 @@ Wrapper не должен:
 - запускать generator при `WARN` без `-AllowWarn`;
 - перезаписывать existing output `.xlsx`;
 - создавать файлы inside Git.
+- читать или печатать cell values.
 
-## 11. Запрещённые файлы
+## 12. Запрещённые файлы
 
 Не добавлять в repo и не прикладывать к отчёту:
 
@@ -147,7 +178,7 @@ Wrapper не должен:
 - temp files;
 - tokens/secrets/credentials.
 
-## 12. Итоговый report
+## 13. Итоговый report
 
 После каждого запуска wrapper печатает:
 
@@ -164,6 +195,9 @@ Preflight:
 PASS / WARN / FAIL
 
 Generation:
+pass / fail / skipped
+
+Inspection:
 pass / fail / skipped
 
 Output exists:

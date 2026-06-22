@@ -21,7 +21,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Get-PreflightStatus {
+function Get-ReportStatus {
     param([string[]]$ReportLines)
 
     for ($Index = 0; $Index -lt $ReportLines.Count; $Index++) {
@@ -42,6 +42,7 @@ function Write-CheckedQuoteRunReport {
     param(
         [string]$PreflightStatus,
         [string]$GenerationStatus,
+        [string]$InspectionStatus,
         [bool]$OutputExists,
         [string]$NextMessage
     )
@@ -62,6 +63,9 @@ function Write-CheckedQuoteRunReport {
     Write-Host "Generation:"
     Write-Host $GenerationStatus
     Write-Host ""
+    Write-Host "Inspection:"
+    Write-Host $InspectionStatus
+    Write-Host ""
     Write-Host "Output exists:"
     Write-Host $OutputExistsText
     Write-Host ""
@@ -79,14 +83,16 @@ if ([string]::IsNullOrWhiteSpace($Python)) {
 
 $PreflightScript = Join-Path $ProjectRoot "scripts\preflight_quote_input.py"
 $LauncherScript = Join-Path $ProjectRoot "scripts\make_quote_capacity100.ps1"
+$InspectionScript = Join-Path $ProjectRoot "scripts\inspect_quote_draft.py"
 
 $PreflightOutput = & $Python $PreflightScript --input $ItemsCsv --draft-output $Output 2>&1
 $PreflightExitCode = $LASTEXITCODE
 $PreflightLines = @($PreflightOutput | ForEach-Object { [string]$_ })
 $PreflightLines | ForEach-Object { Write-Host $_ }
 
-$PreflightStatus = Get-PreflightStatus -ReportLines $PreflightLines
+$PreflightStatus = Get-ReportStatus -ReportLines $PreflightLines
 $GenerationStatus = "skipped"
+$InspectionStatus = "skipped"
 $NextMessage = "manual Igor check required before sending to client"
 $FinalExitCode = 0
 
@@ -113,6 +119,20 @@ elseif ($PreflightStatus -eq "PASS" -or ($PreflightStatus -eq "WARN" -and $Allow
 
     if ($GeneratorExitCode -eq 0 -and (Test-Path -LiteralPath $Output -PathType Leaf)) {
         $GenerationStatus = "pass"
+        $InspectionOutput = & $Python $InspectionScript --input $Output 2>&1
+        $InspectionExitCode = $LASTEXITCODE
+        $InspectionLines = @($InspectionOutput | ForEach-Object { [string]$_ })
+        $InspectionLines | ForEach-Object { Write-Host $_ }
+        $DraftInspectionStatus = Get-ReportStatus -ReportLines $InspectionLines
+
+        if ($InspectionExitCode -eq 0 -and $DraftInspectionStatus -eq "PASS") {
+            $InspectionStatus = "pass"
+        }
+        else {
+            $InspectionStatus = "fail"
+            $NextMessage = "draft inspection failed; do not use draft"
+            $FinalExitCode = if ($InspectionExitCode -ne 0) { $InspectionExitCode } else { 1 }
+        }
     }
     else {
         $GenerationStatus = "fail"
@@ -128,6 +148,7 @@ $OutputExists = Test-Path -LiteralPath $Output -PathType Leaf
 Write-CheckedQuoteRunReport `
     -PreflightStatus $PreflightStatus `
     -GenerationStatus $GenerationStatus `
+    -InspectionStatus $InspectionStatus `
     -OutputExists $OutputExists `
     -NextMessage $NextMessage
 
