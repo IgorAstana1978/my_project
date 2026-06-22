@@ -49,9 +49,22 @@ def test_supports_pass_through_parameters() -> None:
     assert "[string]$Template" in text
     assert "[int]$TemplateCapacity" in text
     assert "[string]$Python" in text
-    assert '"-Template", $Template' in text
-    assert '"-TemplateCapacity", $TemplateCapacity' in text
-    assert '"-Python", $Python' in text
+    assert "TemplateCapacity = $TemplateCapacity" in text
+    assert "Python = $Python" in text
+    assert '$LauncherParams["Template"] = $Template' in text
+
+
+def test_launcher_uses_hashtable_splatting_not_array_args() -> None:
+    text = script_text()
+
+    assert "$LauncherParams = @{" in text
+    assert "ItemsCsv = $ItemsCsv" in text
+    assert "Output = $Output" in text
+    assert "TemplateCapacity = $TemplateCapacity" in text
+    assert "Python = $Python" in text
+    assert '$LauncherParams["Template"] = $Template' in text
+    assert "& $LauncherScript @LauncherParams" in text
+    assert "$LauncherArgs = @(" not in text
 
 
 def test_uses_python_for_preflight() -> None:

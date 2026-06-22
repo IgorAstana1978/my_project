@@ -98,14 +98,17 @@ elseif ($PreflightStatus -eq "WARN" -and -not $AllowWarn) {
     $FinalExitCode = 2
 }
 elseif ($PreflightStatus -eq "PASS" -or ($PreflightStatus -eq "WARN" -and $AllowWarn)) {
-    $LauncherArgs = @($ItemsCsv, $Output)
-    if (-not [string]::IsNullOrWhiteSpace($Template)) {
-        $LauncherArgs += @("-Template", $Template)
+    $LauncherParams = @{
+        ItemsCsv = $ItemsCsv
+        Output = $Output
+        TemplateCapacity = $TemplateCapacity
+        Python = $Python
     }
-    $LauncherArgs += @("-TemplateCapacity", $TemplateCapacity)
-    $LauncherArgs += @("-Python", $Python)
+    if (-not [string]::IsNullOrWhiteSpace($Template)) {
+        $LauncherParams["Template"] = $Template
+    }
 
-    & $LauncherScript @LauncherArgs
+    & $LauncherScript @LauncherParams
     $GeneratorExitCode = $LASTEXITCODE
 
     if ($GeneratorExitCode -eq 0 -and (Test-Path -LiteralPath $Output -PathType Leaf)) {
