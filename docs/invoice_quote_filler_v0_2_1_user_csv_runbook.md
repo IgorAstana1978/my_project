@@ -2,6 +2,9 @@
 
 Короткая инструкция для Игоря: как из CSV получить внутренний черновик КП.
 
+Быстрый ежедневный operator workflow: см.
+`docs/invoice_quote_filler_v0_2_1_operator_run_card.md`.
+
 ## 1. Взять sample CSV
 
 Формат можно взять из безопасного sample-файла:
