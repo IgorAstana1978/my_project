@@ -52,31 +52,49 @@ C:\Users\IgorN\Downloads\Фирменный_шаблон_счёта-КП_v0.3_ca
 
 Output нужно сохранять outside Git. Файл output не должен существовать до запуска.
 
-Основной пользовательский путь - короткий Windows launcher. Запускать из repo root:
+Canonical operator path - checked Windows launcher. Запускать из repo root:
 
 ```text
 C:\Users\IgorN\projects\my_project
 ```
 
-На вход можно дать обычный strict items CSV, даже если в длинных descriptions есть ручные переносы. Launcher сам использует default tuned_v3 template из Downloads, default capacity `100`, вызывает one-command compact CSV runner и передаёт результат в рабочую CSV runtime chain. Temporary compact CSV вручную сохранять не нужно.
+На вход можно дать обычный strict items CSV, даже если в длинных descriptions есть ручные переносы. Checked launcher выполняет:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+Он использует default tuned_v3 template из Downloads, default capacity `100`,
+вызывает one-command compact CSV runner через low-level launcher и передаёт
+результат в рабочую CSV runtime chain. Temporary compact CSV вручную сохранять
+не нужно.
 
 Пример:
 
 ```powershell
-.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+.\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
 
 Если PowerShell policy блокирует запуск `.ps1`, использовать:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+powershell -ExecutionPolicy Bypass -File .\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
 
-Скрипт должен вывести понятное сообщение и путь к созданному файлу.
+Скрипт должен вывести `QUOTE_INPUT_PREFLIGHT_REPORT`,
+`QUOTE_DRAFT_INSPECTION_REPORT` после successful generation и итоговый
+`CHECKED_QUOTE_RUN_REPORT`.
+
+Прямой `make_quote_capacity100.ps1` является low-level/internal launcher и не
+является основным операторским путём. Использовать его можно только если Игорь
+явно решил обойти checked workflow.
 
 ## 4. Проверить черновик
 
 Сгенерированный `.xlsx` является только внутренним черновиком.
+
+Technical PASS, `Inspection: pass` или smoke PASS не являются commercial
+approval.
 
 Перед отправкой клиенту Игорь вручную проверяет:
 
@@ -84,6 +102,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\make_quote_capacity100.ps1 "C
 - переносы строк и визуальный layout;
 - цены, сроки, итоги, НДС и любые коммерческие данные;
 - финальную формулировку и вложения для клиента.
+
+Для отправки клиенту требуется отдельное Human Approval.
 
 Сгенерированные `.xlsx` файлы нельзя добавлять в Git.
 

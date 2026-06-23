@@ -71,9 +71,21 @@ Extractor игнорирует и не должен экспортировать
 
 ## 8. Следующая команда после ручной проверки CSV
 
+Canonical operator path после ручной проверки CSV:
+
 ```powershell
-.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items_from_legacy.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+.\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items_from_legacy.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
+
+Checked workflow выполняет:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+Прямой `make_quote_capacity100.ps1` является low-level/internal launcher и не
+является основным операторским путём. Использовать его можно только если Игорь
+явно решил обойти checked workflow.
 
 ## 9. Статус выходного `.xlsx`
 
@@ -81,6 +93,9 @@ Generated `.xlsx` является только внутренним draft.
 
 Он не предназначен для отправки клиенту и требует ручной проверки Игоря. Prices,
 sums, VAT, terms, dates и commercial decisions не утверждаются extractor.
+Technical PASS, `Inspection: pass` или smoke PASS не являются commercial
+approval. Перед отправкой клиенту обязательны manual Igor check и отдельное
+Human Approval.
 
 ## 10. Fail-closed поведение
 

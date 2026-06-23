@@ -10,10 +10,22 @@ The future helper should reduce manual work when preparing items CSV files from 
 Target flow:
 
 ```text
-legacy .xls invoice -> strict 5-column items CSV -> make_quote_capacity100.ps1 -> draft .xlsx
+legacy .xls invoice -> strict 5-column items CSV -> make_quote_capacity100_checked.ps1 -> internal draft .xlsx
 ```
 
-The generated CSV is an intermediate input for the existing capacity100 launcher. It is not a client-ready quote and must still be manually checked by Igor.
+The generated CSV is an intermediate input for the canonical checked workflow:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+Direct `make_quote_capacity100.ps1` is the low-level/internal launcher behind
+the checked workflow. It is not the main operator path and should be used only
+when Igor explicitly decides to bypass the checked workflow.
+
+The generated CSV and generated `.xlsx` are not client-ready quote artifacts and
+must still be manually checked by Igor. Technical PASS, `Inspection: pass`, or
+smoke PASS is not commercial approval.
 
 ## Input Contract
 
@@ -95,7 +107,9 @@ Before running the generated CSV through the launcher, Igor should check:
 - long descriptions in `instruments_and_devices`;
 - cabinet type, dimensions, and material;
 - prices, sums, terms, VAT, currencies, and commercial conditions did not enter the CSV;
-- the output CSV runs through `make_quote_capacity100.ps1`.
+- the output CSV runs through `make_quote_capacity100_checked.ps1`;
+- manual Igor check and explicit Human Approval are required before sending any
+  quote to a client.
 
 ## Implementation Status
 

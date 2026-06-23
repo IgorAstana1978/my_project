@@ -3,7 +3,8 @@
 ## 1. Назначение preflight helper
 
 `scripts/preflight_quote_input.py` проверяет strict CSV перед запуском
-`make_quote_capacity100.ps1` и печатает безопасный отчёт для Игоря и ChatGPT.
+canonical checked launcher `make_quote_capacity100_checked.ps1` и печатает
+безопасный отчёт для Игоря и ChatGPT.
 
 Helper не создаёт КП и не изменяет входной CSV. Он только проверяет структуру,
 row count, обязательные поля, quantity и очевидные commercial tokens.
@@ -67,8 +68,8 @@ cabinet_type_dimensions_material
 - `PASS` означает, что автоматические preflight checks прошли.
 - `WARN` означает, что критических ошибок нет, но есть замечания, например
   пустые optional text columns.
-- `FAIL` означает, что запускать `make_quote_capacity100.ps1` небезопасно до
-  исправления CSV.
+- `FAIL` означает, что запускать checked workflow небезопасно до исправления
+  CSV.
 
 Manual Igor check всё равно required при любом статусе.
 
@@ -86,15 +87,28 @@ type, но не печатает полные строки CSV.
 columns пустые в коротком сценарии, можно продолжать после ручной проверки
 Игоря.
 
-## 8. Следующая команда `make_quote_capacity100.ps1`
+## 8. Следующая команда `make_quote_capacity100_checked.ps1`
 
 После `PASS` или принятого `WARN` можно запускать:
 
 ```powershell
-.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+.\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
 
+Checked workflow выполняет:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+Прямой `make_quote_capacity100.ps1` является low-level/internal launcher и не
+является основным операторским путём. Использовать его можно только если Игорь
+явно решил обойти checked workflow.
+
 Generated `.xlsx` остаётся внутренним draft и требует ручной проверки Игоря.
+Technical PASS, `Inspection: pass` или smoke PASS не являются commercial
+approval. Перед отправкой клиенту обязательны manual Igor check и отдельное
+Human Approval.
 Preflight fail-closed, если draft output exists, находится inside Git, имеет
 wrong suffix, missing parent или совпадает с input CSV.
 
@@ -103,7 +117,7 @@ wrong suffix, missing parent или совпадает с input CSV.
 Helper не должен:
 
 - создавать КП;
-- запускать `make_quote_capacity100.ps1`;
+- запускать checked launcher или low-level launcher;
 - создавать output `.xlsx`;
 - создавать generated `.csv`;
 - менять файлы;

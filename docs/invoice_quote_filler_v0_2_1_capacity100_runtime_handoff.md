@@ -1,6 +1,7 @@
 # invoice_quote_filler v0.2.1 capacity100 runtime handoff
 
-Current stable commit: `55cd055` (`docs: document short item csv support`).
+Current status should be verified with `run_codex_finish_checks.py` /
+`CHATGPT_HANDOFF`.
 
 ## Stable Runtime Template
 
@@ -15,7 +16,7 @@ Do not overwrite the source template. Generated `.xlsx` files are draft outputs 
 ## Runtime Chain
 
 ```text
-CSV -> run_invoice_quote_extended_from_csv.py -> items bridge -> extended writer -> draft .xlsx
+strict CSV -> checked launcher -> preflight -> generation -> draft inspection -> checked quote run report -> internal draft .xlsx
 ```
 
 The CSV adapter delegates to `run_invoice_quote_extended_from_items.py`, which delegates to the extended writer. Writer logic is not duplicated in the CSV adapter.
@@ -44,17 +45,27 @@ Real visual acceptance:
 
 ## Windows PowerShell Launcher
 
-Primary user-facing launcher:
+Canonical operator launcher:
 
 ```text
-scripts/make_quote_capacity100.ps1
+scripts/make_quote_capacity100_checked.ps1
 ```
 
-User-facing command format:
+Canonical user-facing command format:
 
 ```powershell
-.\scripts\make_quote_capacity100.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
+.\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
 ```
+
+Checked workflow:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+Direct `scripts/make_quote_capacity100.ps1` is the low-level/internal launcher
+behind the checked workflow. It is not the main operator path and should be used
+only when Igor explicitly decides to bypass the checked workflow.
 
 Defaults:
 
@@ -62,7 +73,7 @@ Defaults:
 - Template capacity is `100`.
 - Python defaults to the project venv executable.
 
-Internally, the launcher calls:
+Internally, the low-level launcher calls:
 
 ```text
 scripts/run_invoice_quote_extended_from_csv_compact.py
@@ -129,15 +140,20 @@ This file contains synthetic test rows only. It is not client data and must not 
 docs/invoice_quote_filler_v0_2_1_user_csv_runbook.md
 ```
 
-## Legacy XLS to CSV Plan
+## Legacy XLS Extractor
 
-Planning doc for a future safe helper that extracts items from old legacy `.xls` invoices into strict 5-column CSV:
+Legacy XLS extractor is implemented. Use this runbook for the safe operator
+workflow:
 
 ```text
-docs/invoice_quote_filler_v0_2_1_legacy_xls_to_csv_plan.md
+docs/invoice_quote_filler_v0_2_1_legacy_xls_extractor_runbook.md
 ```
 
-The helper is not implemented yet. Future implementation requires a separate task and explicit Human Approval.
+Flow:
+
+```text
+legacy .xls -> strict 5-column CSV -> make_quote_capacity100_checked.ps1 -> internal draft .xlsx
+```
 
 ## Visual Flow HTML
 
@@ -157,6 +173,9 @@ docs/invoice_quote_filler_v0_2_1_capacity100_flow.html
 - Drawing/media parts are preserved.
 - The safe draft lower block is preserved.
 - Output `.xlsx` is an internal draft only, not a client-ready quote.
+- Technical PASS, `Inspection: pass`, or smoke PASS is not commercial approval.
+- Manual Igor check and explicit Human Approval are required before sending any
+  quote to a client.
 
 ## Short Item Count Support
 
@@ -196,8 +215,13 @@ C:H = empty
 
 - Generated output is not client-ready.
 - Do not confirm price, sum, term, equipment composition, or client delivery without Igor.
+- Do not send a quote to a client automatically.
+- Do not treat technical PASS as approval for purchase, workshop, shipment, or
+  client sending.
 - Commercial lower block B is not implemented.
 - Do not add real `.xlsx` files to Git.
+- Do not add `.xls`, generated `.csv`, screenshots, client files, or temp files
+  to Git.
 - Do not overwrite the real source template.
 - Keep production changes narrow: do not change patcher, builder, CSV bridge, workflow, dependencies, or templates unless a new task explicitly allows it.
 
@@ -205,7 +229,8 @@ C:H = empty
 
 - `tuned_v3` was opened and visually checked by Igor.
 - `draft_v4` was accepted visually by Igor.
-- CI is green at the stable commit.
+- CI status should be checked through the latest repo handoff or GitHub Actions
+  when available.
 - The runtime chain has been smoke tested end to end:
 
 ```text

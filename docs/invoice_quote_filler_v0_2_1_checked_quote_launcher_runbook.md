@@ -8,13 +8,17 @@
 `QUOTE_INPUT_PREFLIGHT_REPORT` и только после допустимого preflight запускает
 существующий `scripts/make_quote_capacity100.ps1`.
 
+Это canonical operator path для strict CSV -> draft КП.
+
 Главная цель — уменьшить ручной копипаст и не дать случайно создать КП из CSV,
 который preflight считает небезопасным.
 
 ## 2. Почему это отдельный wrapper
 
 Existing launcher `scripts/make_quote_capacity100.ps1` не заменяется и не
-изменяется. Он остаётся низкоуровневым инструментом генерации.
+изменяется. Он остаётся low-level/internal инструментом генерации и не является
+основным операторским путём. Использовать его можно только если Игорь явно
+решил обойти checked workflow.
 
 Checked launcher добавляет защитный слой:
 
@@ -25,7 +29,13 @@ Checked launcher добавляет защитный слой:
 - после successful generation запускает draft inspection;
 - передаёт совместимые параметры в existing launcher.
 
-## 3. Команда запуска
+Checked workflow:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
+
+## 3. Canonical команда запуска
 
 ```powershell
 .\scripts\make_quote_capacity100_checked.ps1 "C:\Users\IgorN\Downloads\items.csv" "C:\Users\IgorN\Downloads\Черновик_КП.xlsx"
@@ -50,7 +60,7 @@ Checked launcher добавляет защитный слой:
 
 ## 5. Pass-through параметров
 
-Wrapper принимает совместимые параметры existing launcher:
+Wrapper принимает совместимые параметры low-level/internal launcher:
 
 - `Template`;
 - `TemplateCapacity`;
@@ -78,7 +88,7 @@ Wrapper принимает совместимые параметры existing la
 
 ## 6. Что происходит при PASS
 
-При `PASS` wrapper запускает existing launcher:
+При `PASS` wrapper запускает low-level/internal launcher:
 
 ```powershell
 .\scripts\make_quote_capacity100.ps1 "<ItemsCsv>" "<Output>"
@@ -136,7 +146,8 @@ CSV нужно исправить или пересоздать, затем сн
 preflight заблокировал генерацию или generation failed.
 
 Inspection не читает и не печатает cell values. Даже `Inspection: pass` не
-означает, что КП можно отправлять клиенту.
+означает, что КП можно отправлять клиенту. Technical PASS, `Inspection: pass`
+или smoke PASS не являются commercial approval.
 
 ## 10. Статус generated `.xlsx`
 
@@ -150,11 +161,16 @@ Generated `.xlsx` — только internal draft. Его нельзя счит�
 - реквизитов и шаблонных областей;
 - итогового `.xlsx` после генерации.
 
+Для отправки клиенту требуется отдельное Human Approval. Нельзя запускать
+закупку, цех, shipment или отправку клиенту только на основании technical PASS.
+
 ## 11. Что wrapper не делает
 
 Wrapper не должен:
 
 - отправлять КП клиенту;
+- считать technical PASS коммерческим approval;
+- запускать закупку/цех/отправку без решения Игоря;
 - делать commit/push;
 - менять source CSV;
 - менять template;
