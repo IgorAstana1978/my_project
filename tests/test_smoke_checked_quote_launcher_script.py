@@ -18,6 +18,12 @@ def test_references_checked_launcher() -> None:
     assert "make_quote_capacity100_checked.ps1" in text
 
 
+def test_does_not_directly_invoke_low_level_launcher() -> None:
+    text = script_text()
+
+    assert "make_quote_capacity100.ps1" not in text
+
+
 def test_creates_temp_csv_and_xlsx_under_env_temp() -> None:
     text = script_text()
 
@@ -42,13 +48,28 @@ def test_uses_synthetic_rows_only() -> None:
 def test_checks_checked_quote_run_report_and_pass_statuses() -> None:
     text = script_text()
 
+    assert "QUOTE_INPUT_PREFLIGHT_REPORT_START" in text
+    assert "QUOTE_DRAFT_INSPECTION_REPORT_START" in text
     assert "CHECKED_QUOTE_RUN_REPORT_START" in text
     assert '"Preflight:"' in text
     assert '"PASS"' in text
     assert '"Generation:"' in text
     assert '"pass"' in text
+    assert '"Inspection:"' in text
     assert '"Output exists:"' in text
     assert '"yes"' in text
+
+
+def test_smoke_report_includes_canonical_workflow_fields() -> None:
+    text = script_text()
+
+    assert "Preflight report:" in text
+    assert "Preflight status:" in text
+    assert "Draft inspection report:" in text
+    assert "Inspection:" in text
+    assert "Checked run report:" in text
+    assert "Generation:" in text
+    assert "Output exists in checked report:" in text
 
 
 def test_deletes_temp_csv_and_xlsx() -> None:

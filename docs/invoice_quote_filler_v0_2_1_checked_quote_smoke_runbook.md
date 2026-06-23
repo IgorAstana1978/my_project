@@ -4,8 +4,14 @@
 
 `scripts/smoke_checked_quote_launcher.ps1` проверяет happy path checked launcher:
 synthetic strict CSV проходит preflight, `make_quote_capacity100_checked.ps1`
-запускает generator, temporary output `.xlsx` создаётся, а затем временные файлы
-удаляются.
+запускает canonical checked workflow, temporary output `.xlsx` создаётся, draft
+inspection проходит, а затем временные файлы удаляются.
+
+Smoke валидирует полный canonical workflow:
+
+```text
+preflight -> generation -> draft inspection -> checked quote run report
+```
 
 Это manual smoke helper, не production command.
 
@@ -16,7 +22,11 @@ runtime chain, если нужно быстро подтвердить:
 
 - `Preflight: PASS`;
 - `Generation: pass`;
+- `Inspection: pass`;
 - `Output exists: yes`;
+- наличие `QUOTE_INPUT_PREFLIGHT_REPORT`;
+- наличие `QUOTE_DRAFT_INSPECTION_REPORT`;
+- наличие `CHECKED_QUOTE_RUN_REPORT`;
 - cleanup temporary CSV/XLSX.
 
 ## 3. Команда запуска
@@ -27,6 +37,15 @@ runtime chain, если нужно быстро подтвердить:
 
 Helper печатает полный output checked launcher и затем compact
 `CHECKED_QUOTE_SMOKE_REPORT`.
+
+Smoke запускает только canonical checked launcher:
+
+```powershell
+.\scripts\make_quote_capacity100_checked.ps1 "<temp_csv>" "<temp_xlsx>"
+```
+
+Smoke не должен напрямую запускать low-level/internal
+`make_quote_capacity100.ps1`.
 
 ## 4. Что helper создаёт
 
@@ -74,7 +93,8 @@ Generated `.xlsx` в этом smoke — temporary draft only. Он нужен т
 проверки, что generator действительно создал файл. После проверки файл должен
 быть удалён.
 
-Smoke output нельзя отправлять клиенту и нельзя добавлять в Git.
+Smoke output нельзя отправлять клиенту и нельзя добавлять в Git. Smoke PASS,
+technical PASS и `Inspection: pass` не являются commercial approval.
 
 ## 8. Что делать при FAIL
 
@@ -84,7 +104,11 @@ Smoke output нельзя отправлять клиенту и нельзя д
 - checked launcher exit code по косвенным признакам report;
 - наличие `Preflight: PASS`;
 - наличие `Generation: pass`;
+- наличие `Inspection: pass`;
 - наличие `Output exists: yes`;
+- наличие `QUOTE_INPUT_PREFLIGHT_REPORT_START`;
+- наличие `QUOTE_DRAFT_INSPECTION_REPORT_START`;
+- наличие `CHECKED_QUOTE_RUN_REPORT_START`;
 - строки cleanup.
 
 Не делать commit/push, пока причина failure не понятна и relevant checks не
@@ -102,7 +126,10 @@ Helper не должен:
 - менять source scripts;
 - делать commit/push;
 - отправлять КП клиенту;
+- считать smoke PASS commercial approval;
 - печатать commercial data;
+- печатать cell values;
+- печатать sheet names;
 - печатать tokens/secrets/credentials.
 
 ## 10. Запрещённые файлы
@@ -127,6 +154,27 @@ PASS
 
 Checked launcher:
 pass / fail
+
+Preflight report:
+yes / no
+
+Preflight status:
+PASS / missing / unexpected
+
+Draft inspection report:
+yes / no
+
+Inspection:
+pass / fail / missing
+
+Checked run report:
+yes / no
+
+Generation:
+pass / fail / missing
+
+Output exists in checked report:
+yes / no / missing
 
 Output created:
 yes / no
