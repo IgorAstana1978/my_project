@@ -230,6 +230,39 @@ def test_output_contains_handoff_markers() -> None:
     assert output.endswith("CHATGPT_HANDOFF_END")
 
 
+def test_output_contains_safe_quote_workflow_block() -> None:
+    output = render_with_runner(FakeRunner())
+
+    assert "Quote workflow:" in output
+    assert "scripts/make_quote_capacity100_checked.ps1" in output
+    assert "docs/invoice_quote_filler_v0_2_1_operator_run_card.md" in output
+    assert "scripts/smoke_checked_quote_launcher.ps1" in output
+    assert "manual Igor check" in output
+    assert "Human Approval" in output
+    assert "generated .xlsx is internal draft only" in output
+
+
+def test_quote_workflow_block_avoids_client_and_commercial_details() -> None:
+    output = render_with_runner(FakeRunner())
+    allowed_generic_xlsx = "generated .xlsx is internal draft only"
+    output_without_allowed_xlsx = output.replace(allowed_generic_xlsx, "")
+    forbidden = (
+        "Downloads",
+        "Desktop",
+        ".xls",
+        ".xlsx",
+        "price",
+        "prices",
+        "sum",
+        "sums",
+        "VAT",
+        "vat",
+    )
+
+    for value in forbidden:
+        assert value not in output_without_allowed_xlsx, value
+
+
 def test_output_does_not_include_file_contents() -> None:
     output = render_with_runner(
         FakeRunner(status_stdout=" M docs/status.md\n?? scripts/helper.py\n")

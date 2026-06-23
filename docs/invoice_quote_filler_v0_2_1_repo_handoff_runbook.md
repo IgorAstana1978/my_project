@@ -67,14 +67,32 @@ CHATGPT_HANDOFF_END
 Не нужно прикладывать screenshots, `.xls`, `.xlsx`, generated `.csv` или
 клиентские файлы.
 
-## 7. Что делать при CI failure
+## 7. Quote workflow block
+
+`CHATGPT_HANDOFF` также содержит статический safe block `Quote workflow`.
+
+Он нужен, чтобы в finish report сразу было видно:
+
+- canonical launcher: `scripts/make_quote_capacity100_checked.ps1`;
+- operator run card:
+  `docs/invoice_quote_filler_v0_2_1_operator_run_card.md`;
+- canonical smoke: `scripts/smoke_checked_quote_launcher.ps1`;
+- manual stop перед клиентом;
+- generated `.xlsx` является только internal draft.
+
+Этот block не запускает generation, не запускает smoke, не читает КП и не
+печатает client paths или commercial data. Он не является commercial approval.
+STOP перед клиентом сохраняется: manual Igor check и отдельное Human Approval
+required before sending to client.
+
+## 8. Что делать при CI failure
 
 Если `CI: failure`, открыть ссылку из `GitHub Actions` и посмотреть failing job.
 В ChatGPT передавать handoff block и краткий текст ошибки из Actions logs.
 
 Не добавлять в repo клиентские файлы или generated artifacts для диагностики.
 
-## 8. Что helper не делает и не должен делать
+## 9. Что helper не делает и не должен делать
 
 Helper не должен:
 
@@ -85,12 +103,14 @@ Helper не должен:
 - делать commit;
 - делать push;
 - запускать tests автоматически;
+- запускать quote generation;
+- запускать smoke helper;
 - отправлять данные наружу сам по себе.
 
 Он выполняет только read-only Git-команды и, если доступен `gh`, read-only
 запрос к GitHub Actions.
 
-## 9. Запрещённые файлы
+## 10. Запрещённые файлы
 
 Не добавлять и не передавать через helper:
 

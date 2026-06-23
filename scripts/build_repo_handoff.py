@@ -16,6 +16,23 @@ STANDARD_WINDOWS_GH = r"C:\Program Files\GitHub CLI\gh.exe"
 GH_RUN_JSON_FIELDS = (
     "databaseId,headSha,status,conclusion,url,workflowName,displayTitle"
 )
+QUOTE_WORKFLOW_LINES = (
+    "Quote workflow:",
+    "canonical launcher:",
+    "scripts/make_quote_capacity100_checked.ps1",
+    "",
+    "operator run card:",
+    "docs/invoice_quote_filler_v0_2_1_operator_run_card.md",
+    "",
+    "canonical smoke:",
+    "scripts/smoke_checked_quote_launcher.ps1",
+    "",
+    "manual stop:",
+    "manual Igor check and Human Approval required before sending to client",
+    "",
+    "draft status:",
+    "generated .xlsx is internal draft only",
+)
 
 
 @dataclass(frozen=True)
@@ -263,6 +280,8 @@ def format_handoff(packet: RepoHandoff) -> str:
             "",
         ]
     )
+    lines.extend(QUOTE_WORKFLOW_LINES)
+    lines.append("")
     lines.extend(format_lines("Notes", packet.notes))
     lines.extend(["", "CHATGPT_HANDOFF_END"])
     return "\n".join(lines)
