@@ -108,3 +108,22 @@ Manual check checklist:
   client/temp files в Git.
 - Не использовать low-level launcher без явного решения Игоря.
 - Не считать technical PASS approval на price/scope/schedule.
+
+## 6. Finish после quote workflow changes
+
+Daily / quote workflow finish command:
+
+```powershell
+.\scripts\finish_quote_workflow.ps1
+```
+
+Она эквивалентна:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode fast --include-quote-smoke
+```
+
+Команда запускает synthetic quote smoke, а не real client files, и печатает
+полный finish report для handoff. Smoke PASS не является commercial approval.
+Manual Igor check и отдельный Human Approval before sending to client остаются
+обязательными.

@@ -35,6 +35,23 @@ Canonical quote smoke запускается только по явному фл
 
 ## 4. Команды запуска
 
+Daily / quote workflow finish command:
+
+```powershell
+.\scripts\finish_quote_workflow.ps1
+```
+
+Эта короткая команда эквивалентна:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode fast --include-quote-smoke
+```
+
+Wrapper запускает только finish checks и existing synthetic-only quote smoke.
+Он не принимает и не читает real client files. Полный
+`CHECKED_QUOTE_SMOKE_REPORT`, `CODEX_FINISH_REPORT`, nested `CHATGPT_HANDOFF` и
+`Quote workflow` block печатаются без сокращений.
+
 Fast mode:
 
 ```powershell
@@ -65,6 +82,10 @@ Finish report печатает полный `CHECKED_QUOTE_SMOKE_REPORT` и до
 Smoke helper создаёт только synthetic temp CSV/XLSX outside Git и удаляет temp
 `.xlsx` после проверки. Smoke PASS не является commercial approval и не заменяет
 manual Igor check / Human Approval before sending to client.
+
+Те же ограничения действуют для `finish_quote_workflow.ps1`: smoke PASS не
+разрешает отправку draft клиенту. Manual Igor check и отдельный Human Approval
+before sending to client остаются обязательными.
 
 ## 5. Что отправлять ChatGPT
 
