@@ -29,6 +29,10 @@ Script нужен, чтобы Codex и Игорь не собирали фина
 `--mode full` дополнительно запускает полный `pytest` перед остальными
 проверками.
 
+По умолчанию ни `--mode fast`, ни `--mode full` не запускают quote smoke.
+Canonical quote smoke запускается только по явному флагу
+`--include-quote-smoke`.
+
 ## 4. Команды запуска
 
 Fast mode:
@@ -42,6 +46,25 @@ Full mode:
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode full
 ```
+
+Fast mode with quote smoke:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode fast --include-quote-smoke
+```
+
+`--include-quote-smoke` запускает existing synthetic-only helper:
+
+```powershell
+.\scripts\smoke_checked_quote_launcher.ps1
+```
+
+Finish report печатает полный `CHECKED_QUOTE_SMOKE_REPORT` и добавляет в
+`Checks` строку `quote smoke: pass` или `quote smoke: fail`.
+
+Smoke helper создаёт только synthetic temp CSV/XLSX outside Git и удаляет temp
+`.xlsx` после проверки. Smoke PASS не является commercial approval и не заменяет
+manual Igor check / Human Approval before sending to client.
 
 ## 5. Что отправлять ChatGPT
 
@@ -79,9 +102,14 @@ Script не должен:
 - читать `.xls`, `.xlsx` или generated `.csv`;
 - печатать commercial data;
 - печатать tokens/secrets/credentials;
+- запускать quote smoke без explicit `--include-quote-smoke`;
+- запускать quote generation напрямую;
+- запускать low-level launcher;
 - отправлять данные наружу сам по себе.
 
-Он только запускает локальные read-only проверки и repo handoff helper.
+Он только запускает локальные read-only проверки и repo handoff helper. Quote
+smoke является опциональным synthetic-only smoke и запускается только при
+явном флаге.
 
 ## 8. Запрещённые файлы
 

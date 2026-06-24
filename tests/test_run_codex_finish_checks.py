@@ -82,10 +82,14 @@ class FakeRunner:
         fail_command_part: str | None = None,
         handoff_returncode: int = 0,
         noisy_failure: bool = False,
+        smoke_stdout: str | None = None,
+        smoke_returncode: int = 0,
     ) -> None:
         self.fail_command_part = fail_command_part
         self.handoff_returncode = handoff_returncode
         self.noisy_failure = noisy_failure
+        self.smoke_stdout = smoke_stdout
+        self.smoke_returncode = smoke_returncode
         self.commands: list[tuple[str, ...]] = []
 
     def __call__(
@@ -103,6 +107,20 @@ class FakeRunner:
                     returncode=self.handoff_returncode,
                 )
             return completed(stdout=handoff_block())
+        if "smoke_checked_quote_launcher.ps1" in command_text:
+            stdout = self.smoke_stdout
+            if stdout is None:
+                stdout = "\n".join(
+                    [
+                        "CHECKED_QUOTE_SMOKE_REPORT_START",
+                        "",
+                        "Result:",
+                        "PASS",
+                        "",
+                        "CHECKED_QUOTE_SMOKE_REPORT_END",
+                    ]
+                )
+            return completed(stdout=stdout, returncode=self.smoke_returncode)
         if self.fail_command_part and self.fail_command_part in command_text:
             if self.noisy_failure:
                 stderr = "\n".join(f"line {index}" for index in range(1, 61))
@@ -112,8 +130,16 @@ class FakeRunner:
         return completed(stdout="ok")
 
 
-def render(mode: str, runner: FakeRunner) -> str:
-    report = finish.run_checks(mode, runner=runner)
+def render(
+    mode: str,
+    runner: FakeRunner,
+    include_quote_smoke: bool = False,
+) -> str:
+    report = finish.run_checks(
+        mode,
+        runner=runner,
+        include_quote_smoke=include_quote_smoke,
+    )
     return cast(str, finish.format_report(report))
 
 
@@ -130,6 +156,18 @@ def test_fast_mode_does_not_run_pytest() -> None:
     assert not any(" -m pytest" in command for command in command_texts(runner))
 
 
+def test_fast_mode_does_not_run_quote_smoke_by_default() -> None:
+    runner = FakeRunner()
+
+    output = render("fast", runner)
+
+    assert "quote smoke:" not in output
+    assert not any(
+        "smoke_checked_quote_launcher.ps1" in command
+        for command in command_texts(runner)
+    )
+
+
 def test_full_mode_runs_pytest() -> None:
     runner = FakeRunner()
 
@@ -137,6 +175,86 @@ def test_full_mode_runs_pytest() -> None:
 
     assert "pytest: pass" in output
     assert any(" -m pytest" in command for command in command_texts(runner))
+
+
+def test_full_mode_does_not_run_quote_smoke_by_default() -> None:
+    runner = FakeRunner()
+
+    output = render("full", runner)
+
+    assert "quote smoke:" not in output
+    assert not any(
+        "smoke_checked_quote_launcher.ps1" in command
+        for command in command_texts(runner)
+    )
+
+
+def test_include_quote_smoke_invokes_smoke_helper() -> None:
+    runner = FakeRunner()
+
+    render("fast", runner, include_quote_smoke=True)
+
+    assert any(
+        "smoke_checked_quote_launcher.ps1" in command
+        for command in command_texts(runner)
+    )
+
+
+def test_quote_smoke_pass_is_reported_and_output_is_preserved() -> None:
+    smoke_output = "\n".join(
+        [
+            "CHECKED_QUOTE_SMOKE_REPORT_START",
+            "Synthetic smoke details",
+            "Result:",
+            "PASS",
+            "CHECKED_QUOTE_SMOKE_REPORT_END",
+        ]
+    )
+    runner = FakeRunner(smoke_stdout=smoke_output, smoke_returncode=0)
+
+    output = render("fast", runner, include_quote_smoke=True)
+
+    assert output.startswith("CHECKED_QUOTE_SMOKE_REPORT_START")
+    assert "Synthetic smoke details" in output
+    assert "quote smoke: pass" in output
+    assert "Failures:\nnone" in output
+
+
+def test_quote_smoke_nonzero_exit_is_reported_as_failure() -> None:
+    runner = FakeRunner(smoke_returncode=1)
+
+    output = render("fast", runner, include_quote_smoke=True)
+
+    assert "quote smoke: fail" in output
+    assert "quote smoke failed:" in output
+
+
+def test_quote_smoke_missing_marker_is_reported_as_failure() -> None:
+    runner = FakeRunner(smoke_stdout="Result:\nPASS\n", smoke_returncode=0)
+
+    output = render("fast", runner, include_quote_smoke=True)
+
+    assert "quote smoke: fail" in output
+    assert "quote smoke failed:" in output
+
+
+def test_quote_smoke_missing_pass_result_is_reported_as_failure() -> None:
+    runner = FakeRunner(
+        smoke_stdout="\n".join(
+            [
+                "CHECKED_QUOTE_SMOKE_REPORT_START",
+                "Result:",
+                "FAIL",
+                "CHECKED_QUOTE_SMOKE_REPORT_END",
+            ]
+        ),
+        smoke_returncode=0,
+    )
+
+    output = render("fast", runner, include_quote_smoke=True)
+
+    assert "quote smoke: fail" in output
+    assert "quote smoke failed:" in output
 
 
 def test_all_checks_pass_exit_code_zero_and_report_says_pass() -> None:

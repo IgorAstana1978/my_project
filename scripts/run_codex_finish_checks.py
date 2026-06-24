@@ -12,6 +12,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(sys.executable)
 HANDOFF_SCRIPT = PROJECT_ROOT / "scripts" / "build_repo_handoff.py"
+QUOTE_SMOKE_SCRIPT = PROJECT_ROOT / "scripts" / "smoke_checked_quote_launcher.ps1"
 EXCERPT_LINES = 40
 VALID_MODES = {"fast", "full"}
 
@@ -33,6 +34,7 @@ class FinishReport:
     mode: str
     checks: tuple[CheckResult, ...]
     handoff_output: str
+    prelude_output: str = ""
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -43,6 +45,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--mode",
         required=True,
         help="Check mode: fast or full",
+    )
+    parser.add_argument(
+        "--include-quote-smoke",
+        action="store_true",
+        help="Run the synthetic checked quote launcher smoke helper.",
     )
     return parser.parse_args(argv)
 
@@ -71,6 +78,14 @@ def command_for_check(name: str) -> tuple[str, ...]:
         return ("git", "diff", "--check")
     if name == "repo handoff":
         return (str(PYTHON), str(HANDOFF_SCRIPT))
+    if name == "quote smoke":
+        return (
+            "powershell",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(QUOTE_SMOKE_SCRIPT),
+        )
     raise ValueError(f"unknown check: {name}")
 
 
@@ -109,6 +124,35 @@ def run_single_check(name: str, runner: CommandRunner) -> CheckResult:
     )
 
 
+def quote_smoke_passed(result: subprocess.CompletedProcess[str]) -> bool:
+    if result.returncode != 0:
+        return False
+    if "CHECKED_QUOTE_SMOKE_REPORT_START" not in result.stdout:
+        return False
+
+    lines = [line.strip() for line in result.stdout.splitlines()]
+    for index, line in enumerate(lines):
+        if line != "Result:":
+            continue
+        following = (value for value in lines[index + 1 :] if value)
+        return next(following, "") == "PASS"
+    return False
+
+
+def run_quote_smoke(runner: CommandRunner) -> CheckResult:
+    command = command_for_check("quote smoke")
+    result = runner(command)
+    status = "pass" if quote_smoke_passed(result) else "fail"
+    return CheckResult(
+        name="quote smoke",
+        status=status,
+        command=command,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
 def skipped_pytest() -> CheckResult:
     return CheckResult(
         name="pytest",
@@ -121,6 +165,7 @@ def skipped_pytest() -> CheckResult:
 def run_checks(
     mode: str,
     runner: CommandRunner = run_command,
+    include_quote_smoke: bool = False,
 ) -> FinishReport:
     if mode not in VALID_MODES:
         raise ValueError(f"invalid mode: {mode}")
@@ -132,12 +177,20 @@ def run_checks(
     for name in check_names_for_mode(mode):
         results.append(run_single_check(name, runner))
 
+    prelude_outputs: list[str] = []
+    if include_quote_smoke:
+        quote_smoke = run_quote_smoke(runner)
+        results.append(quote_smoke)
+        if quote_smoke.stdout.strip():
+            prelude_outputs.append(quote_smoke.stdout.strip())
+
     handoff = next(result for result in results if result.name == "repo handoff")
     handoff_output = handoff.stdout.strip()
     return FinishReport(
         mode=mode,
         checks=tuple(results),
         handoff_output=handoff_output,
+        prelude_output="\n\n".join(prelude_outputs),
     )
 
 
@@ -206,12 +259,17 @@ def format_report(report: FinishReport) -> str:
         "",
         "Failures:",
     ]
+    if any(check.name == "quote smoke" for check in report.checks):
+        lines.insert(-2, f"quote smoke: {status_for(report, 'quote smoke')}")
     if failures:
         lines.append("\n\n".join(failures))
     else:
         lines.append("none")
     lines.extend(["", handoff_output, "", "CODEX_FINISH_REPORT_END"])
-    return "\n".join(lines)
+    finish_report = "\n".join(lines)
+    if report.prelude_output:
+        return f"{report.prelude_output}\n\n{finish_report}"
+    return finish_report
 
 
 def report_exit_code(report: FinishReport) -> int:
@@ -228,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
 
-    report = run_checks(mode)
+    report = run_checks(mode, include_quote_smoke=bool(args.include_quote_smoke))
     print(format_report(report))
     return report_exit_code(report)
 
