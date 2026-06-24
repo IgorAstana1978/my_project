@@ -18,6 +18,9 @@ GH_RUN_JSON_FIELDS = (
 )
 QUOTE_WORKFLOW_LINES = (
     "Quote workflow:",
+    "finish wrapper:",
+    "scripts/finish_quote_workflow.ps1",
+    "",
     "canonical launcher:",
     "scripts/make_quote_capacity100_checked.ps1",
     "",
