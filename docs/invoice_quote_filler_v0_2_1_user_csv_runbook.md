@@ -5,9 +5,22 @@
 Быстрый ежедневный operator workflow: см.
 `docs/invoice_quote_filler_v0_2_1_operator_run_card.md`.
 
-## 1. Взять sample CSV
+## 1. Создать или взять strict CSV
 
-Формат можно взять из безопасного sample-файла:
+Создать новый пустой template outside Git:
+
+```powershell
+.\scripts\create_quote_items_csv_template.ps1 "C:\Users\IgorN\Downloads\items.csv"
+```
+
+Helper создаёт новый UTF-8 CSV только с header, пятью разрешёнными колонками и
+разделителем `;`. Он не создаёт item rows и не перезаписывает существующий
+файл. После создания вручную заполнить позиции, проверить CSV и затем запускать
+checked launcher.
+
+Template/generated `.csv` нельзя добавлять в Git.
+
+Либо формат можно взять из безопасного sample-файла:
 
 ```text
 examples/invoice_quote_items_capacity100_sample.csv

@@ -7,6 +7,17 @@ report считать PASS и где остановиться перед отп�
 
 Использовать только strict 5-column CSV outside Git.
 
+Создать новый пустой strict CSV template outside Git:
+
+```powershell
+.\scripts\create_quote_items_csv_template.ps1 "C:\Users\IgorN\Downloads\items.csv"
+```
+
+Команда создаёт новый UTF-8 CSV только с точным 5-column header и разделителем
+`;`. Существующий файл не перезаписывается. После создания заполнить позиции и
+только затем запускать checked launcher. Template/generated `.csv` не добавлять
+в Git.
+
 Если источник - legacy `.xls`, сначала запустить extractor, получить strict CSV
 outside Git и вручную проверить CSV.
 
