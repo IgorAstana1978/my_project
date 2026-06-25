@@ -166,3 +166,22 @@ smoke является опциональным synthetic-only smoke и запу
 handoff block. После этого Игорю не нужно вручную копировать выводы из `pytest`,
 `mypy`, `ruff`, `black`, `git status` и GitHub Actions в отдельный статус для
 ChatGPT.
+
+## 10. Quick quote workflow state
+
+Показать статическую read-only памятку по командам и STOP-правилам:
+
+```powershell
+.\scripts\quote_workflow_state.ps1
+```
+
+Явно скопировать только state card в clipboard:
+
+```powershell
+.\scripts\quote_workflow_state.ps1 -CopyToClipboard
+```
+
+State command не запускает generation, smoke или finish checks и не читает
+client files. Это quick reference для оператора, Codex и ChatGPT. Default mode
+не трогает clipboard; explicit `-CopyToClipboard` копирует только static state
+card. State card не является approval на отправку клиенту.

@@ -138,3 +138,22 @@ commercial data в finish report.
 полный finish report для handoff. Smoke PASS не является commercial approval.
 Manual Igor check и отдельный Human Approval before sending to client остаются
 обязательными.
+
+## 7. Quick workflow state
+
+Показать короткую read-only памятку по текущему quote workflow:
+
+```powershell
+.\scripts\quote_workflow_state.ps1
+```
+
+Явно скопировать только static state card в clipboard:
+
+```powershell
+.\scripts\quote_workflow_state.ps1 -CopyToClipboard
+```
+
+State command не запускает generation, smoke или finish checks. Это quick
+reference для оператора, Codex и ChatGPT. По умолчанию clipboard не меняется;
+`-CopyToClipboard` копирует только static state card. Команда не является
+approval на отправку клиенту.
