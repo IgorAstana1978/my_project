@@ -238,6 +238,7 @@ def test_output_contains_safe_quote_workflow_block() -> None:
     assert "scripts/finish_quote_workflow.ps1" in output
     assert "scripts/make_quote_capacity100_checked.ps1" in output
     assert "docs/invoice_quote_filler_v0_2_1_operator_run_card.md" in output
+    assert "docs/invoice_quote_filler_v0_2_1_codex_compact_prompt_card.md" in output
     assert "scripts/smoke_checked_quote_launcher.ps1" in output
     assert "manual Igor check" in output
     assert "Human Approval" in output

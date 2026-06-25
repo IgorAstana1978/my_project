@@ -78,15 +78,17 @@ CHATGPT_HANDOFF_END
 - canonical launcher: `scripts/make_quote_capacity100_checked.ps1`;
 - operator run card:
   `docs/invoice_quote_filler_v0_2_1_operator_run_card.md`;
+- compact prompt card:
+  `docs/invoice_quote_filler_v0_2_1_codex_compact_prompt_card.md`;
 - canonical smoke: `scripts/smoke_checked_quote_launcher.ps1`;
 - manual stop перед клиентом;
 - generated `.xlsx` является только internal draft.
 
-Этот block не запускает state command, finish wrapper, generation или smoke, не
-читает КП и не печатает client paths или commercial data. Он является только
-static metadata и не является commercial approval. STOP перед клиентом
-сохраняется: manual Igor check и отдельное Human Approval required before
-sending to client.
+Этот block не запускает state command, finish wrapper, compact prompt card,
+generation или smoke, не читает КП и не печатает client paths или commercial
+data. Он является только static metadata и не является commercial approval.
+STOP перед клиентом сохраняется: manual Igor check и отдельное Human Approval
+required before sending to client.
 
 ## 8. Что делать при CI failure
 
