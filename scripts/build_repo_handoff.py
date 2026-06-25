@@ -18,6 +18,9 @@ GH_RUN_JSON_FIELDS = (
 )
 QUOTE_WORKFLOW_LINES = (
     "Quote workflow:",
+    "state command:",
+    "scripts/quote_workflow_state.ps1",
+    "",
     "finish wrapper:",
     "scripts/finish_quote_workflow.ps1",
     "",

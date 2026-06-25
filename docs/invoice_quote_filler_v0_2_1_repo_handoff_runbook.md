@@ -73,6 +73,7 @@ CHATGPT_HANDOFF_END
 
 Он нужен, чтобы в finish report сразу было видно:
 
+- state command: `scripts/quote_workflow_state.ps1`;
 - finish wrapper: `scripts/finish_quote_workflow.ps1`;
 - canonical launcher: `scripts/make_quote_capacity100_checked.ps1`;
 - operator run card:
@@ -81,10 +82,11 @@ CHATGPT_HANDOFF_END
 - manual stop перед клиентом;
 - generated `.xlsx` является только internal draft.
 
-Этот block не запускает finish wrapper, generation или smoke, не читает КП и не
-печатает client paths или commercial data. Он является только static metadata и
-не является commercial approval. STOP перед клиентом сохраняется: manual Igor
-check и отдельное Human Approval required before sending to client.
+Этот block не запускает state command, finish wrapper, generation или smoke, не
+читает КП и не печатает client paths или commercial data. Он является только
+static metadata и не является commercial approval. STOP перед клиентом
+сохраняется: manual Igor check и отдельное Human Approval required before
+sending to client.
 
 ## 8. Что делать при CI failure
 
