@@ -43,6 +43,37 @@ def test_returns_child_exit_code() -> None:
     assert "exit $FinishExitCode" in text
 
 
+def test_supports_explicit_clipboard_switch() -> None:
+    text = script_text()
+
+    assert "[switch]$CopyToClipboard" in text
+    assert "Set-Clipboard -Value $FinishText" in text
+
+
+def test_clipboard_copy_is_explicitly_guarded() -> None:
+    text = script_text()
+
+    clipboard_condition = text.index("if ($CopyToClipboard)")
+    clipboard_command = text.index("Set-Clipboard -Value $FinishText")
+
+    assert clipboard_condition < clipboard_command
+    assert text.count("Set-Clipboard") == 1
+
+
+def test_captures_and_prints_full_output_before_clipboard_copy() -> None:
+    text = script_text()
+
+    capture = text.index("$FinishOutput = & $Python")
+    exit_code = text.index("$FinishExitCode = $LASTEXITCODE")
+    print_output = text.index("$FinishLines | ForEach-Object { Write-Output $_ }")
+    clipboard_condition = text.index("if ($CopyToClipboard)")
+
+    assert capture < exit_code < print_output < clipboard_condition
+    assert "2>&1" in text
+    assert "$FinishLines = @($FinishOutput" in text
+    assert "$FinishText = $FinishLines -join" in text
+
+
 def test_does_not_invoke_quote_launchers_directly() -> None:
     text = script_text()
 

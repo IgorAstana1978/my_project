@@ -117,6 +117,17 @@ Daily / quote workflow finish command:
 .\scripts\finish_quote_workflow.ps1
 ```
 
+Default command не трогает clipboard. Для явного копирования полного finish
+output в ChatGPT:
+
+```powershell
+.\scripts\finish_quote_workflow.ps1 -CopyToClipboard
+```
+
+Clipboard output включает `CHECKED_QUOTE_SMOKE_REPORT`, `CODEX_FINISH_REPORT`,
+nested `CHATGPT_HANDOFF` и `Quote workflow`. Не добавлять client files или
+commercial data в finish report.
+
 Она эквивалентна:
 
 ```powershell

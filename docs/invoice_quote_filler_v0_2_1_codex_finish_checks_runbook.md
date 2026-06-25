@@ -41,6 +41,19 @@ Daily / quote workflow finish command:
 .\scripts\finish_quote_workflow.ps1
 ```
 
+По умолчанию wrapper только печатает полный finish output и не трогает
+clipboard.
+
+Optional explicit copy to clipboard:
+
+```powershell
+.\scripts\finish_quote_workflow.ps1 -CopyToClipboard
+```
+
+`-CopyToClipboard` печатает тот же полный output и копирует его в clipboard для
+вставки в ChatGPT. Копируются `CHECKED_QUOTE_SMOKE_REPORT`,
+`CODEX_FINISH_REPORT`, nested `CHATGPT_HANDOFF` и `Quote workflow` block.
+
 Эта короткая команда эквивалентна:
 
 ```powershell
@@ -51,6 +64,9 @@ Wrapper запускает только finish checks и existing synthetic-only
 Он не принимает и не читает real client files. Полный
 `CHECKED_QUOTE_SMOKE_REPORT`, `CODEX_FINISH_REPORT`, nested `CHATGPT_HANDOFF` и
 `Quote workflow` block печатаются без сокращений.
+
+Не добавлять client files или commercial data в finish report. Clipboard mode
+предназначен только для safe synthetic smoke output и repo metadata.
 
 Fast mode:
 
