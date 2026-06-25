@@ -157,3 +157,14 @@ State command не запускает generation, smoke или finish checks. Э
 reference для оператора, Codex и ChatGPT. По умолчанию clipboard не меняется;
 `-CopyToClipboard` копирует только static state card. Команда не является
 approval на отправку клиенту.
+
+## 8. Короткий prompt для Codex
+
+Для следующих узких задач использовать:
+
+`docs/invoice_quote_filler_v0_2_1_codex_compact_prompt_card.md`
+
+Карточка содержит короткий шаблон `Repo / HEAD / Task / Scope only /
+Guardrails / Checks / Final report`. Расширенный prompt нужен для опасных
+изменений: quote generation, templates, dependencies, real client files, Excel
+runtime или commercial data.

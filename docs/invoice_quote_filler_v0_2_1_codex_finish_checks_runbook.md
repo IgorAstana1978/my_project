@@ -185,3 +185,14 @@ State command не запускает generation, smoke или finish checks и 
 client files. Это quick reference для оператора, Codex и ChatGPT. Default mode
 не трогает clipboard; explicit `-CopyToClipboard` копирует только static state
 card. State card не является approval на отправку клиенту.
+
+## 11. Compact prompt для следующих задач
+
+Короткий reusable шаблон находится в:
+
+`docs/invoice_quote_filler_v0_2_1_codex_compact_prompt_card.md`
+
+Для обычной узкой задачи достаточно указать Repo/HEAD, Task, exact scope,
+checks и final report: текущие guardrails уже живут в repo. Расширенный prompt
+нужен при изменении quote generation, templates, dependencies, real client
+files, Excel runtime или commercial data.
