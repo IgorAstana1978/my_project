@@ -275,10 +275,13 @@ def validate_draft_output(
 
 def recommended_command(input_path: Path, draft_output: Path | None) -> str:
     if draft_output is None:
-        return "safe to run make_quote_capacity100.ps1"
+        return (
+            "safe to run make_quote_capacity100_checked.ps1 with an outside-Git "
+            "draft .xlsx output path"
+        )
     return (
-        "safe to run make_quote_capacity100.ps1\n"
-        f'.\\scripts\\make_quote_capacity100.ps1 "{input_path}" '
+        "safe to run make_quote_capacity100_checked.ps1\n"
+        f'.\\scripts\\make_quote_capacity100_checked.ps1 "{input_path}" '
         f'"{resolved(draft_output)}"'
     )
 

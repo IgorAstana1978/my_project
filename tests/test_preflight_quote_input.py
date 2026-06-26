@@ -198,7 +198,7 @@ def test_empty_optional_columns_warn_not_fail(tmp_path: Path, monkeypatch: Any) 
 
     assert "row 2: instruments_and_devices is empty" in report
     assert "row 2: cabinet_type_dimensions_material is empty" in report
-    assert "Next:\nsafe to run make_quote_capacity100.ps1" in report
+    assert "Next:\nsafe to run make_quote_capacity100_checked.ps1" in report
 
 
 def test_commercial_token_in_data_row_fails_without_full_row(
@@ -294,7 +294,10 @@ def test_valid_draft_output_outside_git_passes(
 
     assert "Status:\nPASS" in report
     assert "draft output: pass" in report
-    assert f'.\\scripts\\make_quote_capacity100.ps1 "{csv_path.resolve()}"' in report
+    assert (
+        f'.\\scripts\\make_quote_capacity100_checked.ps1 "{csv_path.resolve()}"'
+        in report
+    )
     assert str(output_path.resolve()) in report
 
 
