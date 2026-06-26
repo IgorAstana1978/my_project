@@ -12,6 +12,9 @@ QUOTE_WORKFLOW_STATE_START
 Repo:
 invoice_quote_filler v0.2.1
 
+Create strict CSV template:
+.\scripts\create_quote_items_csv_template.ps1 "C:\Users\IgorN\Downloads\items.csv"
+
 Generate draft:
 .\scripts\make_quote_capacity100_checked.ps1 "<strict_csv_outside_git>" "<draft_xlsx_outside_git>"
 

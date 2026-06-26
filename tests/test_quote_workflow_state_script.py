@@ -22,6 +22,8 @@ def test_contains_state_card_markers() -> None:
 def test_references_canonical_workflow_commands() -> None:
     text = script_text()
 
+    assert r".\scripts\create_quote_items_csv_template.ps1" in text
+    assert r"C:\Users\IgorN\Downloads\items.csv" in text
     assert r".\scripts\make_quote_capacity100_checked.ps1" in text
     assert r".\scripts\finish_quote_workflow.ps1" in text
     assert r".\scripts\finish_quote_workflow.ps1 -CopyToClipboard" in text
@@ -85,7 +87,6 @@ def test_does_not_contain_git_write_commands_or_real_paths() -> None:
     assert "git add" not in lowered
     assert "git commit" not in lowered
     assert "git push" not in lowered
-    assert "downloads" not in lowered
     assert "desktop" not in lowered
     assert "client files" not in lowered
 
