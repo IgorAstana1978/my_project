@@ -205,7 +205,7 @@ def test_valid_commercial_csv_creates_reconciled_internal_draft(
         == total_formula_before
     )
     assert worksheet[f"C{writer.AMOUNT_WORDS_ROW}"].value == (
-        "Всего прописью: четыреста тысяч тенге 00 тиын"
+        "Всего прописью: Четыреста тысяч тенге 00 тиын"
     )
     assert all(
         worksheet.cell(row=row, column=column).value not in {"yes", "no"}
@@ -225,7 +225,7 @@ def test_grand_total_words_use_independent_python_arithmetic() -> None:
 
     assert grand_total == 400000
     assert writer.amount_words_text(grand_total) == (
-        "Всего прописью: четыреста тысяч тенге 00 тиын"
+        "Всего прописью: Четыреста тысяч тенге 00 тиын"
     )
 
 

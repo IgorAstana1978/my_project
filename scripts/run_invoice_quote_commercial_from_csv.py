@@ -330,7 +330,8 @@ def integer_to_russian_words(value: int) -> str:
 
 def amount_words_text(grand_total: int) -> str:
     words = integer_to_russian_words(grand_total)
-    return f"Всего прописью: {words} тенге 00 тиын"
+    capitalized_words = words[:1].upper() + words[1:]
+    return f"Всего прописью: {capitalized_words} тенге 00 тиын"
 
 
 def visual_line_count(value: str, width: int) -> int:
