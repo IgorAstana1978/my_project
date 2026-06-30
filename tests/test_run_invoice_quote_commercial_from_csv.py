@@ -34,6 +34,7 @@ writer = cast(
 def commercial_row(
     index: int = 1,
     *,
+    quantity: str | None = None,
     unit_price: str | None = None,
     vat_mode: str = "no",
     confirmation: str = "yes",
@@ -41,7 +42,7 @@ def commercial_row(
     return [
         f"SYNTHETIC-ITEM-{index}",
         "шт.",
-        str(index),
+        quantity if quantity is not None else str(index),
         f"SYNTHETIC-DEVICES-{index}",
         f"SYNTHETIC-CABINET-{index}",
         unit_price if unit_price is not None else str(index * 1000),
@@ -79,6 +80,9 @@ def write_capacity100_template(
 
     worksheet[f"I{writer.commercial_reconciliation.TOTAL_ROW}"] = (
         writer.commercial_reconciliation.total_formula()
+    )
+    worksheet[f"C{writer.AMOUNT_WORDS_ROW}"] = (
+        "Всего прописью: template internal placeholder"
     )
     for merge_range in writer.commercial_reconciliation.EXPECTED_LOWER_MERGES:
         worksheet.merge_cells(merge_range)
@@ -139,7 +143,10 @@ def test_valid_commercial_csv_creates_reconciled_internal_draft(
     commercial_csv = tmp_path / "commercial.csv"
     template = tmp_path / "capacity100.xlsx"
     output = output_path(tmp_path)
-    rows = [commercial_row(1), commercial_row(2)]
+    rows = [
+        commercial_row(1, quantity="2", unit_price="100000"),
+        commercial_row(2, quantity="4", unit_price="50000"),
+    ]
     write_commercial_csv(commercial_csv, rows)
     write_capacity100_template(template)
 
@@ -176,6 +183,19 @@ def test_valid_commercial_csv_creates_reconciled_internal_draft(
     assert worksheet["H17"].value == int(rows[0][5])
     assert isinstance(worksheet["H17"].value, int)
     assert not isinstance(worksheet["H17"].value, bool)
+    assert worksheet["H17"].number_format == writer.NUMBER_FORMAT_CODE
+    assert worksheet["I17"].data_type == "f"
+    assert worksheet["I17"].number_format == writer.NUMBER_FORMAT_CODE
+    assert worksheet[f"I{writer.commercial_reconciliation.TOTAL_ROW}"].data_type == "f"
+    assert (
+        worksheet[f"I{writer.commercial_reconciliation.TOTAL_ROW}"].number_format
+        == writer.NUMBER_FORMAT_CODE
+    )
+    assert all(
+        worksheet[f"H{row}"].number_format == writer.NUMBER_FORMAT_CODE
+        and worksheet[f"I{row}"].number_format == writer.NUMBER_FORMAT_CODE
+        for row in range(writer.ITEM_START_ROW, writer.ITEM_END_ROW + 1)
+    )
     assert {
         f"I{row}": worksheet[f"I{row}"].value
         for row in range(writer.ITEM_START_ROW, writer.ITEM_END_ROW + 1)
@@ -184,12 +204,29 @@ def test_valid_commercial_csv_creates_reconciled_internal_draft(
         worksheet[f"I{writer.commercial_reconciliation.TOTAL_ROW}"].value
         == total_formula_before
     )
+    assert worksheet[f"C{writer.AMOUNT_WORDS_ROW}"].value == (
+        "Всего прописью: четыреста тысяч тенге 00 тиын"
+    )
     assert all(
         worksheet.cell(row=row, column=column).value not in {"yes", "no"}
         for row in range(1, worksheet.max_row + 1)
         for column in range(1, worksheet.max_column + 1)
     )
     workbook.close()
+
+
+def test_grand_total_words_use_independent_python_arithmetic() -> None:
+    rows = [
+        {"quantity": "2", "unit_price_kzt": "100000"},
+        {"quantity": "4", "unit_price_kzt": "50000"},
+    ]
+
+    grand_total = writer.calculate_grand_total(rows)
+
+    assert grand_total == 400000
+    assert writer.amount_words_text(grand_total) == (
+        "Всего прописью: четыреста тысяч тенге 00 тиын"
+    )
 
 
 def test_invalid_commercial_csv_fails_without_output(tmp_path: Path) -> None:
@@ -290,7 +327,9 @@ def test_reports_do_not_leak_commercial_values_or_full_rows(
 
     assert result.returncode == 0
     assert secret_price not in result.stdout
-    assert str(int(row[2]) * int(secret_price)) not in result.stdout
+    secret_total = int(row[2]) * int(secret_price)
+    assert str(secret_total) not in result.stdout
+    assert writer.integer_to_russian_words(secret_total) not in result.stdout
     assert ";".join(row) not in result.stdout
     assert row[0] not in result.stdout
     assert row[3] not in result.stdout

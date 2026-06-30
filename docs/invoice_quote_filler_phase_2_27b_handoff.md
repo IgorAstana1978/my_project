@@ -52,3 +52,20 @@ be removed.
 - `black --check .`
 - `git diff --check`
 - `.\scripts\finish_quote_workflow.ps1`
+
+## Phase 2.27c presentation extension
+
+The commercial writer may add presentation only after strict commercial
+preflight and before reconciliation:
+
+- calculate the grand total independently in Python from quantity and unit
+  price;
+- write `Всего прописью: <amount in Russian> тенге 00 тиын` to `C119`;
+- apply the built-in Excel number format `#,##0` to H17:H116, I17:I116, and
+  I117 without converting numeric or formula cells to strings;
+- preserve every XLSX package part except the target worksheet and styles;
+- run commercial reconciliation after all presentation changes.
+
+The presentation extension does not change VAT handling, the commercial CSV
+schema, the five-column workflow, the checked launcher, or any approval
+boundary.

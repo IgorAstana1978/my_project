@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import importlib.util
+import re
 import sys
 import uuid
+import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn, cast
+from xml.etree import ElementTree
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 COMMERCIAL_PREFLIGHT_SCRIPT = (
@@ -23,18 +27,98 @@ COMMERCIAL_RECONCILIATION_SCRIPT = (
 OOXML_CELL_PATCHER_SCRIPT = PROJECT_ROOT / "scripts" / "ooxml_cell_patcher.py"
 
 SHEET_NAME = "Счёт-КП шаблон"
+STYLES_PART = "xl/styles.xml"
 CERTIFIED_CAPACITY = 100
 ITEM_START_ROW = 17
 ITEM_END_ROW = 116
+TOTAL_ROW = 117
+AMOUNT_WORDS_ROW = 119
+NUMBER_FORMAT_ID = "3"
+NUMBER_FORMAT_CODE = "#,##0"
 BASE_ITEM_ROW_HEIGHT = 24
 ITEM_ROW_VISUAL_LINE_HEIGHT = 15
 ITEM_ROW_VERTICAL_PADDING = 6
 MAX_ITEM_ROW_HEIGHT = 360
+CELL_STYLE_RE = re.compile(rb'\s+s=(["\'])(?:(?!\1).)*\1')
+COUNT_ATTR_RE = re.compile(rb'\s+count=(["\'])[0-9]+\1')
+CELL_XFS_CONTAINER_RE = re.compile(
+    rb"<(?P<prefix>(?:[A-Za-z_][A-Za-z0-9_.-]*:)?)cellXfs\b"
+    rb"(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=prefix)cellXfs\s*>",
+    re.DOTALL,
+)
 ROW_HEIGHT_TEXT_WIDTHS = {
     "name": 28,
     "instruments_and_devices": 35,
     "cabinet_type_dimensions_material": 24,
 }
+ONES_MASCULINE = (
+    "",
+    "один",
+    "два",
+    "три",
+    "четыре",
+    "пять",
+    "шесть",
+    "семь",
+    "восемь",
+    "девять",
+)
+ONES_FEMININE = (
+    "",
+    "одна",
+    "две",
+    "три",
+    "четыре",
+    "пять",
+    "шесть",
+    "семь",
+    "восемь",
+    "девять",
+)
+TEENS = (
+    "десять",
+    "одиннадцать",
+    "двенадцать",
+    "тринадцать",
+    "четырнадцать",
+    "пятнадцать",
+    "шестнадцать",
+    "семнадцать",
+    "восемнадцать",
+    "девятнадцать",
+)
+TENS = (
+    "",
+    "",
+    "двадцать",
+    "тридцать",
+    "сорок",
+    "пятьдесят",
+    "шестьдесят",
+    "семьдесят",
+    "восемьдесят",
+    "девяносто",
+)
+HUNDREDS = (
+    "",
+    "сто",
+    "двести",
+    "триста",
+    "четыреста",
+    "пятьсот",
+    "шестьсот",
+    "семьсот",
+    "восемьсот",
+    "девятьсот",
+)
+SCALE_FORMS = (
+    ("", "", "", False),
+    ("тысяча", "тысячи", "тысяч", True),
+    ("миллион", "миллиона", "миллионов", False),
+    ("миллиард", "миллиарда", "миллиардов", False),
+    ("триллион", "триллиона", "триллионов", False),
+    ("квадриллион", "квадриллиона", "квадриллионов", False),
+)
 PASS_NEXT = (
     "retain as an internal draft only; manual Igor check and separate Human "
     "Approval are required"
@@ -59,6 +143,7 @@ class CommercialWriterResult:
             "capacity100 profile": "fail",
             "output path": "fail",
             "candidate generation": "fail",
+            "presentation formatting": "fail",
             "commercial reconciliation": "fail",
             "atomic publish": "fail",
         }
@@ -105,6 +190,14 @@ ooxml_cell_patcher = cast(
 )
 OoxmlCellPatcherError = ooxml_cell_patcher.OoxmlCellPatcherError
 patch_existing_cells = ooxml_cell_patcher.patch_existing_cells
+archive_bytes = ooxml_cell_patcher.archive_bytes
+cell_ranges = ooxml_cell_patcher.cell_ranges
+ensure_non_overlapping_replacements = (
+    ooxml_cell_patcher.ensure_non_overlapping_replacements
+)
+find_markup_end = ooxml_cell_patcher.find_markup_end
+worksheet_part_for_sheet = ooxml_cell_patcher.worksheet_part_for_sheet
+SPREADSHEET_NS = ooxml_cell_patcher.SPREADSHEET_NS
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -172,6 +265,74 @@ def load_commercial_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def calculate_grand_total(rows: Sequence[Mapping[str, str]]) -> int:
+    try:
+        return sum(int(row["quantity"]) * int(row["unit_price_kzt"]) for row in rows)
+    except KeyError, TypeError, ValueError:
+        fail("validated commercial values could not be calculated safely")
+
+
+def scale_form(value: int, forms: Sequence[str]) -> str:
+    last_two = value % 100
+    if 11 <= last_two <= 14:
+        return forms[2]
+    last_digit = value % 10
+    if last_digit == 1:
+        return forms[0]
+    if 2 <= last_digit <= 4:
+        return forms[1]
+    return forms[2]
+
+
+def triad_words(value: int, feminine: bool) -> list[str]:
+    words: list[str] = []
+    hundreds = value // 100
+    remainder = value % 100
+    if hundreds:
+        words.append(HUNDREDS[hundreds])
+    if 10 <= remainder <= 19:
+        words.append(TEENS[remainder - 10])
+        return words
+    tens = remainder // 10
+    ones = remainder % 10
+    if tens:
+        words.append(TENS[tens])
+    if ones:
+        words.append((ONES_FEMININE if feminine else ONES_MASCULINE)[ones])
+    return words
+
+
+def integer_to_russian_words(value: int) -> str:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        fail("grand total must be a non-negative integer")
+    if value == 0:
+        return "ноль"
+
+    triads: list[int] = []
+    remaining = value
+    while remaining:
+        triads.append(remaining % 1000)
+        remaining //= 1000
+    if len(triads) > len(SCALE_FORMS):
+        fail("grand total exceeds the supported Russian wording range")
+
+    words: list[str] = []
+    for scale_index in range(len(triads) - 1, -1, -1):
+        triad = triads[scale_index]
+        if triad == 0:
+            continue
+        singular, paucal, plural, feminine = SCALE_FORMS[scale_index]
+        words.extend(triad_words(triad, feminine))
+        if scale_index:
+            words.append(scale_form(triad, (singular, paucal, plural)))
+    return " ".join(words)
+
+
+def amount_words_text(grand_total: int) -> str:
+    words = integer_to_russian_words(grand_total)
+    return f"Всего прописью: {words} тенге 00 тиын"
+
+
 def visual_line_count(value: str, width: int) -> int:
     return sum(max(1, (len(line) + width - 1) // width) for line in value.split("\n"))
 
@@ -191,8 +352,11 @@ def estimate_item_row_height(row: Mapping[str, str]) -> int:
 
 def build_cell_updates(
     rows: Sequence[Mapping[str, str]],
+    amount_text: str,
 ) -> dict[str, str | int | None]:
-    updates: dict[str, str | int | None] = {}
+    updates: dict[str, str | int | None] = {
+        f"C{AMOUNT_WORDS_ROW}": amount_text,
+    }
     for offset, item in enumerate(rows):
         excel_row = ITEM_START_ROW + offset
         updates[f"C{excel_row}"] = item["name"]
@@ -237,18 +401,236 @@ def generate_candidate(
     template: Path,
     candidate: Path,
     rows: Sequence[Mapping[str, str]],
+    amount_text: str,
 ) -> None:
     try:
         patch_existing_cells(
             template=template,
             output=candidate,
             sheet_name=SHEET_NAME,
-            updates=build_cell_updates(rows),
+            updates=build_cell_updates(rows, amount_text),
             row_hidden_updates=build_row_hidden_updates(rows),
             row_height_updates=build_row_height_updates(rows),
         )
     except OoxmlCellPatcherError as error:
         fail(f"candidate generation failed: {error}")
+
+
+def number_format_coordinates() -> tuple[str, ...]:
+    return tuple(
+        [
+            *(f"H{row}" for row in range(ITEM_START_ROW, ITEM_END_ROW + 1)),
+            *(f"I{row}" for row in range(ITEM_START_ROW, ITEM_END_ROW + 1)),
+            f"I{TOTAL_ROW}",
+        ]
+    )
+
+
+def cell_style_id(cell_xml: bytes, coordinate: str) -> int:
+    try:
+        cell = ElementTree.fromstring(cell_xml)
+        style_id = int(cell.get("s", "0"))
+    except ElementTree.ParseError, ValueError:
+        fail(f"presentation style could not be read for {coordinate}")
+    if style_id < 0:
+        fail(f"presentation style is invalid for {coordinate}")
+    return style_id
+
+
+def style_cell_xml(cell_xml: bytes, style_id: int) -> bytes:
+    start_tag_end = find_markup_end(cell_xml, 0)
+    start_tag = cell_xml[:start_tag_end]
+    replacement = f' s="{style_id}"'.encode("ascii")
+    if CELL_STYLE_RE.search(start_tag):
+        styled_start_tag = CELL_STYLE_RE.sub(replacement, start_tag, count=1)
+    else:
+        closing = b"/>" if start_tag.endswith(b"/>") else b">"
+        styled_start_tag = start_tag[: -len(closing)] + replacement + closing
+    return styled_start_tag + cell_xml[start_tag_end:]
+
+
+def styles_with_number_format(
+    styles_xml: bytes,
+    base_style_ids: set[int],
+) -> tuple[bytes, dict[int, int]]:
+    try:
+        root = ElementTree.fromstring(styles_xml)
+    except ElementTree.ParseError:
+        fail("presentation styles XML is invalid")
+    cell_xfs = root.find(f"{{{SPREADSHEET_NS}}}cellXfs")
+    if cell_xfs is None:
+        fail("presentation styles cellXfs element is missing")
+    xfs = list(cell_xfs.findall(f"{{{SPREADSHEET_NS}}}xf"))
+    if cell_xfs.get("count") != str(len(xfs)):
+        fail("presentation styles count is inconsistent")
+
+    style_map: dict[int, int] = {}
+    cloned_xfs: list[bytes] = []
+    next_style_id = len(xfs)
+    ElementTree.register_namespace("", SPREADSHEET_NS)
+    for base_style_id in sorted(base_style_ids):
+        if base_style_id >= len(xfs):
+            fail("presentation source style is out of range")
+        base_xf = xfs[base_style_id]
+        if base_xf.get("numFmtId") == NUMBER_FORMAT_ID:
+            style_map[base_style_id] = base_style_id
+            continue
+        formatted_xf = copy.deepcopy(base_xf)
+        formatted_xf.set("numFmtId", NUMBER_FORMAT_ID)
+        formatted_xf.set("applyNumberFormat", "1")
+        cloned_xfs.append(ElementTree.tostring(formatted_xf, encoding="utf-8"))
+        style_map[base_style_id] = next_style_id
+        next_style_id += 1
+
+    if not cloned_xfs:
+        return styles_xml, style_map
+
+    container = CELL_XFS_CONTAINER_RE.search(styles_xml)
+    if container is None:
+        fail("presentation styles cellXfs bytes are unsupported")
+    start_tag_end = styles_xml.find(b">", container.start()) + 1
+    if start_tag_end <= 0 or start_tag_end > container.end():
+        fail("presentation styles cellXfs start tag is invalid")
+    start_tag = styles_xml[container.start() : start_tag_end]
+    if not COUNT_ATTR_RE.search(start_tag):
+        fail("presentation styles count attribute is missing")
+    styled_start_tag = COUNT_ATTR_RE.sub(
+        f' count="{next_style_id}"'.encode("ascii"),
+        start_tag,
+        count=1,
+    )
+    body_end = container.end("body")
+    return (
+        styles_xml[: container.start()]
+        + styled_start_tag
+        + styles_xml[start_tag_end:body_end]
+        + b"".join(cloned_xfs)
+        + styles_xml[body_end:]
+    ), style_map
+
+
+def worksheet_with_number_formats(
+    worksheet_xml: bytes,
+    styles_xml: bytes,
+) -> tuple[bytes, bytes]:
+    ranges = cell_ranges(worksheet_xml)
+    selected: dict[str, Any] = {}
+    base_style_ids: set[int] = set()
+    for coordinate in number_format_coordinates():
+        matches = ranges.get(coordinate, [])
+        if len(matches) != 1:
+            fail(f"presentation target cell is missing or duplicated: {coordinate}")
+        cell_range = matches[0]
+        base_style_id = cell_style_id(cell_range.xml, coordinate)
+        selected[coordinate] = (cell_range, base_style_id)
+        base_style_ids.add(base_style_id)
+
+    styled_styles_xml, style_map = styles_with_number_format(
+        styles_xml,
+        base_style_ids,
+    )
+    replacements: list[tuple[int, int, bytes]] = []
+    for cell_range, base_style_id in selected.values():
+        replacements.append(
+            (
+                cell_range.start,
+                cell_range.end,
+                style_cell_xml(cell_range.xml, style_map[base_style_id]),
+            )
+        )
+    ensure_non_overlapping_replacements(replacements)
+    styled_worksheet = bytearray(worksheet_xml)
+    for start, end, replacement in sorted(replacements, reverse=True):
+        styled_worksheet[start:end] = replacement
+    return bytes(styled_worksheet), styled_styles_xml
+
+
+def verify_number_formats(worksheet_xml: bytes, styles_xml: bytes) -> None:
+    try:
+        styles_root = ElementTree.fromstring(styles_xml)
+    except ElementTree.ParseError:
+        fail("formatted styles XML is invalid")
+    cell_xfs = styles_root.find(f"{{{SPREADSHEET_NS}}}cellXfs")
+    if cell_xfs is None:
+        fail("formatted styles cellXfs element is missing")
+    xfs = list(cell_xfs.findall(f"{{{SPREADSHEET_NS}}}xf"))
+    ranges = cell_ranges(worksheet_xml)
+    for coordinate in number_format_coordinates():
+        matches = ranges.get(coordinate, [])
+        if len(matches) != 1:
+            fail(f"formatted target cell is missing or duplicated: {coordinate}")
+        style_id = cell_style_id(matches[0].xml, coordinate)
+        if style_id >= len(xfs) or xfs[style_id].get("numFmtId") != NUMBER_FORMAT_ID:
+            fail(f"number format was not applied to {coordinate}")
+
+
+def write_presentation_package(
+    parts: Mapping[str, bytes],
+    worksheet_part: str,
+    worksheet_xml: bytes,
+    styles_xml: bytes,
+    output: Path,
+) -> None:
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, content in parts.items():
+            if name == worksheet_part:
+                content = worksheet_xml
+            elif name == STYLES_PART:
+                content = styles_xml
+            archive.writestr(name, content)
+
+
+def verify_presentation_package(
+    before_parts: Mapping[str, bytes],
+    output: Path,
+    worksheet_part: str,
+) -> None:
+    after_parts = archive_bytes(output)
+    if set(after_parts) != set(before_parts):
+        fail("presentation XLSX parts differ from the candidate")
+    allowed_changes = {worksheet_part, STYLES_PART}
+    for name, content in before_parts.items():
+        if name not in allowed_changes and after_parts[name] != content:
+            fail(f"presentation changed an unexpected XLSX part: {name}")
+    verify_number_formats(
+        after_parts[worksheet_part],
+        after_parts[STYLES_PART],
+    )
+
+
+def apply_number_formats(candidate: Path) -> None:
+    temporary_output = candidate.with_name(
+        f".{candidate.stem}.{uuid.uuid4().hex}.presentation.tmp.xlsx"
+    )
+    try:
+        try:
+            with zipfile.ZipFile(candidate) as archive:
+                worksheet_part = worksheet_part_for_sheet(archive, SHEET_NAME)
+        except zipfile.BadZipFile as error:
+            fail(f"presentation candidate is not a valid XLSX package: {error}")
+        parts = archive_bytes(candidate)
+        if worksheet_part not in parts or STYLES_PART not in parts:
+            fail("presentation candidate is missing required XLSX parts")
+        worksheet_xml, styles_xml = worksheet_with_number_formats(
+            parts[worksheet_part],
+            parts[STYLES_PART],
+        )
+        write_presentation_package(
+            parts,
+            worksheet_part,
+            worksheet_xml,
+            styles_xml,
+            temporary_output,
+        )
+        verify_presentation_package(parts, temporary_output, worksheet_part)
+        temporary_output.replace(candidate)
+    except OoxmlCellPatcherError as error:
+        fail(f"presentation formatting failed: {error}")
+    except OSError:
+        fail("presentation formatting could not update the candidate safely")
+    finally:
+        if temporary_output.exists():
+            temporary_output.unlink()
 
 
 def publish_candidate(candidate: Path, output: Path) -> None:
@@ -302,6 +684,8 @@ def run_commercial_writer(
         result.checks["capacity100 profile"] = "pass"
         result.checks["output path"] = "pass"
         rows = load_commercial_rows(csv_path)
+        grand_total = calculate_grand_total(rows)
+        amount_text = amount_words_text(grand_total)
     except CommercialWriterError as error:
         result.failures.append(str(error))
         return result
@@ -309,8 +693,11 @@ def run_commercial_writer(
     candidate = candidate_path_for(output_path)
     published = False
     try:
-        generate_candidate(template_path, candidate, rows)
+        generate_candidate(template_path, candidate, rows, amount_text)
         result.checks["candidate generation"] = "pass"
+
+        apply_number_formats(candidate)
+        result.checks["presentation formatting"] = "pass"
 
         reconciliation_result = commercial_reconciliation.reconcile(
             csv_path,
