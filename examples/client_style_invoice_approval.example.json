@@ -1,0 +1,20 @@
+{
+  "approval_id": "PLACEHOLDER-APPROVAL-ID",
+  "approved_by": "PLACEHOLDER-APPROVER",
+  "approved_at": "2099-01-01T00:00:00+00:00",
+  "commercial_csv_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "internal_draft_xlsx_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "invoice_number": "PLACEHOLDER-INVOICE-NUMBER",
+  "invoice_date": "PLACEHOLDER-INVOICE-DATE",
+  "payer_name": "PLACEHOLDER-PAYER-NAME",
+  "object_name": null,
+  "vat_text_approved": "PLACEHOLDER-APPROVED-VAT-TEXT",
+  "payment_terms_approved": "PLACEHOLDER-APPROVED-PAYMENT-TERMS",
+  "delivery_terms_approved": "PLACEHOLDER-APPROVED-DELIVERY-TERMS",
+  "validity_terms_approved": "PLACEHOLDER-APPROVED-VALIDITY-TERMS",
+  "return_terms_approved": "PLACEHOLDER-APPROVED-RETURN-TERMS",
+  "signer_name": "PLACEHOLDER-SIGNER-NAME",
+  "signer_title": "PLACEHOLDER-SIGNER-TITLE",
+  "approval_note": "PLACEHOLDER-APPROVAL-NOTE"
+}
