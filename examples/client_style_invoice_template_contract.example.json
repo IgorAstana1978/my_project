@@ -1,0 +1,48 @@
+{
+  "contract_id": "PLACEHOLDER-TEMPLATE-CONTRACT-ID",
+  "template_name": "PLACEHOLDER-CLIENT-STYLE-TEMPLATE",
+  "template_version": "PLACEHOLDER-VERSION",
+  "expected_sheet_name": "Лист1",
+  "template_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "allowed_extra_sheets": [],
+  "print": {
+    "orientation": "portrait",
+    "paper_size": "9",
+    "print_area_required": true
+  },
+  "layout": {
+    "invoice_number_cell": "C9",
+    "invoice_date_cell": "E9",
+    "payer_cell": "C10",
+    "object_cell": null,
+    "table_header_row": 15,
+    "first_item_row": 16,
+    "item_columns": {
+      "index": "B",
+      "name": "C",
+      "unit": "D",
+      "quantity": "E",
+      "instruments_and_devices": "F",
+      "cabinet": "G",
+      "unit_price": "H",
+      "line_total": "I"
+    },
+    "amount_words_cell": "C19",
+    "signer_name_cell": "F29",
+    "signer_title_cell": "C29"
+  },
+  "required_fixed_labels": [
+    {
+      "cell": "B15",
+      "expected_text_contains": "№"
+    },
+    {
+      "cell": "C15",
+      "expected_text_contains": "Наименование"
+    },
+    {
+      "cell": "I15",
+      "expected_text_contains": "Сумма"
+    }
+  ]
+}
