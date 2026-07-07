@@ -1,0 +1,112 @@
+{
+  "schema_version": "preliminary_composition_draft.v0.1",
+  "draft_id": "PRELIM-COMPOSITION-EXAMPLE-001",
+  "created_by": "synthetic-ai-draft-example",
+  "created_at": "2099-01-01T12:00:00+05:00",
+  "source": {
+    "source_type": "text_request",
+    "source_summary": "Synthetic request for one preliminary switchboard composition example.",
+    "raw_input_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "safety": {
+    "status": "preliminary_only",
+    "confirmed_by_igor": false,
+    "price_execution_authorized": false,
+    "commercial_csv_authorized": false,
+    "client_style_export_authorized": false,
+    "sending_authorized": false,
+    "production_authorized": false
+  },
+  "items": [
+    {
+      "item_id": "ITEM-001",
+      "product_name_guess": "РУ-АВР / ЩРН-24",
+      "product_type_guess": "switchboard",
+      "quantity_guess": 1,
+      "cabinet_guess": {
+        "code_guess": "CAB-KRN-24",
+        "label_guess": "КРН-24",
+        "confidence": 0.64,
+        "evidence": [
+          "Synthetic source mentions a 24-module enclosure candidate."
+        ],
+        "red_flags": [
+          "Cabinet code is a preliminary guess and must be checked."
+        ]
+      },
+      "components": [
+        {
+          "component_id": "COMP-001",
+          "component_code_guess": "EKF-VA47-29-1P",
+          "component_label_guess": "EKF VA47-29 1P automatic breaker",
+          "quantity_guess": 4,
+          "install_type_guess": "modular_1p",
+          "confidence": 0.72,
+          "evidence": [
+            "Synthetic source lists four single-pole breaker positions."
+          ],
+          "red_flags": [],
+          "assumptions": [
+            "Exact current rating is not confirmed in this synthetic example."
+          ],
+          "requires_igor_confirmation": true
+        },
+        {
+          "component_id": "COMP-002",
+          "component_code_guess": "EKF-VA47-29-3P",
+          "component_label_guess": "EKF VA47-29 3P automatic breaker",
+          "quantity_guess": 3,
+          "install_type_guess": "modular_3p",
+          "confidence": 0.71,
+          "evidence": [
+            "Synthetic source lists three three-pole breaker positions."
+          ],
+          "red_flags": [],
+          "assumptions": [
+            "Exact current rating is not confirmed in this synthetic example."
+          ],
+          "requires_igor_confirmation": true
+        },
+        {
+          "component_id": "COMP-003",
+          "component_code_guess": "EKF-RN-47",
+          "component_label_guess": "EKF RN-47 voltage relay",
+          "quantity_guess": 1,
+          "install_type_guess": "manual_review_required",
+          "confidence": 0.58,
+          "evidence": [
+            "Synthetic source mentions one relay-like control component."
+          ],
+          "red_flags": [
+            "Install type requires manual review before any calculator step."
+          ],
+          "assumptions": [
+            "Relay model is a preliminary label guess only."
+          ],
+          "requires_igor_confirmation": true
+        }
+      ],
+      "confidence": 0.66,
+      "evidence": [
+        "Synthetic request describes one preliminary switchboard candidate."
+      ],
+      "red_flags": [
+        "No composition, cabinet, component ratings, pricing or export is approved."
+      ],
+      "assumptions": [
+        "This example is documentation-only and not based on a real customer."
+      ],
+      "requires_igor_confirmation": true
+    }
+  ],
+  "overall_confidence": 0.63,
+  "red_flags": [
+    "Preliminary draft only; Igor confirmation is required before price calculation."
+  ],
+  "assumptions": [
+    "Synthetic example data is intentionally incomplete."
+  ],
+  "next_required_human_actions": [
+    "Igor reviews and confirms or rejects the preliminary composition before any calculator or commercial CSV step."
+  ]
+}
