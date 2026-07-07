@@ -1,0 +1,64 @@
+{
+  "schema_version": "confirmed_composition_artifact.v0.1",
+  "confirmation_id": "CONFIRMED-COMPOSITION-EXAMPLE-001",
+  "confirmed_by": "Igor",
+  "confirmed_at": "2099-01-01T12:30:00+05:00",
+  "source_links": {
+    "raw_input_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "preliminary_draft_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "review_card_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "safety": {
+    "status": "confirmed_composition_only",
+    "composition_confirmed_by_igor": true,
+    "calculator_input_draft_allowed": true,
+    "price_approved_by_igor": false,
+    "commercial_csv_authorized": false,
+    "client_style_export_authorized": false,
+    "sending_authorized": false,
+    "production_authorized": false
+  },
+  "items": [
+    {
+      "item_id": "ITEM-001",
+      "product_name": "РУ-АВР / ЩРН-24",
+      "product_type": "switchboard",
+      "quantity": 1,
+      "cabinet": {
+        "cabinet_code": "CAB-KRN-24",
+        "cabinet_label": "КРН-24"
+      },
+      "components": [
+        {
+          "component_id": "COMP-001",
+          "component_code": "EKF-VA47-29-1P",
+          "component_label": "EKF VA47-29 1P automatic breaker",
+          "quantity": 4,
+          "install_type": "modular_1p"
+        },
+        {
+          "component_id": "COMP-002",
+          "component_code": "EKF-VA47-29-3P",
+          "component_label": "EKF VA47-29 3P automatic breaker",
+          "quantity": 3,
+          "install_type": "modular_3p"
+        },
+        {
+          "component_id": "COMP-003",
+          "component_code": "EKF-RN-47",
+          "component_label": "EKF RN-47 voltage relay",
+          "quantity": 1,
+          "install_type": "modular_1p"
+        }
+      ],
+      "confirmation_note": "Synthetic example composition confirmed for documentation-only contract testing."
+    }
+  ],
+  "red_flags": [
+    "Synthetic example only; no price, commercial CSV, КП, sending or production is approved."
+  ],
+  "notes": [
+    "Documentation-only synthetic confirmed composition artifact."
+  ],
+  "next_allowed_step": "build_price_calculator_input_draft"
+}
