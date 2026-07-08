@@ -39,7 +39,7 @@ CALCULATOR_COLUMNS = [
     "component_qty",
     "install_type",
 ]
-PRICE_WORKBOOK = Path("C:/outside-git/price-workbook.xlsx")
+PRICE_WORKBOOK = Path("/outside-git/price-workbook.xlsx").resolve(strict=False)
 
 
 def load_runner_module() -> ModuleType:
