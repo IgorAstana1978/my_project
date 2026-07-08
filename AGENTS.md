@@ -66,3 +66,42 @@
 1. `git status --short`;
 2. `git diff` или `git diff --cached`;
 3. результат тестов и проверок, если они относятся к задаче.
+
+## Ponytail-style минимализм, только instruction-only
+
+Используй Ponytail-style подход только как локальное правило поведения, без установки Ponytail plugin, hooks или scripts.
+
+Разрешённый режим:
+— lite/full как instruction-only guidance;
+— ultra не использовать по умолчанию;
+— если есть конфликт между минимализмом и безопасностью/проверками/корректностью данных, безопасность и корректность данных всегда важнее.
+
+Практический смысл:
+— меньше лишнего кода;
+— меньше новых зависимостей;
+— меньше новых файлов;
+— не усложнять архитектуру без явной пользы;
+— переиспользовать существующий код, tests, scripts, docs и workflow helpers;
+— предпочитать маленький понятный diff вместо speculative future-proofing.
+
+Минимализм не может удалять или ослаблять:
+— security checks;
+— Human Approval gates;
+— tests;
+— fail-closed validation;
+— input/trust-boundary validation;
+— error handling против потери или искажения данных;
+— audit logging / traceability;
+— production controls;
+— Excel/КП safeguards;
+— проверки финансовых, документных и клиентских данных;
+— проверки формул, реквизитов, сумм, валют, дат, шаблонов и generated outputs.
+
+Запрещено ради “упрощения”:
+— удалять тесты или снижать 100% coverage gate;
+— обходить `pytest`, `ruff`, `black --check`, `mypy` и finish checks;
+— менять оригиналы Excel-файлов;
+— добавлять `.xls`, `.xlsx`, generated `.csv`, screenshots, client или temp files в Git;
+— снимать manual Igor check / Human Approval перед отправкой клиенту;
+— добавлять зависимости ради красоты или абстракций;
+— устанавливать Ponytail plugin, доверять hooks или запускать Ponytail scripts.
