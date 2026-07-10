@@ -30,7 +30,9 @@ ROOT_FIELDS = (
     "assumptions",
     "next_required_human_actions",
 )
+ROOT_OPTIONAL_FIELDS = ("extraction_summary",)
 SOURCE_FIELDS = ("source_type", "source_summary", "raw_input_sha256")
+SOURCE_OPTIONAL_FIELDS = ("source_files",)
 SAFETY_FIELDS = (
     "status",
     "confirmed_by_igor",
@@ -53,6 +55,14 @@ ITEM_FIELDS = (
     "assumptions",
     "requires_igor_confirmation",
 )
+ITEM_OPTIONAL_FIELDS = (
+    "normalized_designation",
+    "provenance",
+    "conflicts",
+    "missing_fields",
+    "questions_for_igor",
+    "review_status",
+)
 CABINET_FIELDS = (
     "code_guess",
     "label_guess",
@@ -71,6 +81,74 @@ COMPONENT_FIELDS = (
     "red_flags",
     "assumptions",
     "requires_igor_confirmation",
+)
+COMPONENT_OPTIONAL_FIELDS = (
+    "model_guess",
+    "brand_guess",
+    "rating_guess",
+    "unit_guess",
+    "note_guess",
+    "provenance",
+    "conflicts",
+    "missing_fields",
+    "review_status",
+)
+PROVENANCE_REQUIRED_FIELDS = (
+    "source_file",
+    "source_type",
+    "locator",
+    "raw_text",
+    "confidence",
+    "reason",
+)
+PROVENANCE_OPTIONAL_FIELDS = (
+    "page",
+    "block_coordinates",
+    "sheet",
+    "row",
+    "cell_range",
+)
+CONFLICT_FIELDS = ("conflict_id", "type", "field", "message", "sources")
+SOURCE_FILE_FIELDS = (
+    "file_name",
+    "source_type",
+    "sha256",
+    "status",
+    "pages",
+    "sheets",
+)
+PDF_PAGE_FIELDS = (
+    "page",
+    "status",
+    "text_characters",
+    "block_count",
+    "block_order_suspect",
+)
+WORKBOOK_SHEET_FIELDS = ("sheet", "rows_checked")
+PDF_PAGE_STATUSES = {
+    "text_available",
+    "low_text_confidence",
+    "image_only",
+    "unreadable",
+    "encrypted_or_protected",
+    "corrupt",
+}
+EXTRACTION_SUMMARY_FIELDS = (
+    "files_processed",
+    "file_types",
+    "pdf_pages_checked",
+    "pdf_pages_extractable",
+    "pdf_pages_manual_review",
+    "workbook_sheets_processed",
+    "switchboards_pdf",
+    "switchboards_workbook",
+    "switchboards_matched",
+    "switchboards_unmatched",
+    "composition_rows_extracted",
+    "rows_merged_without_conflict",
+    "conflicts_found",
+    "review_rows",
+    "ready_for_preliminary_workflow",
 )
 SOURCE_TYPES = {
     "text_request",
@@ -280,6 +358,219 @@ def require_confidence(
     return True
 
 
+def require_non_negative_integer(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+) -> bool:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        add_red_flag(result, f"field must be a non-negative integer: {path}")
+        return False
+    return True
+
+
+def validate_provenance_list(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    allow_empty: bool = False,
+) -> bool:
+    entries = require_list(value, path, result)
+    if entries is None:
+        return False
+    if not entries and not allow_empty:
+        add_red_flag(result, f"field must be a non-empty list: {path}")
+        return False
+    valid = True
+    allowed = PROVENANCE_REQUIRED_FIELDS + PROVENANCE_OPTIONAL_FIELDS
+    for index, entry in enumerate(entries):
+        entry_path = f"{path}[{index}]"
+        provenance = require_mapping(entry, entry_path, result)
+        if provenance is None:
+            valid = False
+            continue
+        if not require_fields(
+            provenance, PROVENANCE_REQUIRED_FIELDS, entry_path, result
+        ):
+            valid = False
+        if not reject_unknown_fields(provenance, allowed, entry_path, result):
+            valid = False
+        for field_name in (
+            "source_file",
+            "source_type",
+            "locator",
+            "raw_text",
+            "reason",
+        ):
+            if field_name in provenance and not require_string(
+                provenance[field_name], field_path(entry_path, field_name), result
+            ):
+                valid = False
+        if provenance.get("source_type") not in {"pdf", "workbook"}:
+            valid = False
+            add_red_flag(result, f"source_type is not allowed: {entry_path}")
+        if "confidence" in provenance and not require_confidence(
+            provenance["confidence"], field_path(entry_path, "confidence"), result
+        ):
+            valid = False
+        for field_name in ("page", "row"):
+            if field_name in provenance and not require_positive_integer(
+                provenance[field_name], field_path(entry_path, field_name), result
+            ):
+                valid = False
+        for field_name in ("block_coordinates", "sheet", "cell_range"):
+            if field_name in provenance and not require_string(
+                provenance[field_name], field_path(entry_path, field_name), result
+            ):
+                valid = False
+    return valid
+
+
+def validate_conflict_list(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+) -> bool:
+    entries = require_list(value, path, result)
+    if entries is None:
+        return False
+    valid = True
+    for index, entry in enumerate(entries):
+        entry_path = f"{path}[{index}]"
+        conflict = require_mapping(entry, entry_path, result)
+        if conflict is None:
+            valid = False
+            continue
+        if not require_fields(conflict, CONFLICT_FIELDS, entry_path, result):
+            valid = False
+        if not reject_unknown_fields(conflict, CONFLICT_FIELDS, entry_path, result):
+            valid = False
+        for field_name in ("conflict_id", "type", "field", "message"):
+            if field_name in conflict and not require_string(
+                conflict[field_name], field_path(entry_path, field_name), result
+            ):
+                valid = False
+        if "sources" in conflict and not validate_provenance_list(
+            conflict["sources"], field_path(entry_path, "sources"), result
+        ):
+            valid = False
+    return valid
+
+
+def validate_source_files(value: Any, result: ValidationResult) -> bool:
+    files = require_list(value, "source.source_files", result)
+    if files is None:
+        return False
+    if not files:
+        add_red_flag(result, "source.source_files must be a non-empty list")
+        return False
+    valid = True
+    for index, entry in enumerate(files):
+        path = f"source.source_files[{index}]"
+        source_file = require_mapping(entry, path, result)
+        if source_file is None:
+            valid = False
+            continue
+        required = SOURCE_FILE_FIELDS[:4]
+        if not require_fields(source_file, required, path, result):
+            valid = False
+        if not reject_unknown_fields(source_file, SOURCE_FILE_FIELDS, path, result):
+            valid = False
+        for field_name in ("file_name", "source_type", "sha256", "status"):
+            if field_name in source_file and not require_string(
+                source_file[field_name], field_path(path, field_name), result
+            ):
+                valid = False
+        if source_file.get("source_type") not in {"pdf", "workbook"}:
+            valid = False
+            add_red_flag(result, f"source file type is not allowed: {path}")
+        sha256 = source_file.get("sha256")
+        if not isinstance(sha256, str) or HASH_RE.fullmatch(sha256) is None:
+            valid = False
+            add_red_flag(result, f"source file sha256 is invalid: {path}")
+        pages = source_file.get("pages")
+        if pages is not None:
+            page_list = require_list(pages, field_path(path, "pages"), result)
+            if page_list is None:
+                valid = False
+            else:
+                for page_index, page_entry in enumerate(page_list):
+                    page_path = f"{path}.pages[{page_index}]"
+                    page = require_mapping(page_entry, page_path, result)
+                    if page is None:
+                        valid = False
+                        continue
+                    if not require_fields(page, ("page", "status"), page_path, result):
+                        valid = False
+                    if not reject_unknown_fields(
+                        page, PDF_PAGE_FIELDS, page_path, result
+                    ):
+                        valid = False
+                    if page.get("status") not in PDF_PAGE_STATUSES:
+                        valid = False
+                        add_red_flag(
+                            result, f"PDF page status is not allowed: {page_path}"
+                        )
+        sheets = source_file.get("sheets")
+        if sheets is not None:
+            sheet_list = require_list(sheets, field_path(path, "sheets"), result)
+            if sheet_list is None:
+                valid = False
+            else:
+                for sheet_index, sheet_entry in enumerate(sheet_list):
+                    sheet_path = f"{path}.sheets[{sheet_index}]"
+                    sheet = require_mapping(sheet_entry, sheet_path, result)
+                    if sheet is None:
+                        valid = False
+                        continue
+                    if not require_fields(
+                        sheet, WORKBOOK_SHEET_FIELDS, sheet_path, result
+                    ):
+                        valid = False
+                    if not reject_unknown_fields(
+                        sheet, WORKBOOK_SHEET_FIELDS, sheet_path, result
+                    ):
+                        valid = False
+    return valid
+
+
+def validate_extraction_summary(value: Any, result: ValidationResult) -> bool:
+    summary = require_mapping(value, "extraction_summary", result)
+    if summary is None:
+        return False
+    valid = True
+    if not require_fields(
+        summary, EXTRACTION_SUMMARY_FIELDS, "extraction_summary", result
+    ):
+        valid = False
+    if not reject_unknown_fields(
+        summary, EXTRACTION_SUMMARY_FIELDS, "extraction_summary", result
+    ):
+        valid = False
+    for field_name in EXTRACTION_SUMMARY_FIELDS:
+        if field_name not in summary:
+            continue
+        value_at_field = summary[field_name]
+        if field_name == "file_types":
+            if not require_non_empty_string_list(
+                value_at_field, f"extraction_summary.{field_name}", result
+            ):
+                valid = False
+        elif field_name == "ready_for_preliminary_workflow":
+            if not isinstance(value_at_field, bool):
+                valid = False
+                add_red_flag(
+                    result,
+                    "extraction_summary.ready_for_preliminary_workflow must be boolean",
+                )
+        elif not require_non_negative_integer(
+            value_at_field, f"extraction_summary.{field_name}", result
+        ):
+            valid = False
+    return valid
+
+
 def find_forbidden_keys(
     value: Any,
     path: str,
@@ -333,7 +624,7 @@ def validate_schema_constants(
     valid = True
     if not require_fields(data, ROOT_FIELDS, "", result):
         valid = False
-    if not reject_unknown_fields(data, ROOT_FIELDS, "", result):
+    if not reject_unknown_fields(data, ROOT_FIELDS + ROOT_OPTIONAL_FIELDS, "", result):
         valid = False
     if data.get("schema_version") != SCHEMA_VERSION:
         valid = False
@@ -372,6 +663,10 @@ def validate_schema_constants(
         result,
     ):
         valid = False
+    if "extraction_summary" in data and not validate_extraction_summary(
+        data["extraction_summary"], result
+    ):
+        valid = False
     result.checks["schema constants"] = "pass" if valid else "fail"
 
 
@@ -383,7 +678,9 @@ def validate_source(data: Any, result: ValidationResult) -> None:
     valid = True
     if not require_fields(source, SOURCE_FIELDS, "source", result):
         valid = False
-    if not reject_unknown_fields(source, SOURCE_FIELDS, "source", result):
+    if not reject_unknown_fields(
+        source, SOURCE_FIELDS + SOURCE_OPTIONAL_FIELDS, "source", result
+    ):
         valid = False
 
     source_type = source.get("source_type")
@@ -407,6 +704,10 @@ def validate_source(data: Any, result: ValidationResult) -> None:
             result,
             "source.raw_input_sha256 must be 64 lowercase hex characters",
         )
+    if "source_files" in source and not validate_source_files(
+        source["source_files"], result
+    ):
+        valid = False
 
     result.checks["source"] = "pass" if valid else "fail"
 
@@ -475,7 +776,13 @@ def validate_cabinet(data: Any, path: str, result: ValidationResult) -> bool:
     return valid
 
 
-def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
+def validate_component(
+    data: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    allow_incomplete: bool = False,
+) -> bool:
     component = require_mapping(data, path, result)
     if component is None:
         return False
@@ -483,7 +790,9 @@ def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
     valid = True
     if not require_fields(component, COMPONENT_FIELDS, path, result):
         valid = False
-    if not reject_unknown_fields(component, COMPONENT_FIELDS, path, result):
+    if not reject_unknown_fields(
+        component, COMPONENT_FIELDS + COMPONENT_OPTIONAL_FIELDS, path, result
+    ):
         valid = False
     if "component_id" in component and not require_string(
         component["component_id"],
@@ -503,12 +812,22 @@ def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
         result,
     ):
         valid = False
-    if "quantity_guess" in component and not require_positive_number(
-        component["quantity_guess"],
-        field_path(path, "quantity_guess"),
-        result,
-    ):
-        valid = False
+    if "quantity_guess" in component:
+        quantity = component["quantity_guess"]
+        if quantity is None and allow_incomplete:
+            missing_fields = component.get("missing_fields", [])
+            if "quantity_guess" not in missing_fields:
+                valid = False
+                add_red_flag(
+                    result,
+                    f"null quantity must be declared missing: {path}.quantity_guess",
+                )
+        elif not require_positive_number(
+            quantity,
+            field_path(path, "quantity_guess"),
+            result,
+        ):
+            valid = False
 
     install_type = component.get("install_type_guess")
     if install_type is not None and install_type not in INSTALL_TYPES:
@@ -544,10 +863,46 @@ def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
             result,
             f"requires_igor_confirmation must be true: {path}",
         )
+    for field_name in (
+        "model_guess",
+        "brand_guess",
+        "rating_guess",
+        "unit_guess",
+        "note_guess",
+    ):
+        if field_name in component and not require_optional_string(
+            component[field_name], field_path(path, field_name), result
+        ):
+            valid = False
+    if "provenance" in component and not validate_provenance_list(
+        component["provenance"], field_path(path, "provenance"), result
+    ):
+        valid = False
+    if "conflicts" in component and not validate_conflict_list(
+        component["conflicts"], field_path(path, "conflicts"), result
+    ):
+        valid = False
+    for field_name in ("missing_fields",):
+        if field_name in component and not require_string_list(
+            component[field_name], field_path(path, field_name), result
+        ):
+            valid = False
+    if (
+        "review_status" in component
+        and component["review_status"] != "requires_igor_review"
+    ):
+        valid = False
+        add_red_flag(result, f"review_status must require Igor review: {path}")
     return valid
 
 
-def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
+def validate_item(
+    data: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    allow_incomplete: bool = False,
+) -> bool:
     item = require_mapping(data, path, result)
     if item is None:
         return False
@@ -555,7 +910,9 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
     valid = True
     if not require_fields(item, ITEM_FIELDS, path, result):
         valid = False
-    if not reject_unknown_fields(item, ITEM_FIELDS, path, result):
+    if not reject_unknown_fields(
+        item, ITEM_FIELDS + ITEM_OPTIONAL_FIELDS, path, result
+    ):
         valid = False
     for field_name in ("item_id", "product_name_guess", "product_type_guess"):
         if field_name in item and not require_string(
@@ -564,12 +921,22 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
             result,
         ):
             valid = False
-    if "quantity_guess" in item and not require_positive_integer(
-        item["quantity_guess"],
-        field_path(path, "quantity_guess"),
-        result,
-    ):
-        valid = False
+    if "quantity_guess" in item:
+        quantity = item["quantity_guess"]
+        if quantity is None and allow_incomplete:
+            missing_fields = item.get("missing_fields", [])
+            if "quantity_guess" not in missing_fields:
+                valid = False
+                add_red_flag(
+                    result,
+                    f"null quantity must be declared missing: {path}.quantity_guess",
+                )
+        elif not require_positive_integer(
+            quantity,
+            field_path(path, "quantity_guess"),
+            result,
+        ):
+            valid = False
     if "cabinet_guess" in item and not validate_cabinet(
         item["cabinet_guess"],
         field_path(path, "cabinet_guess"),
@@ -582,11 +949,18 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
     if component_list is None:
         valid = False
     elif not component_list:
-        valid = False
-        add_red_flag(result, f"field must be a non-empty list: {path}.components")
+        missing_fields = item.get("missing_fields", [])
+        if not allow_incomplete or "components" not in missing_fields:
+            valid = False
+            add_red_flag(result, f"field must be a non-empty list: {path}.components")
     else:
         for index, component in enumerate(component_list):
-            if not validate_component(component, f"{path}.components[{index}]", result):
+            if not validate_component(
+                component,
+                f"{path}.components[{index}]",
+                result,
+                allow_incomplete=allow_incomplete,
+            ):
                 valid = False
 
     if "confidence" in item and not require_confidence(
@@ -619,20 +993,55 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
             result,
             f"requires_igor_confirmation must be true: {path}",
         )
+    if "normalized_designation" in item and not require_string(
+        item["normalized_designation"],
+        field_path(path, "normalized_designation"),
+        result,
+    ):
+        valid = False
+    if "provenance" in item and not validate_provenance_list(
+        item["provenance"], field_path(path, "provenance"), result
+    ):
+        valid = False
+    if "conflicts" in item and not validate_conflict_list(
+        item["conflicts"], field_path(path, "conflicts"), result
+    ):
+        valid = False
+    for field_name in ("missing_fields", "questions_for_igor"):
+        if field_name in item and not require_string_list(
+            item[field_name], field_path(path, field_name), result
+        ):
+            valid = False
+    if "review_status" in item and item["review_status"] != "requires_igor_review":
+        valid = False
+        add_red_flag(result, f"review_status must require Igor review: {path}")
     return valid
 
 
-def validate_items(data: Any, result: ValidationResult) -> None:
+def validate_items(
+    data: Any,
+    result: ValidationResult,
+    *,
+    allow_incomplete: bool = False,
+) -> None:
     item_list = require_list(data, "items", result)
     if item_list is None:
         return
     if not item_list:
+        if allow_incomplete:
+            result.checks["items"] = "pass"
+            return
         add_red_flag(result, "items must be a non-empty list")
         return
 
     valid = True
     for index, item in enumerate(item_list):
-        if not validate_item(item, f"items[{index}]", result):
+        if not validate_item(
+            item,
+            f"items[{index}]",
+            result,
+            allow_incomplete=allow_incomplete,
+        ):
             valid = False
 
     result.checks["items"] = "pass" if valid else "fail"
@@ -655,7 +1064,11 @@ def validate_preliminary_composition_draft(input_json: Path) -> ValidationResult
     validate_schema_constants(data, result)
     validate_source(data.get("source"), result)
     validate_safety(data.get("safety"), result)
-    validate_items(data.get("items"), result)
+    validate_items(
+        data.get("items"),
+        result,
+        allow_incomplete="extraction_summary" in data,
+    )
     set_confidence_evidence_check(result)
 
     all_checks_pass = all(status == "pass" for status in result.checks.values())

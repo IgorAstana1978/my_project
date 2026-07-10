@@ -198,6 +198,17 @@ def table_cell(value: Any) -> str:
     return text(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
+def provenance_locators(value: Any) -> str:
+    values = []
+    for entry in as_list(value):
+        provenance = as_mapping(entry)
+        values.append(
+            f"{text(provenance.get('source_type'))}: "
+            f"{text(provenance.get('locator'))}"
+        )
+    return "; ".join(values) or "none"
+
+
 def component_row(component: Mapping[str, Any]) -> str:
     red_flags = "; ".join(text(flag) for flag in as_list(component.get("red_flags")))
     return " | ".join(
@@ -205,11 +216,17 @@ def component_row(component: Mapping[str, Any]) -> str:
             table_cell(component.get("component_id")),
             table_cell(component.get("component_code_guess")),
             table_cell(component.get("component_label_guess")),
+            table_cell(component.get("model_guess")),
+            table_cell(component.get("brand_guess")),
+            table_cell(component.get("rating_guess")),
+            table_cell(component.get("unit_guess")),
+            table_cell(component.get("note_guess")),
             table_cell(component.get("quantity_guess")),
             table_cell(component.get("install_type_guess")),
             table_cell(component.get("confidence")),
             table_cell(component.get("requires_igor_confirmation")),
             table_cell(red_flags or "none"),
+            table_cell(provenance_locators(component.get("provenance"))),
         )
     )
 
@@ -228,6 +245,10 @@ def append_item_section(lines: list[str], index: int, item: Mapping[str, Any]) -
             f"- item_id: {text(item.get('item_id'))}",
             f"- product_type_guess: {text(item.get('product_type_guess'))}",
             f"- quantity_guess: {text(item.get('quantity_guess'))}",
+            (
+                "- normalized_designation: "
+                f"{text(item.get('normalized_designation'))}"
+            ),
             f"- confidence: {text(item.get('confidence'))}",
             (
                 "- requires_igor_confirmation: "
@@ -253,11 +274,15 @@ def append_item_section(lines: list[str], index: int, item: Mapping[str, Any]) -
             "Components:",
             "",
             (
-                "component_id | component_code_guess | component_label_guess | qty | "
-                "install_type_guess | confidence | "
-                "requires_igor_confirmation | red_flags"
+                "component_id | component_code_guess | component_label_guess | "
+                "model_guess | brand_guess | rating_guess | unit_guess | note_guess | "
+                "qty | install_type_guess | confidence | "
+                "requires_igor_confirmation | red_flags | source locator"
             ),
-            "--- | --- | --- | --- | --- | --- | --- | ---",
+            (
+                "--- | --- | --- | --- | --- | --- | --- | --- | --- | --- | "
+                "--- | --- | --- | ---"
+            ),
         ]
     )
     lines.extend(component_row(component) for component in components)
@@ -290,6 +315,94 @@ def checklist_lines(items: Sequence[Mapping[str, Any]]) -> list[str]:
     if has_red_flags:
         lines.append("- [ ] Resolve item/component red flags.")
     lines.append("- [ ] Confirm whether this draft may proceed to price calculation.")
+    return lines
+
+
+def extraction_summary_lines(value: Any) -> list[str]:
+    summary = as_mapping(value)
+    if not summary:
+        return []
+    lines = ["Extraction summary:"]
+    lines.extend(f"- {key}: {text(summary[key])}" for key in summary)
+    lines.append("")
+    return lines
+
+
+def source_file_lines(value: Any) -> list[str]:
+    source_files = [as_mapping(entry) for entry in as_list(value)]
+    if not source_files:
+        return []
+    lines = ["Source files:"]
+    for source_file in source_files:
+        lines.append(
+            "- "
+            f"{text(source_file.get('file_name'))} "
+            f"({text(source_file.get('source_type'))}; "
+            f"status={text(source_file.get('status'))})"
+        )
+        for page in as_list(source_file.get("pages")):
+            page_map = as_mapping(page)
+            lines.append(
+                "  - PDF page "
+                f"{text(page_map.get('page'))}: {text(page_map.get('status'))}"
+            )
+        for sheet in as_list(source_file.get("sheets")):
+            sheet_map = as_mapping(sheet)
+            lines.append(
+                "  - workbook sheet "
+                f"{text(sheet_map.get('sheet'))}: "
+                f"rows checked={text(sheet_map.get('rows_checked'))}"
+            )
+    lines.append("")
+    return lines
+
+
+def review_required_lines(data: Mapping[str, Any]) -> list[str]:
+    values: list[str] = [text(value) for value in as_list(data.get("red_flags"))]
+    source = as_mapping(data.get("source"))
+    for source_file in as_list(source.get("source_files")):
+        source_map = as_mapping(source_file)
+        for page in as_list(source_map.get("pages")):
+            page_map = as_mapping(page)
+            status = text(page_map.get("status"))
+            if status != "text_available":
+                values.append(f"PDF page {text(page_map.get('page'))}: {status}")
+    for item in as_list(data.get("items")):
+        item_map = as_mapping(item)
+        values.extend(text(value) for value in as_list(item_map.get("red_flags")))
+        cabinet = as_mapping(item_map.get("cabinet_guess"))
+        values.extend(text(value) for value in as_list(cabinet.get("red_flags")))
+        values.extend(
+            text(as_mapping(value).get("message"))
+            for value in as_list(item_map.get("conflicts"))
+        )
+        values.extend(
+            f"{text(item_map.get('item_id'))}: missing {text(value)}"
+            for value in as_list(item_map.get("missing_fields"))
+        )
+        values.extend(
+            text(value) for value in as_list(item_map.get("questions_for_igor"))
+        )
+        for component in as_list(item_map.get("components")):
+            component_map = as_mapping(component)
+            values.extend(
+                text(value) for value in as_list(component_map.get("red_flags"))
+            )
+            values.extend(
+                text(as_mapping(value).get("message"))
+                for value in as_list(component_map.get("conflicts"))
+            )
+    unique_values = list(
+        dict.fromkeys(value for value in values if value not in {"", "null"})
+    )
+    lines = ["## Требует проверки Игоря", ""]
+    lines.extend(f"- {value}" for value in unique_values)
+    if not unique_values:
+        lines.append(
+            "- No extraction conflicts were found; composition approval is still "
+            "required."
+        )
+    lines.append("")
     return lines
 
 
@@ -328,9 +441,11 @@ def build_markdown(data: Mapping[str, Any]) -> str:
         f"- sending_authorized: {text(safety.get('sending_authorized'))}",
         f"- production_authorized: {text(safety.get('production_authorized'))}",
         "",
-        "Items:",
-        "",
     ]
+    lines.extend(extraction_summary_lines(data.get("extraction_summary")))
+    lines.extend(source_file_lines(source.get("source_files")))
+    lines.extend(review_required_lines(data))
+    lines.extend(["Items:", ""])
     for index, item in enumerate(item_list, start=1):
         append_item_section(lines, index, item)
 
