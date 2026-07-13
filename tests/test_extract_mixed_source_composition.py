@@ -740,3 +740,162 @@ def test_mixed_source_operator_smoke(tmp_path: Path) -> None:
     assert (output / operator.MANIFEST_NAME).is_file()
     assert (output / operator.DRAFT_NAME).is_file()
     assert (output / operator.REVIEW_NAME).is_file()
+
+
+def pdf_block(text: str, x: float, y: float, number: int) -> Any:
+    return extraction.PdfBlock(text, x, y, number)
+
+
+def test_schematic_qf_line_with_qf0_and_qf1_is_split() -> None:
+    segments = extraction.split_qf_segments_from_text(
+        "QF0ВН-323P 25ААВР QF1АВДТ32 2PC16/30мА розеточная сеть"
+    )
+
+    assert len(segments) == 2
+    assert segments[0].startswith("QF0")
+    assert segments[1].startswith("QF1")
+
+
+def test_schematic_title_without_space_finds_board_designations() -> None:
+    assert extraction.schematic_board_designations(
+        "Формат А4 Принципиальная схема группового щитаЩО6"
+    ) == ["ЩО6"]
+    assert extraction.schematic_board_designations(
+        "Формат А3 Принципиальная схема группового щитаНЩР17"
+    ) == ["НЩР17"]
+    assert extraction.schematic_board_designations(
+        "Формат А3 Принципиальная схема группового щитаАВР17"
+    ) == ["АВР17"]
+
+
+def test_source_reference_to_vru_is_classified_as_reference() -> None:
+    assert extraction.is_source_reference("от ВРУ 3А")
+    assert extraction.is_source_reference("питание от ВРУ 3А")
+    assert extraction.is_source_reference("существующая группа от ВРУ")
+    assert not extraction.is_source_reference(
+        "Принципиальная схема группового щитаВРУ1"
+    )
+
+
+def test_real_schematic_title_vru_is_not_globally_blocked() -> None:
+    blocks = [
+        pdf_block("Принципиальная схема группового щита", 10, 10, 1),
+        pdf_block("ВРУ", 20, 20, 2),
+        pdf_block("1", 30, 20, 3),
+    ]
+
+    titles = extraction.find_schematic_board_titles(
+        blocks, "Принципиальная схема группового щитаВРУ1"
+    )
+
+    assert [title.normalized for title in titles] == ["ВРУ-1"]
+
+
+def test_qf_apparatus_tokens_are_parsed_deterministically() -> None:
+    cases = {
+        "QF0 ВА88-32 3P 63А": ("ВА88-32", "3P", "63А"),
+        "QF0 ВН-32 3P 25А": ("ВН-32", "3P", "25А"),
+        "QF1 АВДТ32 2P C16/30мА": ("АВДТ32", "2P", "C16/30мА"),
+        "QF2 АВДТ32 2P C20/30мА": ("АВДТ32", "2P", "C20/30мА"),
+    }
+
+    for raw, expected in cases.items():
+        parsed = extraction.parse_qf_apparatus(raw)
+
+        assert (parsed["model"], parsed["poles"], parsed["rating"]) == expected
+
+
+def test_plan_without_schematic_evidence_does_not_create_schematic_title() -> None:
+    blocks = [
+        pdf_block("План розеточных сетей 2-го этажа", 10, 10, 1),
+        pdf_block("ЩО.6", 20, 20, 2),
+        pdf_block("АВР", 30, 20, 3),
+        pdf_block("НЩР", 40, 20, 4),
+    ]
+
+    assert extraction.find_schematic_board_titles(blocks, "") == []
+
+
+def test_multiple_schematic_zones_can_leave_qf_assignment_ambiguous() -> None:
+    titles = [
+        extraction.SchematicBoardTitle(
+            "ЩО6",
+            "ЩО-6",
+            "Принципиальная схема группового щита ЩО6",
+            pdf_block("", 0, 0, 1),
+        ),
+        extraction.SchematicBoardTitle(
+            "НЩР17",
+            "НЩР-17",
+            "Принципиальная схема группового щита НЩР17",
+            pdf_block("", 20, 0, 2),
+        ),
+    ]
+    segment = extraction.QfSegment(
+        "QF1",
+        "QF1 АВДТ32 2P C16/30мА",
+        pdf_block("", 10, 0, 3),
+    )
+
+    assert extraction.nearest_schematic_board(segment, titles) is None
+
+
+def test_qf_segments_from_blocks_reports_detected_segments() -> None:
+    segments = extraction.qf_segments_from_blocks(
+        [
+            pdf_block("QF0", 72, 690, 1),
+            pdf_block("ВА88-32", 72, 680, 2),
+            pdf_block("3P 63А", 72, 670, 3),
+            pdf_block("QF1", 172, 690, 4),
+            pdf_block("АВДТ32 2P", 172, 680, 5),
+            pdf_block("C16/30мА", 172, 670, 6),
+        ],
+        "",
+    )
+
+    assert [segment.designation for segment in segments] == ["QF0", "QF1"]
+
+
+def test_schematic_qf_component_key_keeps_same_model_qfs_distinct() -> None:
+    first = extraction.qf_component_from_segment(
+        extraction.QfSegment(
+            "QF1",
+            "QF1 АВДТ32 2P C16/30мА",
+            pdf_block("QF1", 1, 1, 1),
+        ),
+        "project.pdf",
+        1,
+        0.82,
+    )
+    second = extraction.qf_component_from_segment(
+        extraction.QfSegment(
+            "QF2",
+            "QF2 АВДТ32 2P C16/30мА",
+            pdf_block("QF2", 2, 1, 2),
+        ),
+        "project.pdf",
+        1,
+        0.82,
+    )
+
+    assert extraction.component_key(first) == "qf:QF1"
+    assert extraction.component_key(second) == "qf:QF2"
+
+
+def test_schematic_qf_provenance_keeps_page_raw_segment_and_locator() -> None:
+    component = extraction.qf_component_from_segment(
+        extraction.QfSegment(
+            "QF1",
+            "QF1 АВДТ32 2P C20/30мА",
+            pdf_block("QF1", 72, 690, 3),
+        ),
+        "project.pdf",
+        1,
+        0.82,
+    )
+
+    provenance = component.provenance[0].as_dict()
+
+    assert provenance["page"] == 1
+    assert "QF1" in provenance["raw_text"]
+    assert "qf=QF1" in provenance["locator"]

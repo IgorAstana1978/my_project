@@ -33,8 +33,8 @@ DASH_RE = re.compile(r"[‐‑‒–—−]")
 NON_WORD_RE = re.compile(r"[^0-9a-zа-яё]+", re.IGNORECASE)
 BOARD_RE = re.compile(
     r"(?<![0-9A-ZА-ЯЁ])"
-    r"(?P<prefix>ЩР\s*ИТП|ВРУ|АВР|ШРС|ЩЭ|УКРМ|ЩОВ|ЩАО|ЩР|ЩО|РП|ВП|"
-    r"VRU|AVR|SHRS|SHCHOV|SHCHAO|SHCHR|SHCHO|RP|VP)"
+    r"(?P<prefix>ЩР\s*ИТП|НЩР|ВРУ|АВР|ШРС|ЩЭ|УКРМ|ЩОВ|ЩАО|ЩР|ЩО|РП|ВП|"
+    r"NSCHR|VRU|AVR|SHRS|SHCHOV|SHCHAO|SHCHR|SHCHO|RP|VP)"
     r"(?:\s*[-‐‑‒–—−]?\s*"
     r"(?P<suffix>\d+(?:[./-]\d+)*(?:[A-ZА-ЯЁ])?"
     r"(?:\s*[-‐‑‒–—−]\s*\d+\s*[AА])?))?",
@@ -42,6 +42,31 @@ BOARD_RE = re.compile(
 )
 BOARD_CONTEXT_RE = re.compile(
     r"\b(щит|панел|шкаф|спецификац|board|panel|switchboard|schedule)\w*",
+    re.IGNORECASE,
+)
+SCHEMATIC_TITLE_RE = re.compile(
+    r"принципиальн\w*\s+схем\w*\s+группов\w*\s+щит\w*",
+    re.IGNORECASE,
+)
+SCHEMATIC_BOARD_RE = re.compile(
+    r"(?P<prefix>ЩР\s*ИТП|НЩР|ВРУ|АВР|ШРС|ЩЭ|УКРМ|ЩОВ|ЩАО|ЩР|ЩО|РП|ВП|"
+    r"NSCHR|VRU|AVR|SHRS|SHCHOV|SHCHAO|SHCHR|SHCHO|RP|VP)"
+    r"\s*[-‐‑‒–—−.]?\s*"
+    r"(?P<suffix>\d+(?:[./-]\d+)*(?:[A-ZА-ЯЁ])?)",
+    re.IGNORECASE,
+)
+SOURCE_REFERENCE_RE = re.compile(
+    r"(?:^|\b)(?:от|питани[ея]\s+от|существующ\w*\s+групп\w*\s+от)\s+ВРУ\b",
+    re.IGNORECASE,
+)
+QF_ANCHOR_RE = re.compile(r"(?<![0-9A-ZА-ЯЁ])QF\s*(?P<number>\d+)", re.IGNORECASE)
+QF_APPARATUS_RE = re.compile(
+    r"^(?P<qf>QF\s*\d+)\s*"
+    r"(?P<model>ВА88-?32|ВН-?32|АВДТ32)\s*"
+    r"(?P<poles>\d\s*P)?\s*"
+    r"(?:(?P<trip>[A-ZА-Я])\s*)?"
+    r"(?P<current>\d+(?:[.,]\d+)?)\s*(?P<amp>A|А)?"
+    r"(?:\s*/\s*(?P<residual>\d+(?:[.,]\d+)?\s*мА))?",
     re.IGNORECASE,
 )
 BOARD_QUANTITY_RE = re.compile(
@@ -152,6 +177,29 @@ class Provenance:
         return data
 
 
+@dataclass(frozen=True)
+class PdfBlock:
+    text: str
+    x: float
+    y: float
+    number: int
+
+
+@dataclass(frozen=True)
+class SchematicBoardTitle:
+    designation: str
+    normalized: str
+    title: str
+    block: PdfBlock
+
+
+@dataclass(frozen=True)
+class QfSegment:
+    designation: str
+    raw_text: str
+    block: PdfBlock
+
+
 @dataclass
 class ComponentCandidate:
     label: str
@@ -247,6 +295,236 @@ def find_board_designations(text: str) -> list[str]:
         if designation and designation not in found:
             found.append(designation)
     return found
+
+
+def is_source_reference(text: str) -> bool:
+    return SOURCE_REFERENCE_RE.search(compact_text(text)) is not None
+
+
+def pdf_blocks(raw_blocks: Sequence[tuple[str, float, float]]) -> list[PdfBlock]:
+    return [
+        PdfBlock(compact_text(text), x, y, index)
+        for index, (text, x, y) in enumerate(raw_blocks, start=1)
+        if compact_text(text)
+    ]
+
+
+def schematic_board_designations(text: str) -> list[str]:
+    compact = compact_text(text)
+    if SCHEMATIC_TITLE_RE.search(compact) is None:
+        return []
+    found: list[str] = []
+    for match in SCHEMATIC_BOARD_RE.finditer(compact):
+        designation = compact_text(match.group(0))
+        if designation and designation not in found:
+            found.append(designation)
+    return found
+
+
+def find_schematic_board_titles(
+    blocks: Sequence[PdfBlock],
+    page_text: str,
+) -> list[SchematicBoardTitle]:
+    titles: list[SchematicBoardTitle] = []
+    seen: set[str] = set()
+    for index, block in enumerate(blocks):
+        if SCHEMATIC_TITLE_RE.search(block.text) is None:
+            continue
+        context = " ".join(value.text for value in blocks[index : index + 8])
+        for designation in schematic_board_designations(context):
+            key = normalize_designation(designation)
+            if key not in seen:
+                titles.append(SchematicBoardTitle(designation, key, context, block))
+                seen.add(key)
+
+    for raw_line in page_text.splitlines():
+        line = compact_text(raw_line)
+        for designation in schematic_board_designations(line):
+            key = normalize_designation(designation)
+            if key not in seen:
+                titles.append(
+                    SchematicBoardTitle(
+                        designation,
+                        key,
+                        line,
+                        PdfBlock(line, 0.0, 0.0, 0),
+                    )
+                )
+                seen.add(key)
+    return titles
+
+
+def qf_designation(value: str) -> str:
+    match = QF_ANCHOR_RE.search(value)
+    return f"QF{match.group('number')}" if match else "QF"
+
+
+def split_qf_segments_from_text(text: str) -> list[str]:
+    compact = compact_text(text)
+    matches = list(QF_ANCHOR_RE.finditer(compact))
+    if not matches:
+        return []
+    segments: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        segment = compact_text(compact[match.start() : end])
+        if segment:
+            segments.append(segment)
+    return segments
+
+
+def qf_segments_from_blocks(
+    blocks: Sequence[PdfBlock],
+    page_text: str,
+) -> list[QfSegment]:
+    segments: list[QfSegment] = []
+    for index, block in enumerate(blocks):
+        if QF_ANCHOR_RE.search(block.text) is None:
+            continue
+        inline_segments = split_qf_segments_from_text(block.text)
+        if len(inline_segments) > 1 or block.text != qf_designation(block.text):
+            segments.extend(
+                QfSegment(qf_designation(segment), segment, block)
+                for segment in inline_segments
+            )
+            continue
+
+        parts = [block.text]
+        for next_block in blocks[index + 1 : index + 12]:
+            if QF_ANCHOR_RE.search(next_block.text):
+                break
+            parts.append(next_block.text)
+        raw_segment = compact_text(" ".join(parts))
+        segments.append(QfSegment(qf_designation(raw_segment), raw_segment, block))
+
+    if segments:
+        return segments
+
+    synthetic_block = PdfBlock("page text", 0.0, 0.0, 0)
+    for raw_line in page_text.splitlines():
+        for segment in split_qf_segments_from_text(raw_line):
+            segments.append(
+                QfSegment(qf_designation(segment), segment, synthetic_block)
+            )
+    return segments
+
+
+def parse_qf_apparatus(segment: str) -> dict[str, str | None]:
+    collapsed = re.sub(r"\s+", " ", compact_text(segment))
+    collapsed = re.sub(r"\b(ВА88-32|ВН-32)(?=\dP)", r"\1 ", collapsed)
+    collapsed = re.sub(r"\b(АВДТ32)\s*(\dP)([A-ZА-Я])", r"\1 \2 \3", collapsed)
+    match = QF_APPARATUS_RE.match(collapsed)
+    if match is None:
+        return {
+            "model": None,
+            "poles": None,
+            "trip": None,
+            "current": None,
+            "residual": None,
+            "rating": None,
+        }
+    model = compact_text(match.group("model"))
+    poles = compact_text(match.group("poles")).replace(" ", "") or None
+    trip = compact_text(match.group("trip")).upper() or None
+    current = compact_text(match.group("current")) or None
+    amp = compact_text(match.group("amp")).upper()
+    residual = compact_text(match.group("residual")) or None
+    if current and amp:
+        current = f"{current}{amp}"
+    rating_parts = []
+    if trip:
+        rating_parts.append(trip)
+    if current:
+        rating_parts.append(current)
+    rating = "".join(rating_parts) if rating_parts else None
+    if residual:
+        rating = f"{rating}/{residual}" if rating else residual
+    return {
+        "model": model,
+        "poles": poles,
+        "trip": trip,
+        "current": current,
+        "residual": residual,
+        "rating": rating,
+    }
+
+
+def qf_component_from_segment(
+    segment: QfSegment,
+    file_name: str,
+    page_number: int,
+    confidence: float,
+) -> ComponentCandidate:
+    parsed = parse_qf_apparatus(segment.raw_text)
+    qf = qf_designation(segment.raw_text)
+    label_parts = [qf]
+    for field_name in ("model", "poles", "rating"):
+        value = parsed[field_name]
+        if value:
+            label_parts.append(value)
+    missing = [
+        field_name
+        for field_name in ("model", "poles", "current")
+        if parsed[field_name] in (None, "")
+    ]
+    note_values = [f"qf_designation={qf}"]
+    for field_name in ("poles", "trip", "current", "residual"):
+        value = parsed[field_name]
+        if value:
+            note_values.append(f"{field_name}={value}")
+    coordinates = f"x={segment.block.x:.1f}, y={segment.block.y:.1f}"
+    provenance = Provenance(
+        source_file=file_name,
+        source_type="pdf",
+        page=page_number,
+        locator=(
+            f"page={page_number}; block={segment.block.number or 'line'}; "
+            f"qf={qf}; {coordinates}"
+        ),
+        block_coordinates=coordinates,
+        raw_text=segment.raw_text,
+        confidence=confidence,
+        reason="schematic QF anchor matched a confirmed schematic board title",
+    )
+    red_flags = ["schematic QF requires Igor review"]
+    if missing:
+        red_flags.append("schematic QF has missing apparatus fields")
+    return ComponentCandidate(
+        label=compact_text(" ".join(label_parts)),
+        quantity=1,
+        unit="шт.",
+        model=parsed["model"],
+        brand=None,
+        rating=parsed["rating"],
+        note="; ".join(note_values),
+        provenance=[provenance],
+        confidence=confidence,
+        red_flags=red_flags,
+    )
+
+
+def nearest_schematic_board(
+    segment: QfSegment,
+    titles: Sequence[SchematicBoardTitle],
+) -> SchematicBoardTitle | None:
+    if not titles:
+        return None
+    if len(titles) == 1:
+        return titles[0]
+    scored = sorted(
+        (
+            (
+                abs(segment.block.y - title.block.y)
+                + abs(segment.block.x - title.block.x) / 10,
+                title,
+            )
+            for title in titles
+        ),
+        key=lambda value: value[0],
+    )
+    if len(scored) > 1 and abs(scored[0][0] - scored[1][0]) < 50:
+        return None
+    return scored[0][1]
 
 
 def parse_number(value: object) -> int | float | None:
@@ -430,6 +708,9 @@ def extract_pdf(path: Path) -> SourceExtraction:
             continue
 
         compact_page = compact_text(page_text)
+        structured_blocks = pdf_blocks(blocks)
+        schematic_titles = find_schematic_board_titles(structured_blocks, page_text)
+        qf_segments = qf_segments_from_blocks(structured_blocks, page_text)
         order_suspect = suspicious_block_order(blocks)
         if not compact_page:
             if page_has_image_xobject(page):
@@ -452,26 +733,109 @@ def extract_pdf(path: Path) -> SourceExtraction:
             )
         else:
             status = "text_available"
-        result.pages.append(
-            {
-                "page": page_number,
-                "status": status,
-                "text_characters": len(compact_page),
-                "block_count": len(blocks),
-                "block_order_suspect": order_suspect,
-            }
+        page_qf_detected = len(qf_segments)
+        page_qf_extracted = 0
+        page_qf_unresolved = (
+            page_qf_detected if qf_segments and not schematic_titles else 0
         )
+        page_metadata = {
+            "page": page_number,
+            "status": status,
+            "text_characters": len(compact_page),
+            "block_count": len(blocks),
+            "block_order_suspect": order_suspect,
+            "qf_tokens_detected": page_qf_detected,
+            "qf_components_extracted": page_qf_extracted,
+            "qf_unresolved_count": page_qf_unresolved,
+        }
+        result.pages.append(page_metadata)
         if status == "image_only":
             continue
 
         confidence = 0.82 if status == "text_available" else 0.45
-        current_board: BoardCandidate | None = None
+        schematic_page = bool(schematic_titles)
+        if schematic_page:
+            for title in schematic_titles:
+                current_board = boards_by_key.get(title.normalized)
+                provenance = source_locator_for_pdf(
+                    path.name,
+                    page_number,
+                    title.title,
+                    blocks,
+                    confidence,
+                    "schematic board title matched a controlled title pattern",
+                )
+                if current_board is None:
+                    current_board = BoardCandidate(
+                        designation=title.designation,
+                        normalized=title.normalized,
+                        title=title.title,
+                        quantity=None,
+                        provenance=[provenance],
+                        confidence=confidence,
+                        source_types={"pdf"},
+                    )
+                    boards_by_key[title.normalized] = current_board
+                else:
+                    current_board.provenance.append(provenance)
+
+            unresolved_qf = 0
+            for segment in qf_segments:
+                matched_title = nearest_schematic_board(segment, schematic_titles)
+                component = qf_component_from_segment(
+                    segment, path.name, page_number, confidence
+                )
+                if matched_title is None:
+                    unresolved_qf += 1
+                    key = f"UNASSIGNED-QF-P{page_number}"
+                    current_board = boards_by_key.get(key)
+                    if current_board is None:
+                        provenance = component.provenance[0]
+                        current_board = BoardCandidate(
+                            designation=key,
+                            normalized=key,
+                            title=f"Unassigned schematic QF on page {page_number}",
+                            quantity=None,
+                            provenance=[provenance],
+                            confidence=min(confidence, 0.35),
+                            source_types={"pdf"},
+                            red_flags=[
+                                "schematic QF board assignment is ambiguous",
+                            ],
+                        )
+                        boards_by_key[key] = current_board
+                    component.red_flags.append(
+                        "schematic QF board assignment is ambiguous"
+                    )
+                    current_board.components.append(component)
+                    continue
+                boards_by_key[matched_title.normalized].components.append(component)
+                page_qf_extracted += 1
+
+            page_qf_unresolved = unresolved_qf
+            page_metadata["qf_components_extracted"] = page_qf_extracted
+            page_metadata["qf_unresolved_count"] = page_qf_unresolved
+            accounted = page_qf_extracted + page_qf_unresolved
+            if page_qf_detected > accounted:
+                result.red_flags.append(
+                    f"PDF page {page_number} has incomplete schematic QF extraction"
+                )
+            continue
+
+        if qf_segments:
+            result.red_flags.append(
+                f"PDF page {page_number} has QF tokens without schematic board title"
+            )
+
+        line_current_board: BoardCandidate | None = None
         for raw_line in page_text.splitlines():
             line = compact_text(raw_line)
             if not line:
                 continue
             designations = find_board_designations(line)
             if designations:
+                if is_source_reference(line):
+                    continue
                 designation = designations[0]
                 key = normalize_designation(designation)
                 provenance = source_locator_for_pdf(
@@ -484,9 +848,9 @@ def extract_pdf(path: Path) -> SourceExtraction:
                 )
                 quantity_match = BOARD_QUANTITY_RE.search(line)
                 quantity = int(quantity_match.group(1)) if quantity_match else None
-                current_board = boards_by_key.get(key)
-                if current_board is None:
-                    current_board = BoardCandidate(
+                line_current_board = boards_by_key.get(key)
+                if line_current_board is None:
+                    line_current_board = BoardCandidate(
                         designation=designation,
                         normalized=key,
                         title=line,
@@ -495,19 +859,19 @@ def extract_pdf(path: Path) -> SourceExtraction:
                         confidence=confidence,
                         source_types={"pdf"},
                     )
-                    boards_by_key[key] = current_board
+                    boards_by_key[key] = line_current_board
                 else:
-                    current_board.provenance.append(provenance)
-                    if quantity is not None and current_board.quantity not in (
+                    line_current_board.provenance.append(provenance)
+                    if quantity is not None and line_current_board.quantity not in (
                         None,
                         quantity,
                     ):
-                        current_board.red_flags.append(
+                        line_current_board.red_flags.append(
                             "different switchboard quantities inside PDF"
                         )
-                        current_board.quantity = None
+                        line_current_board.quantity = None
                 continue
-            if current_board is None:
+            if line_current_board is None:
                 continue
             provenance = source_locator_for_pdf(
                 path.name,
@@ -517,12 +881,12 @@ def extract_pdf(path: Path) -> SourceExtraction:
                 confidence,
                 "line ended with an explicit positive quantity and unit",
             )
-            component = component_from_text(line, provenance, confidence)
-            if component is not None:
-                current_board.components.append(component)
+            line_component = component_from_text(line, provenance, confidence)
+            if line_component is not None:
+                line_current_board.components.append(line_component)
             elif PROJECT_NOTE_RE.search(line):
-                current_board.provenance.append(provenance)
-                current_board.red_flags.append(
+                line_current_board.provenance.append(provenance)
+                line_current_board.red_flags.append(
                     f"project note requires Igor review: {line[:120]}"
                 )
 
@@ -626,7 +990,7 @@ def read_openxml_sheets(path: Path) -> list[tuple[str, list[list[str]]]]:
 
 
 def read_legacy_sheets(path: Path) -> list[tuple[str, list[list[str]]]]:
-    import xlrd  # type: ignore[import-not-found]
+    import xlrd  # type: ignore[import-untyped]
 
     try:
         workbook = xlrd.open_workbook(str(path), on_demand=True, formatting_info=False)
@@ -848,6 +1212,10 @@ def conflict(
 
 
 def component_key(component: ComponentCandidate) -> str:
+    if component.note:
+        qf_match = re.search(r"\bqf_designation=(QF\d+)\b", component.note)
+        if qf_match:
+            return f"qf:{qf_match.group(1)}"
     if component.model:
         return f"model:{normalize_header(component.model)}"
     label_without_rating = RATING_RE.sub("", component.label)
@@ -1182,6 +1550,21 @@ def build_artifacts(
     extracted_rows = sum(
         len(board.components) for source in sources for board in source.boards
     )
+    qf_tokens_detected = sum(
+        int(page.get("qf_tokens_detected", 0))
+        for source in sources
+        for page in source.pages
+    )
+    qf_components_extracted = sum(
+        int(page.get("qf_components_extracted", 0))
+        for source in sources
+        for page in source.pages
+    )
+    qf_unresolved_count = sum(
+        int(page.get("qf_unresolved_count", 0))
+        for source in sources
+        for page in source.pages
+    )
     conflicts_found = sum(
         len(board.conflicts)
         + sum(len(component.conflicts) for component in board.components)
@@ -1190,6 +1573,8 @@ def build_artifacts(
     root_red_flags = list(
         dict.fromkeys(flag for source in sources for flag in source.red_flags)
     )
+    if qf_tokens_detected > qf_components_extracted + qf_unresolved_count:
+        root_red_flags.append("schematic QF extraction is incomplete")
     review_rows = (
         manual_pages
         + conflicts_found
@@ -1215,6 +1600,9 @@ def build_artifacts(
         ),
         **merge_counts,
         "composition_rows_extracted": extracted_rows,
+        "qf_tokens_detected": qf_tokens_detected,
+        "qf_components_extracted": qf_components_extracted,
+        "qf_unresolved_count": qf_unresolved_count,
         "rows_merged_without_conflict": merge_counts["rows_merged_without_conflict"],
         "conflicts_found": conflicts_found,
         "review_rows": review_rows,

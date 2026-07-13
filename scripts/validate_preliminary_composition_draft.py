@@ -123,6 +123,9 @@ PDF_PAGE_FIELDS = (
     "text_characters",
     "block_count",
     "block_order_suspect",
+    "qf_tokens_detected",
+    "qf_components_extracted",
+    "qf_unresolved_count",
 )
 WORKBOOK_SHEET_FIELDS = ("sheet", "rows_checked")
 PDF_PAGE_STATUSES = {
@@ -145,6 +148,9 @@ EXTRACTION_SUMMARY_FIELDS = (
     "switchboards_matched",
     "switchboards_unmatched",
     "composition_rows_extracted",
+    "qf_tokens_detected",
+    "qf_components_extracted",
+    "qf_unresolved_count",
     "rows_merged_without_conflict",
     "conflicts_found",
     "review_rows",
