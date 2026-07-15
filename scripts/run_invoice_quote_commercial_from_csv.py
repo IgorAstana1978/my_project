@@ -5,14 +5,17 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import importlib.util
+import json
 import re
 import sys
 import uuid
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from datetime import date
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any, NoReturn, cast
 from xml.etree import ElementTree
@@ -33,6 +36,90 @@ ITEM_START_ROW = 17
 ITEM_END_ROW = 116
 TOTAL_ROW = 117
 AMOUNT_WORDS_ROW = 119
+QUOTE_METADATA_SCHEMA_VERSION = "quote_metadata.v0.1"
+QUOTE_METADATA_FIELDS = frozenset(
+    {
+        "schema_version",
+        "document_number",
+        "document_date",
+        "payer_name",
+        "payment_terms",
+        "manufacturing_lead_time",
+        "delivery_terms",
+        "vat_rate_percent",
+        "validity_period",
+        "object_name",
+        "basis_project",
+        "item_notes",
+    }
+)
+DOCUMENT_LINE_CELL = "B9"
+PAYER_CELL = "B10"
+OBJECT_CELL = "B11"
+BASIS_PROJECT_CELL = "B12"
+SECTION_CELL = "C16"
+SECTION_ROW = 16
+VALIDITY_CELL = "C121"
+PAYMENT_DELIVERY_CELL = "C122"
+MANUFACTURING_CELL = "C123"
+VAT_RATE_CELL = "A131"
+VAT_LABEL_CELL = "H118"
+VAT_AMOUNT_CELL = "I118"
+ITEM_NOTE_COLUMN = "J"
+ITEM_NOTE_WIDTH = 30
+CERTIFIED_LOGO_PART = "xl/media/image1.png"
+CERTIFIED_LOGO_SHA256 = (
+    "18e0f9446c72f8aa80ea833df07c2e42eb830770a0186decc476c5f948987301"
+)
+CERTIFIED_DRAWING_PART = "xl/drawings/drawing1.xml"
+CERTIFIED_DRAWING_RELS_PART = "xl/drawings/_rels/drawing1.xml.rels"
+CERTIFIED_DRAWING_TARGET = "../drawings/drawing1.xml"
+CERTIFIED_LOGO_TARGET = "../media/image1.png"
+PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
+DRAWING_MAIN_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
+DRAWING_REL_TYPE = f"{OFFICE_REL_NS}/drawing"
+IMAGE_REL_TYPE = f"{OFFICE_REL_NS}/image"
+CERTIFIED_LOGO_COL = "0"
+CERTIFIED_LOGO_ROW = "1"
+CERTIFIED_LOGO_EXTENT = {"cx": "781050", "cy": "428625"}
+PRINT_PAGE_SETUP = {
+    "paperSize": "9",
+    "scale": "54",
+    "fitToHeight": "0",
+    "orientation": "portrait",
+}
+PRINT_PAGE_MARGINS = {
+    "left": 0.43307086614173229,
+    "right": 0.23622047244094491,
+    "top": 0.35433070866141736,
+    "bottom": 0.74803149606299213,
+    "header": 0.31496062992125984,
+    "footer": 0.31496062992125984,
+}
+VAT_RATE_PLACEHOLDER = "QUOTE_METADATA_VAT_RATE"
+VAT_LABEL_FORMULA = (
+    '=IF(NOT(ISNUMBER($A$131)),"","В том числе НДС "' '&TEXT($A$131,"0")&"%")'
+)
+VAT_AMOUNT_FORMULA = (
+    '=IF(OR(NOT(ISNUMBER(I117)),NOT(ISNUMBER($A$131))),"",' "I117*$A$131/(100+$A$131))"
+)
+RUSSIAN_MONTHS = (
+    "",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
 NUMBER_FORMAT_ID = "3"
 NUMBER_FORMAT_CODE = "#,##0"
 BASE_ITEM_ROW_HEIGHT = 24
@@ -130,6 +217,27 @@ class CommercialWriterError(Exception):
     """Expected commercial writer validation or generation failure."""
 
 
+@dataclass(frozen=True)
+class ItemNote:
+    item_number: int
+    text: str
+
+
+@dataclass(frozen=True)
+class QuoteMetadata:
+    document_number: str
+    document_date: date
+    payer_name: str
+    payment_terms: str
+    manufacturing_lead_time: str
+    delivery_terms: str
+    vat_rate_percent: int
+    validity_period: str | None
+    object_name: str | None
+    basis_project: str | None
+    item_notes: tuple[ItemNote, ...]
+
+
 @dataclass
 class CommercialWriterResult:
     commercial_csv: Path
@@ -211,6 +319,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--template", required=True, type=Path)
     parser.add_argument("--template-capacity", required=True, type=int)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--quote-metadata-json", type=Path)
     return parser.parse_args(argv)
 
 
@@ -263,6 +372,354 @@ def load_commercial_rows(path: Path) -> list[dict[str, str]]:
     if not rows:
         fail("validated commercial CSV contains no rows")
     return rows
+
+
+def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            fail("quote metadata JSON contains duplicate fields")
+        result[key] = value
+    return result
+
+
+def required_metadata_text(payload: Mapping[str, Any], field_name: str) -> str:
+    value = payload[field_name]
+    if not isinstance(value, str) or not value.strip():
+        fail(f"quote metadata field must be a non-empty string: {field_name}")
+    return value
+
+
+def optional_metadata_text(payload: Mapping[str, Any], field_name: str) -> str | None:
+    value = payload[field_name]
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        fail(
+            "quote metadata field must be null or a non-empty string: " f"{field_name}"
+        )
+    return value
+
+
+def load_item_notes(payload: Mapping[str, Any], row_count: int) -> tuple[ItemNote, ...]:
+    raw_notes = payload["item_notes"]
+    if not isinstance(raw_notes, list):
+        fail("quote metadata item_notes must be a list")
+    notes: list[ItemNote] = []
+    seen_numbers: set[int] = set()
+    for raw_note in raw_notes:
+        if not isinstance(raw_note, dict) or set(raw_note) != {"item_number", "text"}:
+            fail("quote metadata item note is malformed or contains unknown fields")
+        item_number = raw_note["item_number"]
+        if (
+            isinstance(item_number, bool)
+            or not isinstance(item_number, int)
+            or item_number <= 0
+        ):
+            fail("quote metadata item note item_number must be a positive integer")
+        if item_number > row_count:
+            fail("quote metadata item note item_number is out of range")
+        if item_number in seen_numbers:
+            fail("quote metadata item note item_number is duplicated")
+        note_text = raw_note["text"]
+        if not isinstance(note_text, str) or not note_text.strip():
+            fail("quote metadata item note text must be a non-empty string")
+        seen_numbers.add(item_number)
+        notes.append(ItemNote(item_number=item_number, text=note_text))
+    return tuple(notes)
+
+
+def load_quote_metadata(path: Path, row_count: int) -> QuoteMetadata:
+    try:
+        text = path.read_bytes().decode("utf-8")
+    except OSError, UnicodeDecodeError:
+        fail("quote metadata JSON could not be read as strict UTF-8")
+    try:
+        payload = json.loads(text, object_pairs_hook=unique_json_object)
+    except json.JSONDecodeError:
+        fail("quote metadata JSON is malformed")
+    if not isinstance(payload, dict):
+        fail("quote metadata JSON root must be an object")
+    payload_fields = set(payload)
+    unknown_fields = payload_fields - QUOTE_METADATA_FIELDS
+    missing_fields = QUOTE_METADATA_FIELDS - payload_fields
+    if unknown_fields:
+        fail("quote metadata JSON contains unknown fields")
+    if missing_fields:
+        fail("quote metadata JSON is missing required fields")
+    if payload["schema_version"] != QUOTE_METADATA_SCHEMA_VERSION:
+        fail("quote metadata schema_version is unsupported")
+
+    document_date_text = required_metadata_text(payload, "document_date")
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", document_date_text) is None:
+        fail("quote metadata document_date must use YYYY-MM-DD")
+    try:
+        document_date = date.fromisoformat(document_date_text)
+    except ValueError:
+        fail("quote metadata document_date is invalid")
+
+    vat_rate = payload["vat_rate_percent"]
+    if isinstance(vat_rate, bool) or not isinstance(vat_rate, int):
+        fail("quote metadata vat_rate_percent must be an integer")
+    if not 0 <= vat_rate <= 100:
+        fail("quote metadata vat_rate_percent must be between 0 and 100")
+
+    validity_period = payload["validity_period"]
+    if validity_period is not None and (
+        not isinstance(validity_period, str) or not validity_period.strip()
+    ):
+        fail("quote metadata validity_period must be null or a non-empty string")
+
+    return QuoteMetadata(
+        document_number=required_metadata_text(payload, "document_number"),
+        document_date=document_date,
+        payer_name=required_metadata_text(payload, "payer_name"),
+        payment_terms=required_metadata_text(payload, "payment_terms"),
+        manufacturing_lead_time=required_metadata_text(
+            payload, "manufacturing_lead_time"
+        ),
+        delivery_terms=required_metadata_text(payload, "delivery_terms"),
+        vat_rate_percent=vat_rate,
+        validity_period=validity_period,
+        object_name=optional_metadata_text(payload, "object_name"),
+        basis_project=optional_metadata_text(payload, "basis_project"),
+        item_notes=load_item_notes(payload, row_count),
+    )
+
+
+def formula_for_cell(worksheet_xml: bytes, coordinate: str) -> str | None:
+    matches = cell_ranges(worksheet_xml).get(coordinate, [])
+    if len(matches) != 1:
+        return None
+    try:
+        cell = ElementTree.fromstring(matches[0].xml)
+    except ElementTree.ParseError:
+        return None
+    formula = cell.find(f"{{{SPREADSHEET_NS}}}f")
+    if formula is None:
+        formula = cell.find("f")
+    if formula is None or formula.text is None:
+        return None
+    return f"={formula.text}"
+
+
+def page_margins_match(element: ElementTree.Element | None) -> bool:
+    if element is None:
+        return False
+    try:
+        return all(
+            element.get(name) is not None
+            and abs(float(cast(str, element.get(name))) - value) <= 1e-12
+            for name, value in PRINT_PAGE_MARGINS.items()
+        )
+    except ValueError:
+        return False
+
+
+def worksheet_relationships_part(worksheet_part: str) -> str:
+    path = PurePosixPath(worksheet_part)
+    return str(path.parent / "_rels" / f"{path.name}.rels")
+
+
+def relationship_target(
+    relationships: ElementTree.Element,
+    relationship_id: str | None,
+    relationship_type: str,
+) -> str | None:
+    matches = [
+        relationship
+        for relationship in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+        if relationship.get("Id") == relationship_id
+        and relationship.get("Type") == relationship_type
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0].get("Target")
+
+
+def validate_certified_logo_contract(
+    archive: zipfile.ZipFile,
+    worksheet_part: str,
+    worksheet: ElementTree.Element,
+) -> None:
+    required_parts = {
+        CERTIFIED_LOGO_PART,
+        CERTIFIED_DRAWING_PART,
+        CERTIFIED_DRAWING_RELS_PART,
+        worksheet_relationships_part(worksheet_part),
+    }
+    if not required_parts.issubset(archive.namelist()):
+        fail("quote metadata template certified logo/drawing part is missing")
+    if hashlib.sha256(archive.read(CERTIFIED_LOGO_PART)).hexdigest() != (
+        CERTIFIED_LOGO_SHA256
+    ):
+        fail("quote metadata template certified logo bytes are unexpected")
+    try:
+        worksheet_relationships = ElementTree.fromstring(
+            archive.read(worksheet_relationships_part(worksheet_part))
+        )
+        drawing = ElementTree.fromstring(archive.read(CERTIFIED_DRAWING_PART))
+        drawing_relationships = ElementTree.fromstring(
+            archive.read(CERTIFIED_DRAWING_RELS_PART)
+        )
+    except ElementTree.ParseError:
+        fail("quote metadata template certified logo/drawing XML is malformed")
+
+    drawing_reference = worksheet.find(f"{{{SPREADSHEET_NS}}}drawing")
+    drawing_relationship_id = (
+        drawing_reference.get(f"{{{OFFICE_REL_NS}}}id")
+        if drawing_reference is not None
+        else None
+    )
+    if (
+        relationship_target(
+            worksheet_relationships,
+            drawing_relationship_id,
+            DRAWING_REL_TYPE,
+        )
+        != CERTIFIED_DRAWING_TARGET
+    ):
+        fail("quote metadata template worksheet drawing relationship is broken")
+
+    anchors = [
+        child
+        for child in drawing
+        if child.tag
+        in {
+            f"{{{DRAWING_NS}}}oneCellAnchor",
+            f"{{{DRAWING_NS}}}twoCellAnchor",
+        }
+    ]
+    if len(anchors) != 1:
+        fail("quote metadata template certified logo anchor is missing or ambiguous")
+    anchor = anchors[0]
+    column = anchor.find(f"{{{DRAWING_NS}}}from/{{{DRAWING_NS}}}col")
+    row = anchor.find(f"{{{DRAWING_NS}}}from/{{{DRAWING_NS}}}row")
+    extent = anchor.find(f"{{{DRAWING_NS}}}ext")
+    blip = anchor.find(f".//{{{DRAWING_MAIN_NS}}}blip")
+    image_relationship_id = (
+        blip.get(f"{{{OFFICE_REL_NS}}}embed") if blip is not None else None
+    )
+    if (
+        column is None
+        or column.text != CERTIFIED_LOGO_COL
+        or row is None
+        or row.text != CERTIFIED_LOGO_ROW
+        or extent is None
+        or any(
+            extent.get(name) != value for name, value in CERTIFIED_LOGO_EXTENT.items()
+        )
+    ):
+        fail("quote metadata template certified logo anchor is unexpected")
+    if (
+        relationship_target(
+            drawing_relationships,
+            image_relationship_id,
+            IMAGE_REL_TYPE,
+        )
+        != CERTIFIED_LOGO_TARGET
+    ):
+        fail("quote metadata template drawing image relationship is broken")
+
+
+def validate_metadata_template_contract(template: Path) -> None:
+    try:
+        with zipfile.ZipFile(template) as archive:
+            worksheet_part = worksheet_part_for_sheet(archive, SHEET_NAME)
+            worksheet_xml = archive.read(worksheet_part)
+    except OoxmlCellPatcherError as error:
+        fail(f"quote metadata template contract could not be checked: {error}")
+    except zipfile.BadZipFile:
+        fail("quote metadata template is not a valid XLSX package")
+    except OSError, KeyError:
+        fail("quote metadata template contract could not be read")
+
+    required_cells = {
+        DOCUMENT_LINE_CELL,
+        PAYER_CELL,
+        OBJECT_CELL,
+        BASIS_PROJECT_CELL,
+        SECTION_CELL,
+        VALIDITY_CELL,
+        PAYMENT_DELIVERY_CELL,
+        MANUFACTURING_CELL,
+        VAT_RATE_CELL,
+        VAT_LABEL_CELL,
+        VAT_AMOUNT_CELL,
+        *(
+            f"{ITEM_NOTE_COLUMN}{row}"
+            for row in range(ITEM_START_ROW, ITEM_END_ROW + 1)
+        ),
+    }
+    ranges = cell_ranges(worksheet_xml)
+    if any(len(ranges.get(coordinate, [])) != 1 for coordinate in required_cells):
+        fail("quote metadata template is missing one or more certified cells")
+    if formula_for_cell(worksheet_xml, VAT_LABEL_CELL) != VAT_LABEL_FORMULA:
+        fail("quote metadata template VAT label formula is missing or unexpected")
+    if formula_for_cell(worksheet_xml, VAT_AMOUNT_CELL) != VAT_AMOUNT_FORMULA:
+        fail("quote metadata template VAT amount formula is missing or unexpected")
+    try:
+        worksheet = ElementTree.fromstring(worksheet_xml)
+    except ElementTree.ParseError:
+        fail("quote metadata template worksheet XML is malformed")
+    sheet_properties = worksheet.find(f"{{{SPREADSHEET_NS}}}sheetPr")
+    page_setup_properties = (
+        sheet_properties.find(f"{{{SPREADSHEET_NS}}}pageSetUpPr")
+        if sheet_properties is not None
+        else None
+    )
+    page_setup = worksheet.find(f"{{{SPREADSHEET_NS}}}pageSetup")
+    page_margins = worksheet.find(f"{{{SPREADSHEET_NS}}}pageMargins")
+    if (
+        page_setup_properties is None
+        or page_setup_properties.get("fitToPage") != "1"
+        or page_setup is None
+        or any(
+            page_setup.get(name) != value for name, value in PRINT_PAGE_SETUP.items()
+        )
+        or not page_margins_match(page_margins)
+    ):
+        fail("quote metadata template native page setup is missing or unexpected")
+    try:
+        with zipfile.ZipFile(template) as archive:
+            validate_certified_logo_contract(archive, worksheet_part, worksheet)
+    except zipfile.BadZipFile, OSError, KeyError:
+        fail(
+            "quote metadata template certified logo/drawing contract could not be read"
+        )
+
+
+def metadata_cell_updates(metadata: QuoteMetadata) -> dict[str, str | int | None]:
+    document_date = metadata.document_date
+    document_line = (
+        f"Черновик счёта-КП № {metadata.document_number} от "
+        f"«{document_date.day:02d}» {RUSSIAN_MONTHS[document_date.month]} "
+        f"{document_date.year} года"
+    )
+    validity = (
+        None
+        if metadata.validity_period is None
+        else f"Срок действия: {metadata.validity_period}."
+    )
+    return {
+        DOCUMENT_LINE_CELL: document_line,
+        PAYER_CELL: f"Плательщик: {metadata.payer_name}",
+        OBJECT_CELL: (
+            None if metadata.object_name is None else f"Объект: {metadata.object_name}"
+        ),
+        BASIS_PROJECT_CELL: (
+            None
+            if metadata.basis_project is None
+            else f"Основание / проект: {metadata.basis_project}"
+        ),
+        VALIDITY_CELL: validity,
+        PAYMENT_DELIVERY_CELL: (
+            f"Условия оплаты: {metadata.payment_terms}. "
+            f"Условия поставки: {metadata.delivery_terms}."
+        ),
+        MANUFACTURING_CELL: (
+            "Ориентировочный срок изготовления: " f"{metadata.manufacturing_lead_time}."
+        ),
+        VAT_RATE_CELL: metadata.vat_rate_percent,
+    }
 
 
 def calculate_grand_total(rows: Sequence[Mapping[str, str]]) -> int:
@@ -338,11 +795,15 @@ def visual_line_count(value: str, width: int) -> int:
     return sum(max(1, (len(line) + width - 1) // width) for line in value.split("\n"))
 
 
-def estimate_item_row_height(row: Mapping[str, str]) -> int:
+def estimate_item_row_height(
+    row: Mapping[str, str], note_text: str | None = None
+) -> int:
     visual_lines = max(
         visual_line_count(row[field], width)
         for field, width in ROW_HEIGHT_TEXT_WIDTHS.items()
     )
+    if note_text is not None:
+        visual_lines = max(visual_lines, visual_line_count(note_text, ITEM_NOTE_WIDTH))
     if visual_lines <= 1:
         return BASE_ITEM_ROW_HEIGHT
     return min(
@@ -354,6 +815,7 @@ def estimate_item_row_height(row: Mapping[str, str]) -> int:
 def build_cell_updates(
     rows: Sequence[Mapping[str, str]],
     amount_text: str,
+    metadata: QuoteMetadata | None = None,
 ) -> dict[str, str | int | None]:
     updates: dict[str, str | int | None] = {
         f"C{AMOUNT_WORDS_ROW}": amount_text,
@@ -370,19 +832,42 @@ def build_cell_updates(
     for excel_row in range(ITEM_START_ROW + len(rows), ITEM_END_ROW + 1):
         for column in "CDEFGH":
             updates[f"{column}{excel_row}"] = None
+    if metadata is not None:
+        updates.update(metadata_cell_updates(metadata))
+        if metadata.object_name is None and metadata.basis_project is None:
+            updates[SECTION_CELL] = None
+        for note in metadata.item_notes:
+            excel_row = ITEM_START_ROW + note.item_number - 1
+            updates[f"{ITEM_NOTE_COLUMN}{excel_row}"] = note.text
     return updates
 
 
-def build_row_hidden_updates(rows: Sequence[Mapping[str, str]]) -> dict[int, bool]:
+def build_row_hidden_updates(
+    rows: Sequence[Mapping[str, str]], metadata: QuoteMetadata | None = None
+) -> dict[int, bool]:
     first_unused_row = ITEM_START_ROW + len(rows)
-    return {
+    updates = {
         row: row >= first_unused_row for row in range(ITEM_START_ROW, ITEM_END_ROW + 1)
     }
+    if (
+        metadata is not None
+        and metadata.object_name is None
+        and metadata.basis_project is None
+    ):
+        updates[SECTION_ROW] = True
+    return updates
 
 
-def build_row_height_updates(rows: Sequence[Mapping[str, str]]) -> dict[int, int]:
+def build_row_height_updates(
+    rows: Sequence[Mapping[str, str]], metadata: QuoteMetadata | None = None
+) -> dict[int, int]:
+    notes = (
+        {note.item_number: note.text for note in metadata.item_notes}
+        if metadata is not None
+        else {}
+    )
     updates = {
-        ITEM_START_ROW + offset: estimate_item_row_height(item)
+        ITEM_START_ROW + offset: estimate_item_row_height(item, notes.get(offset + 1))
         for offset, item in enumerate(rows)
     }
     updates.update(
@@ -403,15 +888,16 @@ def generate_candidate(
     candidate: Path,
     rows: Sequence[Mapping[str, str]],
     amount_text: str,
+    metadata: QuoteMetadata | None = None,
 ) -> None:
     try:
         patch_existing_cells(
             template=template,
             output=candidate,
             sheet_name=SHEET_NAME,
-            updates=build_cell_updates(rows, amount_text),
-            row_hidden_updates=build_row_hidden_updates(rows),
-            row_height_updates=build_row_height_updates(rows),
+            updates=build_cell_updates(rows, amount_text, metadata),
+            row_hidden_updates=build_row_hidden_updates(rows, metadata),
+            row_height_updates=build_row_height_updates(rows, metadata),
         )
     except OoxmlCellPatcherError as error:
         fail(f"candidate generation failed: {error}")
@@ -661,6 +1147,7 @@ def run_commercial_writer(
     template: Path,
     template_capacity: int,
     output: Path,
+    quote_metadata_json: Path | None = None,
 ) -> CommercialWriterResult:
     csv_path = resolved(commercial_csv)
     template_path = resolved(template)
@@ -687,6 +1174,10 @@ def run_commercial_writer(
         rows = load_commercial_rows(csv_path)
         grand_total = calculate_grand_total(rows)
         amount_text = amount_words_text(grand_total)
+        metadata = None
+        if quote_metadata_json is not None:
+            metadata = load_quote_metadata(resolved(quote_metadata_json), len(rows))
+            validate_metadata_template_contract(template_path)
     except CommercialWriterError as error:
         result.failures.append(str(error))
         return result
@@ -694,7 +1185,7 @@ def run_commercial_writer(
     candidate = candidate_path_for(output_path)
     published = False
     try:
-        generate_candidate(template_path, candidate, rows, amount_text)
+        generate_candidate(template_path, candidate, rows, amount_text, metadata)
         result.checks["candidate generation"] = "pass"
 
         apply_number_formats(candidate)
@@ -784,6 +1275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.template,
         args.template_capacity,
         args.output,
+        args.quote_metadata_json,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

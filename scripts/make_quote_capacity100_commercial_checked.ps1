@@ -7,7 +7,10 @@ param(
     [string]$Output,
 
     [Parameter(Mandatory = $false)]
-    [string]$Template = (Join-Path (Join-Path $env:USERPROFILE "Downloads") ([regex]::Unescape("\u0424\u0438\u0440\u043c\u0435\u043d\u043d\u044b\u0439_\u0448\u0430\u0431\u043b\u043e\u043d_\u0441\u0447\u0451\u0442\u0430-\u041a\u041f_v0.3_capacity100_tuned_v3_\u0414\u0438\u041d_\u0412\u0410-\u041a\u042d\u0421.xlsx"))),
+    [string]$Template = (Join-Path (Join-Path $env:USERPROFILE "Downloads") ([regex]::Unescape("\u0424\u0438\u0440\u043c\u0435\u043d\u043d\u044b\u0439_\u0448\u0430\u0431\u043b\u043e\u043d_\u0441\u0447\u0451\u0442\u0430-\u041a\u041f_v0.4_capacity100_tuned_v4_\u0414\u0438\u041d_\u0412\u0410-\u041a\u042d\u0421.xlsx"))),
+
+    [Parameter(Mandatory = $false)]
+    [string]$QuoteMetadataJson = "",
 
     [Parameter(Mandatory = $false)]
     [string]$Python = ""
@@ -42,6 +45,13 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     Stop-WithMessage "Python executable does not exist: $Python"
 }
 
+if (
+    -not [string]::IsNullOrWhiteSpace($QuoteMetadataJson) -and
+    -not (Test-Path -LiteralPath $QuoteMetadataJson -PathType Leaf)
+) {
+    Stop-WithMessage "Quote metadata JSON does not exist: $QuoteMetadataJson"
+}
+
 if (Test-Path -LiteralPath $Output) {
     Stop-WithMessage "Output already exists: $Output"
 }
@@ -58,11 +68,21 @@ Write-Host "Creating capacity100 internal commercial draft..."
 Write-Host "Commercial CSV: $CommercialCsv"
 Write-Host "Output: $Output"
 
-& $Python $Runner `
-    --commercial-csv $CommercialCsv `
-    --template $Template `
-    --template-capacity 100 `
-    --output $Output
+if ([string]::IsNullOrWhiteSpace($QuoteMetadataJson)) {
+    & $Python $Runner `
+        --commercial-csv $CommercialCsv `
+        --template $Template `
+        --template-capacity 100 `
+        --output $Output
+}
+else {
+    & $Python $Runner `
+        --commercial-csv $CommercialCsv `
+        --template $Template `
+        --template-capacity 100 `
+        --output $Output `
+        --quote-metadata-json $QuoteMetadataJson
+}
 
 $ExitCode = $LASTEXITCODE
 if ($ExitCode -ne 0) {

@@ -22,7 +22,13 @@ def test_launcher_script_exists() -> None:
 def test_launcher_declares_only_expected_runtime_parameters() -> None:
     text = script_text()
 
-    for name in ("CommercialCsv", "Output", "Template", "Python"):
+    for name in (
+        "CommercialCsv",
+        "Output",
+        "Template",
+        "QuoteMetadataJson",
+        "Python",
+    ):
         assert f"${name}" in text
     assert "$ItemsCsv" not in text
     assert "$TemplateCapacity" not in text
@@ -33,7 +39,7 @@ def test_launcher_uses_canonical_userprofile_template_without_guessing() -> None
 
     assert "$env:USERPROFILE" in text
     assert "Downloads" in text
-    assert "capacity100_tuned_v3" in text
+    assert "capacity100_tuned_v4" in text
     assert "[regex]::Unescape" in text
     assert "\\u0424\\u0438\\u0440" in text
     assert "Get-ChildItem" not in text
@@ -48,6 +54,7 @@ def test_launcher_calls_commercial_writer_with_fixed_capacity100() -> None:
     assert "--template $Template" in text
     assert "--template-capacity 100" in text
     assert "--output $Output" in text
+    assert "--quote-metadata-json $QuoteMetadataJson" in text
 
 
 def test_launcher_does_not_call_old_technical_writer() -> None:
@@ -64,12 +71,23 @@ def test_launcher_has_required_path_checks() -> None:
     assert "Commercial CSV does not exist" in text
     assert "Template does not exist" in text
     assert "Python executable does not exist" in text
+    assert "Quote metadata JSON does not exist" in text
     assert "Output already exists" in text
     assert "Output parent directory does not exist" in text
     assert "Test-Path -LiteralPath $CommercialCsv" in text
     assert "Test-Path -LiteralPath $Template" in text
     assert "Test-Path -LiteralPath $Python" in text
+    assert "Test-Path -LiteralPath $QuoteMetadataJson" in text
     assert "Test-Path -LiteralPath $Output" in text
+
+
+def test_launcher_keeps_quote_metadata_optional_for_backward_compatibility() -> None:
+    text = script_text()
+
+    assert '[string]$QuoteMetadataJson = ""' in text
+    assert "[string]::IsNullOrWhiteSpace($QuoteMetadataJson)" in text
+    assert text.count("--commercial-csv $CommercialCsv") == 2
+    assert text.count("--quote-metadata-json $QuoteMetadataJson") == 1
 
 
 def test_launcher_preserves_writer_exit_code() -> None:
