@@ -37,6 +37,7 @@ ITEM_END_ROW = 116
 TOTAL_ROW = 117
 AMOUNT_WORDS_ROW = 119
 QUOTE_METADATA_SCHEMA_VERSION = "quote_metadata.v0.1"
+QUOTE_METADATA_SCHEMA_VERSION_V0_2 = "quote_metadata.v0.2"
 QUOTE_METADATA_FIELDS = frozenset(
     {
         "schema_version",
@@ -53,6 +54,7 @@ QUOTE_METADATA_FIELDS = frozenset(
         "item_notes",
     }
 )
+QUOTE_METADATA_V0_2_FIELDS = QUOTE_METADATA_FIELDS | {"apparatus_manufacturer"}
 DOCUMENT_LINE_CELL = "B9"
 PAYER_CELL = "B10"
 OBJECT_CELL = "B11"
@@ -65,6 +67,9 @@ MANUFACTURING_CELL = "C123"
 VAT_RATE_CELL = "A131"
 VAT_LABEL_CELL = "H118"
 VAT_AMOUNT_CELL = "I118"
+APPARATUS_HEADER_CELL = "F15"
+APPARATUS_HEADER_PREFIX = "Применяемые приборы и аппараты\n" "согласно схемы,\n"
+APPARATUS_MANUFACTURER_PREFIX = "производства "
 ITEM_NOTE_COLUMN = "J"
 ITEM_NOTE_WIDTH = 30
 CERTIFIED_LOGO_PART = "xl/media/image1.png"
@@ -225,6 +230,7 @@ class ItemNote:
 
 @dataclass(frozen=True)
 class QuoteMetadata:
+    schema_version: str
     document_number: str
     document_date: date
     payer_name: str
@@ -236,6 +242,7 @@ class QuoteMetadata:
     object_name: str | None
     basis_project: str | None
     item_notes: tuple[ItemNote, ...]
+    apparatus_manufacturer: str | None
 
 
 @dataclass
@@ -438,16 +445,26 @@ def load_quote_metadata(path: Path, row_count: int) -> QuoteMetadata:
         fail("quote metadata JSON is malformed")
     if not isinstance(payload, dict):
         fail("quote metadata JSON root must be an object")
+    schema_version = payload.get("schema_version")
+    if schema_version not in (
+        QUOTE_METADATA_SCHEMA_VERSION,
+        QUOTE_METADATA_SCHEMA_VERSION_V0_2,
+    ):
+        if "schema_version" not in payload:
+            fail("quote metadata JSON is missing required fields")
+        fail("quote metadata schema_version is unsupported")
+    expected_fields = (
+        QUOTE_METADATA_V0_2_FIELDS
+        if schema_version == QUOTE_METADATA_SCHEMA_VERSION_V0_2
+        else QUOTE_METADATA_FIELDS
+    )
     payload_fields = set(payload)
-    unknown_fields = payload_fields - QUOTE_METADATA_FIELDS
-    missing_fields = QUOTE_METADATA_FIELDS - payload_fields
+    unknown_fields = payload_fields - expected_fields
+    missing_fields = expected_fields - payload_fields
     if unknown_fields:
         fail("quote metadata JSON contains unknown fields")
     if missing_fields:
         fail("quote metadata JSON is missing required fields")
-    if payload["schema_version"] != QUOTE_METADATA_SCHEMA_VERSION:
-        fail("quote metadata schema_version is unsupported")
-
     document_date_text = required_metadata_text(payload, "document_date")
     if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", document_date_text) is None:
         fail("quote metadata document_date must use YYYY-MM-DD")
@@ -469,6 +486,7 @@ def load_quote_metadata(path: Path, row_count: int) -> QuoteMetadata:
         fail("quote metadata validity_period must be null or a non-empty string")
 
     return QuoteMetadata(
+        schema_version=schema_version,
         document_number=required_metadata_text(payload, "document_number"),
         document_date=document_date,
         payer_name=required_metadata_text(payload, "payer_name"),
@@ -482,6 +500,11 @@ def load_quote_metadata(path: Path, row_count: int) -> QuoteMetadata:
         object_name=optional_metadata_text(payload, "object_name"),
         basis_project=optional_metadata_text(payload, "basis_project"),
         item_notes=load_item_notes(payload, row_count),
+        apparatus_manufacturer=(
+            required_metadata_text(payload, "apparatus_manufacturer")
+            if schema_version == QUOTE_METADATA_SCHEMA_VERSION_V0_2
+            else None
+        ),
     )
 
 
@@ -620,7 +643,11 @@ def validate_certified_logo_contract(
         fail("quote metadata template drawing image relationship is broken")
 
 
-def validate_metadata_template_contract(template: Path) -> None:
+def validate_metadata_template_contract(
+    template: Path,
+    *,
+    require_apparatus_header: bool = False,
+) -> None:
     try:
         with zipfile.ZipFile(template) as archive:
             worksheet_part = worksheet_part_for_sheet(archive, SHEET_NAME)
@@ -649,6 +676,8 @@ def validate_metadata_template_contract(template: Path) -> None:
             for row in range(ITEM_START_ROW, ITEM_END_ROW + 1)
         ),
     }
+    if require_apparatus_header:
+        required_cells.add(APPARATUS_HEADER_CELL)
     ranges = cell_ranges(worksheet_xml)
     if any(len(ranges.get(coordinate, [])) != 1 for coordinate in required_cells):
         fail("quote metadata template is missing one or more certified cells")
@@ -936,6 +965,89 @@ def style_cell_xml(cell_xml: bytes, style_id: int) -> bytes:
     return styled_start_tag + cell_xml[start_tag_end:]
 
 
+def apparatus_header_cell_xml(cell_xml: bytes, manufacturer: str) -> bytes:
+    try:
+        cell = ElementTree.fromstring(cell_xml)
+    except ElementTree.ParseError:
+        fail("apparatus manufacturer header cell XML is invalid")
+    for child in list(cell):
+        if child.tag in {
+            "f",
+            "v",
+            "is",
+            f"{{{SPREADSHEET_NS}}}f",
+            f"{{{SPREADSHEET_NS}}}v",
+            f"{{{SPREADSHEET_NS}}}is",
+        }:
+            cell.remove(child)
+    cell.set("t", "inlineStr")
+    inline_string = ElementTree.SubElement(cell, f"{{{SPREADSHEET_NS}}}is")
+    heading_run = ElementTree.SubElement(inline_string, f"{{{SPREADSHEET_NS}}}r")
+    heading_text = ElementTree.SubElement(
+        heading_run,
+        f"{{{SPREADSHEET_NS}}}t",
+    )
+    heading_text.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+    heading_text.text = APPARATUS_HEADER_PREFIX
+    manufacturer_run = ElementTree.SubElement(
+        inline_string,
+        f"{{{SPREADSHEET_NS}}}r",
+    )
+    run_properties = ElementTree.SubElement(
+        manufacturer_run,
+        f"{{{SPREADSHEET_NS}}}rPr",
+    )
+    ElementTree.SubElement(run_properties, f"{{{SPREADSHEET_NS}}}b")
+    ElementTree.SubElement(run_properties, f"{{{SPREADSHEET_NS}}}u")
+    ElementTree.SubElement(
+        run_properties,
+        f"{{{SPREADSHEET_NS}}}sz",
+        {"val": "12"},
+    )
+    ElementTree.SubElement(
+        run_properties,
+        f"{{{SPREADSHEET_NS}}}color",
+        {"indexed": "10"},
+    )
+    ElementTree.SubElement(
+        run_properties,
+        f"{{{SPREADSHEET_NS}}}rFont",
+        {"val": "Times New Roman"},
+    )
+    ElementTree.SubElement(
+        run_properties,
+        f"{{{SPREADSHEET_NS}}}family",
+        {"val": "1"},
+    )
+    ElementTree.SubElement(
+        run_properties,
+        f"{{{SPREADSHEET_NS}}}charset",
+        {"val": "204"},
+    )
+    manufacturer_text = ElementTree.SubElement(
+        manufacturer_run,
+        f"{{{SPREADSHEET_NS}}}t",
+    )
+    manufacturer_text.text = APPARATUS_MANUFACTURER_PREFIX + manufacturer
+    return cast(bytes, ElementTree.tostring(cell, encoding="utf-8"))
+
+
+def worksheet_with_apparatus_header(
+    worksheet_xml: bytes,
+    manufacturer: str,
+) -> bytes:
+    matches = cell_ranges(worksheet_xml).get(APPARATUS_HEADER_CELL, [])
+    if len(matches) != 1:
+        fail("apparatus manufacturer header cell is missing or duplicated")
+    cell_range = matches[0]
+    replacement = apparatus_header_cell_xml(cell_range.xml, manufacturer)
+    return (
+        worksheet_xml[: cell_range.start]
+        + replacement
+        + worksheet_xml[cell_range.end :]
+    )
+
+
 def styles_with_number_format(
     styles_xml: bytes,
     base_style_ids: set[int],
@@ -1085,7 +1197,10 @@ def verify_presentation_package(
     )
 
 
-def apply_number_formats(candidate: Path) -> None:
+def apply_number_formats(
+    candidate: Path,
+    metadata: QuoteMetadata | None = None,
+) -> None:
     temporary_output = candidate.with_name(
         f".{candidate.stem}.{uuid.uuid4().hex}.presentation.tmp.xlsx"
     )
@@ -1098,8 +1213,14 @@ def apply_number_formats(candidate: Path) -> None:
         parts = archive_bytes(candidate)
         if worksheet_part not in parts or STYLES_PART not in parts:
             fail("presentation candidate is missing required XLSX parts")
+        worksheet_xml = parts[worksheet_part]
+        if metadata is not None and metadata.apparatus_manufacturer is not None:
+            worksheet_xml = worksheet_with_apparatus_header(
+                worksheet_xml,
+                metadata.apparatus_manufacturer,
+            )
         worksheet_xml, styles_xml = worksheet_with_number_formats(
-            parts[worksheet_part],
+            worksheet_xml,
             parts[STYLES_PART],
         )
         write_presentation_package(
@@ -1177,7 +1298,10 @@ def run_commercial_writer(
         metadata = None
         if quote_metadata_json is not None:
             metadata = load_quote_metadata(resolved(quote_metadata_json), len(rows))
-            validate_metadata_template_contract(template_path)
+            validate_metadata_template_contract(
+                template_path,
+                require_apparatus_header=(metadata.apparatus_manufacturer is not None),
+            )
     except CommercialWriterError as error:
         result.failures.append(str(error))
         return result
@@ -1188,7 +1312,7 @@ def run_commercial_writer(
         generate_candidate(template_path, candidate, rows, amount_text, metadata)
         result.checks["candidate generation"] = "pass"
 
-        apply_number_formats(candidate)
+        apply_number_formats(candidate, metadata)
         result.checks["presentation formatting"] = "pass"
 
         reconciliation_result = commercial_reconciliation.reconcile(

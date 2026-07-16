@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
+from xml.etree import ElementTree
 
 import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
@@ -82,6 +83,16 @@ def write_capacity100_template(
     worksheet[writer.BASIS_PROJECT_CELL] = "Основание / проект: нужно уточнить"
     worksheet[writer.SECTION_CELL] = "Раздел / объект / позиция проекта: нужно уточнить"
     worksheet["B13"] = "Статус документа: Черновик"
+    worksheet[writer.APPARATUS_HEADER_CELL] = (
+        "Применяемые приборы и аппараты согласно схемы"
+    )
+    worksheet[writer.APPARATUS_HEADER_CELL].alignment = Alignment(
+        horizontal="center",
+        vertical="center",
+        wrap_text=True,
+    )
+    worksheet.column_dimensions["F"].width = 35
+    worksheet.row_dimensions[15].height = 42
     worksheet[writer.VALIDITY_CELL] = "Срок действия: нужно уточнить"
     worksheet[writer.PAYMENT_DELIVERY_CELL] = (
         "Условия оплаты: нужно уточнить. Условия поставки: нужно уточнить."
@@ -284,6 +295,14 @@ def quote_metadata_payload() -> dict[str, object]:
     }
 
 
+def quote_metadata_v0_2_payload() -> dict[str, object]:
+    return {
+        **quote_metadata_payload(),
+        "schema_version": writer.QUOTE_METADATA_SCHEMA_VERSION_V0_2,
+        "apparatus_manufacturer": "CHINT",
+    }
+
+
 def write_quote_metadata(path: Path, payload: object) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False),
@@ -433,8 +452,96 @@ def test_quote_metadata_populates_certified_fields_and_preserves_template_vat_fo
         for cell in ("H17", "I17", "I117", writer.VAT_AMOUNT_CELL)
     )
     assert worksheet["B13"].value == "Статус документа: Черновик"
+    assert worksheet[writer.APPARATUS_HEADER_CELL].value == (
+        "Применяемые приборы и аппараты согласно схемы"
+    )
     assert worksheet.row_dimensions[131].hidden is True
     workbook.close()
+
+
+def test_quote_metadata_v0_2_writes_rich_manufacturer_header_without_mutating_items(
+    tmp_path: Path,
+) -> None:
+    commercial_csv = tmp_path / "commercial.csv"
+    template = tmp_path / "capacity100-v4.xlsx"
+    metadata = tmp_path / "quote-metadata.json"
+    output = output_path(tmp_path)
+    rows = [commercial_row(1), commercial_row(2)]
+    write_commercial_csv(commercial_csv, rows)
+    write_capacity100_template(template)
+    write_quote_metadata(metadata, quote_metadata_v0_2_payload())
+
+    template_workbook = load_workbook(template, data_only=False)
+    template_sheet = template_workbook[writer.SHEET_NAME]
+    template_style_id = template_sheet[writer.APPARATUS_HEADER_CELL].style_id
+    template_alignment = template_sheet[writer.APPARATUS_HEADER_CELL].alignment
+    template_workbook.close()
+    with zipfile.ZipFile(template) as archive:
+        template_parts = {name: archive.read(name) for name in archive.namelist()}
+
+    result = run_cli(commercial_csv, template, output, metadata=metadata)
+
+    assert result.returncode == 0, result.stdout
+    workbook = load_workbook(output, data_only=False)
+    worksheet = workbook[writer.SHEET_NAME]
+    assert worksheet[writer.APPARATUS_HEADER_CELL].value == (
+        "Применяемые приборы и аппараты\n" "согласно схемы,\n" "производства CHINT"
+    )
+    assert worksheet[writer.APPARATUS_HEADER_CELL].style_id == template_style_id
+    output_alignment = worksheet[writer.APPARATUS_HEADER_CELL].alignment
+    assert output_alignment.horizontal == template_alignment.horizontal == "center"
+    assert output_alignment.vertical == template_alignment.vertical == "center"
+    assert output_alignment.wrap_text is template_alignment.wrap_text is True
+    assert worksheet.column_dimensions["F"].width == pytest.approx(35)
+    assert worksheet.row_dimensions[15].height == pytest.approx(42)
+    assert worksheet["F17"].value == rows[0][3]
+    assert worksheet["F18"].value == rows[1][3]
+    assert worksheet[writer.VAT_LABEL_CELL].value == writer.VAT_LABEL_FORMULA
+    assert worksheet[writer.VAT_AMOUNT_CELL].value == writer.VAT_AMOUNT_FORMULA
+    assert worksheet.sheet_properties.pageSetUpPr.fitToPage is True
+    assert worksheet.page_setup.paperSize == int(writer.PRINT_PAGE_SETUP["paperSize"])
+    assert worksheet.page_setup.orientation == writer.PRINT_PAGE_SETUP["orientation"]
+    workbook.close()
+
+    with zipfile.ZipFile(output) as archive:
+        output_parts = {name: archive.read(name) for name in archive.namelist()}
+        worksheet_part = writer.worksheet_part_for_sheet(archive, writer.SHEET_NAME)
+    assert (
+        output_parts[writer.CERTIFIED_LOGO_PART]
+        == template_parts[writer.CERTIFIED_LOGO_PART]
+    )
+    assert (
+        output_parts[writer.CERTIFIED_DRAWING_PART]
+        == template_parts[writer.CERTIFIED_DRAWING_PART]
+    )
+    cell_xml = writer.cell_ranges(output_parts[worksheet_part])[
+        writer.APPARATUS_HEADER_CELL
+    ][0].xml
+    cell = ElementTree.fromstring(cell_xml)
+    runs = cell.findall(f"{{{writer.SPREADSHEET_NS}}}is/{{{writer.SPREADSHEET_NS}}}r")
+    assert len(runs) == 2
+    assert runs[0].find(f"{{{writer.SPREADSHEET_NS}}}rPr") is None
+    heading_text = runs[0].find(f"{{{writer.SPREADSHEET_NS}}}t")
+    assert heading_text is not None
+    assert heading_text.text == writer.APPARATUS_HEADER_PREFIX
+    manufacturer_run = runs[1]
+    properties = manufacturer_run.find(f"{{{writer.SPREADSHEET_NS}}}rPr")
+    assert properties is not None
+    assert properties.find(f"{{{writer.SPREADSHEET_NS}}}b") is not None
+    assert properties.find(f"{{{writer.SPREADSHEET_NS}}}u") is not None
+    size = properties.find(f"{{{writer.SPREADSHEET_NS}}}sz")
+    color = properties.find(f"{{{writer.SPREADSHEET_NS}}}color")
+    font = properties.find(f"{{{writer.SPREADSHEET_NS}}}rFont")
+    family = properties.find(f"{{{writer.SPREADSHEET_NS}}}family")
+    charset = properties.find(f"{{{writer.SPREADSHEET_NS}}}charset")
+    assert size is not None and size.get("val") == "12"
+    assert color is not None and color.get("indexed") == "10"
+    assert font is not None and font.get("val") == "Times New Roman"
+    assert family is not None and family.get("val") == "1"
+    assert charset is not None and charset.get("val") == "204"
+    manufacturer_text = manufacturer_run.find(f"{{{writer.SPREADSHEET_NS}}}t")
+    assert manufacturer_text is not None
+    assert manufacturer_text.text == "производства CHINT"
 
 
 def test_quote_metadata_populates_object_basis_and_two_position_notes(
@@ -673,6 +780,49 @@ def test_broken_certified_logo_contract_fails_before_output(
                 ensure_ascii=False,
             ).encode("utf-8"),
             "missing required fields",
+        ),
+        (
+            json.dumps(
+                {
+                    key: value
+                    for key, value in quote_metadata_payload().items()
+                    if key != "schema_version"
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "missing required fields",
+        ),
+        (
+            json.dumps(
+                {**quote_metadata_payload(), "schema_version": []},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "schema_version is unsupported",
+        ),
+        (
+            json.dumps(
+                {
+                    key: value
+                    for key, value in quote_metadata_v0_2_payload().items()
+                    if key != "apparatus_manufacturer"
+                },
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "missing required fields",
+        ),
+        (
+            json.dumps(
+                {**quote_metadata_v0_2_payload(), "apparatus_manufacturer": ""},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "non-empty string: apparatus_manufacturer",
+        ),
+        (
+            json.dumps(
+                {**quote_metadata_v0_2_payload(), "apparatus_manufacturer": "  \t"},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+            "non-empty string: apparatus_manufacturer",
         ),
         (
             json.dumps(

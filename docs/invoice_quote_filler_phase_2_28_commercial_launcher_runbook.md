@@ -66,6 +66,37 @@ commercial preflight и reconciliation. Technical PASS не является к�
 }
 ```
 
+Контракт `quote_metadata.v0.1` остаётся полностью совместимым. Версия
+`quote_metadata.v0.2` содержит все те же поля и дополнительное обязательное
+поле производителя автоматики:
+
+```json
+{
+  "schema_version": "quote_metadata.v0.2",
+  "document_number": "463",
+  "document_date": "2026-07-10",
+  "payer_name": "ТОО «Rich energy»",
+  "payment_terms": "100% предоплата",
+  "manufacturing_lead_time": "7–10 рабочих дней",
+  "delivery_terms": "EXW, г. Астана",
+  "vat_rate_percent": 16,
+  "validity_period": null,
+  "object_name": null,
+  "basis_project": null,
+  "item_notes": [],
+  "apparatus_manufacturer": "CHINT"
+}
+```
+
+Для `v0.2` значение `apparatus_manufacturer` должно быть непустой строкой.
+Writer выводит его в `F15` отдельной красной rich-text строкой после текста
+`Применяемые приборы и аппараты\nсогласно схемы,`. Строка производителя имеет
+Times New Roman 12 pt, bold, underline и красный цвет `indexed=10`. Missing,
+empty, whitespace-only и неизвестные поля завершают запуск с FAIL без output.
+Writer не удаляет производителя из строк CSV и не меняет `F17:F116`:
+подготовка CSV с нужным дословным составом остаётся явным действием
+пользователя.
+
 ```powershell
 .\scripts\make_quote_capacity100_commercial_checked.ps1 `
   "C:\Users\IgorN\Downloads\commercial_items.csv" `
@@ -95,6 +126,7 @@ Certified tuned_v4 cells:
 - `B10` — плательщик;
 - `B11` — объект;
 - `B12` — основание / проект;
+- `F15` — заголовок приборов и производитель автоматики для metadata `v0.2`;
 - `J17:J116` — сноски, привязанные к позициям `1:100`;
 - `C16` — строка раздела, очищаемая только при двух `null`;
 - `C121` — срок действия;
