@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -29,6 +30,7 @@ ARTIFACT_NAME = "confirmed-composition-artifact.json"
 DECISIONS_NAME = "igor-composition-decisions.json"
 RECEIPT_NAME = "igor-composition-decisions.md"
 APPROVAL_PHRASE = "CONFIRM TECHNICAL COMPOSITION"
+DECISIONS_INPUT_SCHEMA = "igor_composition_decisions_input.v0.1"
 CASE_ID_RE = re.compile(r"CASE-[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 MAX_CASE_ID_LENGTH = 128
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -88,6 +90,14 @@ class InputSnapshot:
 
 
 @dataclass(frozen=True)
+class DecisionsInputSnapshot:
+    path: Path
+    content: bytes
+    sha256: str
+    data: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
 class AutomaticTransfer:
     source_path: str
     target_path: str
@@ -132,6 +142,7 @@ class CompositionState:
     removed_values: list[dict[str, Any]] = field(default_factory=list)
     unresolved_issue_ids: set[str] = field(default_factory=set)
     supply_boundary: str = ""
+    batch_decisions: dict[str, Any] | None = None
 
 
 @dataclass
@@ -159,6 +170,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--confirmation-id", required=True)
     parser.add_argument("--approval-channel", required=True)
+    parser.add_argument("--decisions-json", type=Path)
     return parser.parse_args(argv)
 
 
@@ -239,6 +251,103 @@ def parse_json_object(raw: bytes, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise WorkflowError(f"{label} root must be an object")
     return cast(Mapping[str, Any], value)
+
+
+class DuplicateJsonKeyError(ValueError):
+    """A strict JSON object contains the same key more than once."""
+
+
+def strict_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, child in pairs:
+        if key in value:
+            raise DuplicateJsonKeyError(f"duplicate JSON field: {key}")
+        value[key] = child
+    return value
+
+
+def parse_strict_json_object(raw: bytes, label: str) -> Mapping[str, Any]:
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise WorkflowError(f"{label} must be valid UTF-8") from exc
+    try:
+        value = json.loads(text, object_pairs_hook=strict_object_pairs)
+    except DuplicateJsonKeyError as exc:
+        raise WorkflowError(f"{label} contains {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(f"{label} is malformed JSON") from exc
+    if not isinstance(value, Mapping):
+        raise WorkflowError(f"{label} root must be an object")
+    return cast(Mapping[str, Any], value)
+
+
+def exact_object(value: Any, label: str, fields: set[str]) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise WorkflowError(f"{label} must be an object")
+    actual = {str(key) for key in value}
+    missing = sorted(fields - actual)
+    unknown = sorted(actual - fields)
+    if missing:
+        raise WorkflowError(f"{label} missing required fields: {', '.join(missing)}")
+    if unknown:
+        raise WorkflowError(f"{label} has unknown fields: {', '.join(unknown)}")
+    return cast(Mapping[str, Any], value)
+
+
+def exact_list(value: Any, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise WorkflowError(f"{label} must be a list")
+    return value
+
+
+def strict_nonempty_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise WorkflowError(f"{label} must be a non-empty string")
+    return value
+
+
+def positive_number(value: Any, label: str) -> int | float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        raise WorkflowError(f"{label} must be a positive number")
+    return cast(int | float, value)
+
+
+def unique_strings(value: Any, label: str, *, allow_empty: bool = False) -> list[str]:
+    raw = exact_list(value, label)
+    result = [strict_nonempty_string(child, f"{label}[]") for child in raw]
+    if not allow_empty and not result:
+        raise WorkflowError(f"{label} must not be empty")
+    if len(set(result)) != len(result):
+        raise WorkflowError(f"{label} contains duplicate values")
+    return result
+
+
+def load_decisions_input(path: Path) -> DecisionsInputSnapshot:
+    resolved = path.expanduser().resolve(strict=False)
+    if not resolved.is_file():
+        raise WorkflowError("decisions JSON does not exist or is not a file")
+    try:
+        content = resolved.read_bytes()
+    except OSError as exc:
+        raise WorkflowError("could not read decisions JSON") from exc
+    return DecisionsInputSnapshot(
+        path=resolved,
+        content=content,
+        sha256=sha256_bytes(content),
+        data=parse_strict_json_object(content, "decisions JSON"),
+    )
+
+
+def assert_decisions_unchanged(snapshot: DecisionsInputSnapshot) -> None:
+    try:
+        current = snapshot.path.read_bytes()
+    except OSError as exc:
+        raise WorkflowError(
+            "could not re-read decisions JSON after Human Approval"
+        ) from exc
+    if sha256_bytes(current) != snapshot.sha256:
+        raise WorkflowError("decisions JSON hash drift detected after Human Approval")
 
 
 def load_module(name: str, path: Path) -> ModuleType:
@@ -1308,6 +1417,524 @@ def apply_interactive_decisions(
         )
 
 
+def collect_assumptions(draft: Mapping[str, Any]) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key == "assumptions" and isinstance(child, list):
+                    for index, assumption in enumerate(child):
+                        if isinstance(assumption, str) and assumption.strip():
+                            findings.append(
+                                {
+                                    "source_path": f"{child_path}[{index}]",
+                                    "assumption": assumption,
+                                }
+                            )
+                else:
+                    visit(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}[{index}]")
+
+    visit(draft, "")
+    return findings
+
+
+def reject_unresolved_conflicts(draft: Mapping[str, Any]) -> None:
+    def visit(value: Any, path: str) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                child_path = f"{path}.{key}" if path else str(key)
+                if key == "conflicts" and isinstance(child, list) and child:
+                    raise WorkflowError(
+                        f"batch decisions do not resolve conflicts: {child_path}"
+                    )
+                visit(child, child_path)
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, f"{path}[{index}]")
+
+    visit(draft, "")
+
+
+def require_exact_red_flags(
+    value: Any,
+    actual: Any,
+    label: str,
+) -> list[str]:
+    acknowledged = unique_strings(value, label, allow_empty=True)
+    actual_flags = [
+        strict_nonempty_string(child, f"{label} source red flag")
+        for child in exact_list(actual, f"{label} source")
+    ]
+    if acknowledged != actual_flags:
+        raise WorkflowError(f"{label} does not exactly match source red_flags")
+    return acknowledged
+
+
+def normalized_text(value: str) -> str:
+    return "".join(value.casefold().split())
+
+
+def validate_decisions_binding(
+    data: Mapping[str, Any],
+    *,
+    case_id: str,
+    snapshot: InputSnapshot,
+) -> None:
+    if data.get("schema_version") != DECISIONS_INPUT_SCHEMA:
+        raise WorkflowError(
+            f"decisions JSON schema_version must be {DECISIONS_INPUT_SCHEMA}"
+        )
+    if data.get("case_id") != case_id:
+        raise WorkflowError("decisions JSON Case ID does not match")
+    if data.get("draft_id") != snapshot.draft.get("draft_id"):
+        raise WorkflowError("decisions JSON draft ID does not match")
+    bindings = exact_object(
+        data.get("input_sha256"),
+        "input_sha256",
+        {
+            "source_bundle_manifest",
+            "preliminary_composition_draft",
+            "igor_review_card",
+        },
+    )
+    expected = {
+        "source_bundle_manifest": snapshot.hashes[MANIFEST_NAME],
+        "preliminary_composition_draft": snapshot.hashes[DRAFT_NAME],
+        "igor_review_card": snapshot.hashes[REVIEW_NAME],
+    }
+    for field_name, expected_hash in expected.items():
+        value = strict_nonempty_string(bindings.get(field_name), field_name)
+        if HASH_RE.fullmatch(value) is None or value != expected_hash:
+            raise WorkflowError(f"decisions JSON hash binding failed: {field_name}")
+
+
+def validate_source_quality_acknowledgements(
+    value: Any,
+    draft: Mapping[str, Any],
+) -> tuple[list[dict[str, str]], set[str]]:
+    entries = exact_list(value, "source_quality_acknowledgements")
+    expected = {
+        f"red_flags[{index}]": warning
+        for index, warning in enumerate(as_list(draft.get("red_flags")))
+        if isinstance(warning, str) and warning.strip()
+    }
+    result: list[dict[str, str]] = []
+    paths: set[str] = set()
+    for index, raw in enumerate(entries):
+        entry = exact_object(
+            raw,
+            f"source_quality_acknowledgements[{index}]",
+            {"source_path", "warning", "reason"},
+        )
+        source_path = strict_nonempty_string(entry.get("source_path"), "source_path")
+        warning = strict_nonempty_string(entry.get("warning"), "warning")
+        reason = strict_nonempty_string(entry.get("reason"), "reason")
+        if source_path in paths:
+            raise WorkflowError("duplicate source-quality acknowledgement")
+        if expected.get(source_path) != warning:
+            raise WorkflowError("unknown or stale source-quality acknowledgement")
+        paths.add(source_path)
+        result.append(
+            {"source_path": source_path, "warning": warning, "reason": reason}
+        )
+    if paths != set(expected):
+        raise WorkflowError("source-quality warnings are not exactly acknowledged")
+    return result, paths
+
+
+def validate_assumption_resolutions(
+    value: Any,
+    draft: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    entries = exact_list(value, "technical_assumption_resolutions")
+    expected = {
+        finding["source_path"]: finding["assumption"]
+        for finding in collect_assumptions(draft)
+    }
+    result: list[dict[str, str]] = []
+    paths: set[str] = set()
+    allowed = {"acknowledged", "resolved_by_explicit_composition_decisions"}
+    for index, raw in enumerate(entries):
+        entry = exact_object(
+            raw,
+            f"technical_assumption_resolutions[{index}]",
+            {"source_path", "assumption", "resolution", "reason"},
+        )
+        source_path = strict_nonempty_string(entry.get("source_path"), "source_path")
+        assumption = strict_nonempty_string(entry.get("assumption"), "assumption")
+        resolution = strict_nonempty_string(entry.get("resolution"), "resolution")
+        reason = strict_nonempty_string(entry.get("reason"), "reason")
+        if source_path in paths:
+            raise WorkflowError("duplicate technical assumption resolution")
+        if expected.get(source_path) != assumption:
+            raise WorkflowError("unknown or stale technical assumption resolution")
+        if resolution not in allowed:
+            raise WorkflowError("unsupported technical assumption resolution")
+        paths.add(source_path)
+        result.append(
+            {
+                "source_path": source_path,
+                "assumption": assumption,
+                "resolution": resolution,
+                "reason": reason,
+            }
+        )
+    if paths != set(expected):
+        raise WorkflowError("technical assumptions are not exactly resolved")
+    return result
+
+
+def apply_batch_decisions(
+    snapshot: InputSnapshot,
+    decisions_snapshot: DecisionsInputSnapshot,
+    *,
+    case_id: str,
+) -> CompositionState:
+    data = exact_object(
+        decisions_snapshot.data,
+        "decisions JSON",
+        {
+            "schema_version",
+            "case_id",
+            "draft_id",
+            "input_sha256",
+            "items",
+            "source_quality_acknowledgements",
+            "technical_assumption_resolutions",
+            "supply_boundary",
+        },
+    )
+    validate_decisions_binding(
+        data,
+        case_id=case_id,
+        snapshot=snapshot,
+    )
+    reject_unresolved_conflicts(snapshot.draft)
+    source_acknowledgements, covered_red_flag_paths = (
+        validate_source_quality_acknowledgements(
+            data.get("source_quality_acknowledgements"), snapshot.draft
+        )
+    )
+    assumption_resolutions = validate_assumption_resolutions(
+        data.get("technical_assumption_resolutions"), snapshot.draft
+    )
+    supply_boundary = strict_nonempty_string(
+        data.get("supply_boundary"), "supply_boundary"
+    )
+
+    state = classify_composition(snapshot.draft)
+    source_items = as_list(snapshot.draft.get("items"))
+    decisions_items = exact_list(data.get("items"), "items")
+    source_item_ids = [as_mapping(item).get("item_id") for item in source_items]
+    decision_item_ids = [as_mapping(item).get("item_id") for item in decisions_items]
+    if len(set(decision_item_ids)) != len(decision_item_ids):
+        raise WorkflowError("decisions JSON contains duplicate item_id")
+    if decision_item_ids != source_item_ids:
+        raise WorkflowError("decisions JSON items must exactly follow source item IDs")
+
+    expanded_components: list[dict[str, Any]] = []
+    item_audit: list[dict[str, Any]] = []
+    overridden_targets: set[str] = set()
+    for item_index, (source_raw, decision_raw) in enumerate(
+        zip(source_items, decisions_items, strict=True)
+    ):
+        source_item = as_mapping(source_raw)
+        item_decision = exact_object(
+            decision_raw,
+            f"items[{item_index}]",
+            {
+                "item_id",
+                "product_name",
+                "quantity",
+                "manufacturer",
+                "acknowledged_red_flags",
+                "cabinet",
+                "component_groups",
+            },
+        )
+        item_id = strict_nonempty_string(item_decision.get("item_id"), "item_id")
+        product_name = strict_nonempty_string(
+            item_decision.get("product_name"), "product_name"
+        )
+        item_quantity = positive_number(item_decision.get("quantity"), "quantity")
+        if not isinstance(item_quantity, int):
+            raise WorkflowError("item quantity must be a positive integer")
+        manufacturer = strict_nonempty_string(
+            item_decision.get("manufacturer"), "manufacturer"
+        )
+        item_flags = require_exact_red_flags(
+            item_decision.get("acknowledged_red_flags"),
+            source_item.get("red_flags"),
+            f"items[{item_index}].acknowledged_red_flags",
+        )
+        covered_red_flag_paths.update(
+            f"items[{item_index}].red_flags[{index}]"
+            for index in range(len(item_flags))
+        )
+
+        source_cabinet = as_mapping(source_item.get("cabinet_guess"))
+        cabinet = exact_object(
+            item_decision.get("cabinet"),
+            f"items[{item_index}].cabinet",
+            {"code", "label", "acknowledged_red_flags"},
+        )
+        cabinet_code = strict_nonempty_string(cabinet.get("code"), "cabinet.code")
+        cabinet_label = strict_nonempty_string(cabinet.get("label"), "cabinet.label")
+        cabinet_flags = require_exact_red_flags(
+            cabinet.get("acknowledged_red_flags"),
+            source_cabinet.get("red_flags"),
+            f"items[{item_index}].cabinet.acknowledged_red_flags",
+        )
+        covered_red_flag_paths.update(
+            f"items[{item_index}].cabinet_guess.red_flags[{index}]"
+            for index in range(len(cabinet_flags))
+        )
+
+        confirmed_item = state.items[item_index]
+        confirmed_item["product_name"] = product_name
+        confirmed_item["quantity"] = item_quantity
+        confirmed_item["cabinet"] = {
+            "cabinet_code": cabinet_code,
+            "cabinet_label": cabinet_label,
+        }
+        overridden_targets.update(
+            {f"items[{item_index}].product_name", f"items[{item_index}].quantity"}
+        )
+
+        source_components = as_list(source_item.get("components"))
+        source_by_id = {
+            as_mapping(component).get("component_id"): (index, as_mapping(component))
+            for index, component in enumerate(source_components)
+        }
+        covered_component_ids: set[str] = set()
+        groups = exact_list(
+            item_decision.get("component_groups"),
+            f"items[{item_index}].component_groups",
+        )
+        if not groups:
+            raise WorkflowError("component_groups must not be empty")
+        for group_index, group_raw in enumerate(groups):
+            group = exact_object(
+                group_raw,
+                f"items[{item_index}].component_groups[{group_index}]",
+                {
+                    "component_ids",
+                    "total_quantity",
+                    "final_description",
+                    "install_type",
+                    "substitution",
+                    "acknowledged_red_flags",
+                },
+            )
+            component_ids = unique_strings(
+                group.get("component_ids"),
+                f"items[{item_index}].component_groups[{group_index}].component_ids",
+            )
+            if covered_component_ids.intersection(component_ids):
+                raise WorkflowError("component_id is covered more than once")
+            if any(component_id not in source_by_id for component_id in component_ids):
+                raise WorkflowError("component group contains unknown component_id")
+            final_description = strict_nonempty_string(
+                group.get("final_description"), "final_description"
+            )
+            if normalized_text(manufacturer) not in normalized_text(final_description):
+                raise WorkflowError("final_description must contain manufacturer")
+            install_type = strict_nonempty_string(
+                group.get("install_type"), "install_type"
+            )
+            if install_type not in INSTALL_TYPES:
+                raise WorkflowError("batch install_type is not allowed")
+            acknowledged_flags = unique_strings(
+                group.get("acknowledged_red_flags"),
+                "component group acknowledged_red_flags",
+                allow_empty=True,
+            )
+            total_quantity = positive_number(
+                group.get("total_quantity"), "total_quantity"
+            )
+            source_total = 0.0
+            for component_id in component_ids:
+                source_index, source_component = source_by_id[component_id]
+                source_quantity = positive_number(
+                    source_component.get("quantity_guess"),
+                    f"source quantity_guess for {component_id}",
+                )
+                source_total += float(source_quantity)
+                actual_flags = require_exact_red_flags(
+                    acknowledged_flags,
+                    source_component.get("red_flags"),
+                    f"component group red_flags for {component_id}",
+                )
+                covered_red_flag_paths.update(
+                    f"items[{item_index}].components[{source_index}].red_flags[{index}]"
+                    for index in range(len(actual_flags))
+                )
+                source_code = source_component.get(
+                    "component_code_guess"
+                ) or source_component.get("model_guess")
+                source_code = strict_nonempty_string(
+                    source_code, f"source component code for {component_id}"
+                )
+                source_values = {
+                    value
+                    for field_name in (
+                        "component_code_guess",
+                        "model_guess",
+                        "component_label_guess",
+                        "rating_guess",
+                        "note_guess",
+                    )
+                    if isinstance((value := source_component.get(field_name)), str)
+                    and value.strip()
+                }
+                substitution_raw = group.get("substitution")
+                substitution: dict[str, Any] | None = None
+                rating = source_component.get("rating_guess")
+                rating_changed = (
+                    isinstance(rating, str)
+                    and rating.strip()
+                    and normalized_text(rating)
+                    not in normalized_text(final_description)
+                )
+                if substitution_raw is None:
+                    if rating_changed:
+                        raise WorkflowError(
+                            f"explicit substitution is required for {component_id}"
+                        )
+                else:
+                    substitution_value = exact_object(
+                        substitution_raw,
+                        "substitution",
+                        {"original", "final", "reason"},
+                    )
+                    original = strict_nonempty_string(
+                        substitution_value.get("original"), "substitution.original"
+                    )
+                    final = strict_nonempty_string(
+                        substitution_value.get("final"), "substitution.final"
+                    )
+                    reason = strict_nonempty_string(
+                        substitution_value.get("reason"), "substitution.reason"
+                    )
+                    if original not in source_values:
+                        raise WorkflowError(
+                            "substitution.original must exactly match source "
+                            "component data"
+                        )
+                    if final != final_description:
+                        raise WorkflowError(
+                            "substitution.final must equal final_description"
+                        )
+                    substitution = {
+                        "source_component_id": component_id,
+                        "original": original,
+                        "final": final,
+                        "reason": reason,
+                        "explicit_igor_decision": True,
+                    }
+
+                confirmed_component = as_mapping(
+                    as_list(confirmed_item.get("components"))[source_index]
+                )
+                cast(dict[str, Any], confirmed_component)[
+                    "component_code"
+                ] = source_code
+                cast(dict[str, Any], confirmed_component)[
+                    "component_label"
+                ] = final_description
+                cast(dict[str, Any], confirmed_component)["quantity"] = source_quantity
+                cast(dict[str, Any], confirmed_component)["install_type"] = install_type
+                overridden_targets.update(
+                    {
+                        f"items[{item_index}].components[{source_index}].component_label",
+                        f"items[{item_index}].components[{source_index}].install_type",
+                    }
+                )
+                expanded_components.append(
+                    {
+                        "item_id": item_id,
+                        "component_id": component_id,
+                        "manufacturer": manufacturer,
+                        "source_component": {
+                            field_name: copy.deepcopy(source_component.get(field_name))
+                            for field_name in (
+                                "component_code_guess",
+                                "model_guess",
+                                "component_label_guess",
+                                "rating_guess",
+                                "note_guess",
+                                "provenance",
+                            )
+                        },
+                        "source_code_semantics": (
+                            "project_designation_not_manufacturer_catalog_number"
+                        ),
+                        "final_component": {
+                            "component_code": source_code,
+                            "component_label": final_description,
+                            "quantity": source_quantity,
+                            "install_type": install_type,
+                        },
+                        "acknowledged_red_flags": actual_flags,
+                        "substitution": substitution,
+                    }
+                )
+            if source_total != float(total_quantity):
+                raise WorkflowError(
+                    "total_quantity does not equal source quantity_guess sum"
+                )
+            covered_component_ids.update(component_ids)
+        if covered_component_ids != set(source_by_id):
+            raise WorkflowError(
+                "component decisions do not exactly cover source components"
+            )
+        item_audit.append(
+            {
+                "item_id": item_id,
+                "source_product_name": source_item.get("product_name_guess"),
+                "product_name": product_name,
+                "quantity": item_quantity,
+                "manufacturer": manufacturer,
+                "cabinet": {
+                    "cabinet_code": cabinet_code,
+                    "cabinet_label": cabinet_label,
+                },
+                "acknowledged_red_flags": item_flags,
+                "cabinet_acknowledged_red_flags": cabinet_flags,
+            }
+        )
+
+    expected_red_flag_paths = {
+        finding["source_path"]
+        for finding in collect_preliminary_red_flags(snapshot.draft)
+    }
+    if covered_red_flag_paths != expected_red_flag_paths:
+        raise WorkflowError("preliminary red_flags are not exactly covered")
+    state.automatic_transfers = [
+        transfer
+        for transfer in state.automatic_transfers
+        if transfer.target_path not in overridden_targets
+    ]
+    state.preliminary_red_flags = []
+    state.unresolved_issue_ids.clear()
+    state.supply_boundary = supply_boundary
+    state.batch_decisions = {
+        "input_schema_version": DECISIONS_INPUT_SCHEMA,
+        "input_sha256": decisions_snapshot.sha256,
+        "item_decisions": item_audit,
+        "expanded_component_decisions": expanded_components,
+        "source_quality_acknowledgements": source_acknowledgements,
+        "technical_assumption_resolutions": assumption_resolutions,
+        "resolved_preliminary_red_flag_paths": sorted(covered_red_flag_paths),
+    }
+    return state
+
+
 def ensure_candidate_complete(state: CompositionState) -> None:
     if not state.items:
         raise WorkflowError("confirmed composition must contain at least one item")
@@ -1502,8 +2129,9 @@ def build_decision_record(
     snapshot: InputSnapshot,
     state: CompositionState,
     artifact_sha256: str,
+    final_approval_phrase: str = APPROVAL_PHRASE,
 ) -> dict[str, Any]:
-    return {
+    record = {
         "record_type": "igor_composition_decisions.v0.1",
         "case_id": case_id,
         "confirmation_id": confirmation_id,
@@ -1533,7 +2161,7 @@ def build_decision_record(
         "not_applicable_technical_details": (state.not_applicable_technical_details),
         "removed_values": state.removed_values,
         "supply_boundary_decision": state.supply_boundary,
-        "final_approval_phrase": APPROVAL_PHRASE,
+        "final_approval_phrase": final_approval_phrase,
         "confirmed_artifact": {
             "relative_path": ARTIFACT_NAME,
             "sha256": artifact_sha256,
@@ -1548,6 +2176,11 @@ def build_decision_record(
             "production": False,
         },
     }
+    if state.batch_decisions is not None:
+        record["record_type"] = "igor_composition_decisions.v0.2"
+        record["decision_mode"] = "batch_json"
+        record["batch_decisions"] = state.batch_decisions
+    return record
 
 
 def build_receipt(
@@ -1596,6 +2229,47 @@ def build_receipt(
         ),
         "",
     ]
+    if state.batch_decisions is not None:
+        warnings = as_list(state.batch_decisions.get("source_quality_acknowledgements"))
+        assumptions = as_list(
+            state.batch_decisions.get("technical_assumption_resolutions")
+        )
+        components = as_list(state.batch_decisions.get("expanded_component_decisions"))
+        substitutions = [
+            as_mapping(component).get("substitution")
+            for component in components
+            if as_mapping(component).get("substitution") is not None
+        ]
+        lines.extend(["## Batch decision audit", ""])
+        lines.append("Source-quality acknowledgements:")
+        lines.extend(
+            f"- {as_mapping(value).get('source_path')}: "
+            f"{as_mapping(value).get('warning')} — "
+            f"{as_mapping(value).get('reason')}"
+            for value in warnings
+        )
+        if not warnings:
+            lines.append("- none")
+        lines.append("Technical assumption resolutions:")
+        lines.extend(
+            f"- {as_mapping(value).get('source_path')}: "
+            f"{as_mapping(value).get('resolution')} — "
+            f"{as_mapping(value).get('reason')}"
+            for value in assumptions
+        )
+        if not assumptions:
+            lines.append("- none")
+        lines.append("Explicit substitutions:")
+        lines.extend(
+            f"- {as_mapping(value).get('source_component_id')}: "
+            f"{as_mapping(value).get('original')} -> "
+            f"{as_mapping(value).get('final')} — "
+            f"{as_mapping(value).get('reason')}"
+            for value in substitutions
+        )
+        if not substitutions:
+            lines.append("- none")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -1668,12 +2342,14 @@ def run_builder(
     case_id: str,
     confirmation_id: str,
     approval_channel: str,
+    decisions_json: Path | None = None,
     canonical_root: Path = CANONICAL_ROOT,
     input_fn: InputFunction = input,
     output_fn: OutputFunction = print,
     now_fn: NowFunction = timezone_aware_now,
     before_drift_check: Callable[[], None] | None = None,
     confirmed_validator: ValidatorFunction = default_confirmed_validator,
+    approval_phrase: str = APPROVAL_PHRASE,
 ) -> BuildResult:
     result = BuildResult(case_id=case_id)
     try:
@@ -1684,24 +2360,34 @@ def run_builder(
         snapshot = load_snapshot(paths)
         validate_identifier_integrity(snapshot.draft)
         validate_source_metadata_integrity(snapshot.draft)
-        preliminary_red_flags = collect_preliminary_red_flags(snapshot.draft)
-        if preliminary_red_flags:
-            output_fn("Preliminary red flags block confirmed composition:")
-            for finding in preliminary_red_flags:
-                output_fn(f"- {finding['source_path']}: {finding['red_flag']}")
-            raise WorkflowError(
-                "preliminary red flags block confirmed composition: "
-                + "; ".join(
-                    f"{finding['source_path']}={finding['red_flag']}"
-                    for finding in preliminary_red_flags
-                )
-            )
-        state = classify_composition(snapshot.draft)
-        apply_interactive_decisions(
-            state,
-            input_fn=input_fn,
-            output_fn=output_fn,
+        decisions_snapshot = (
+            load_decisions_input(decisions_json) if decisions_json is not None else None
         )
+        if decisions_snapshot is None:
+            preliminary_red_flags = collect_preliminary_red_flags(snapshot.draft)
+            if preliminary_red_flags:
+                output_fn("Preliminary red flags block confirmed composition:")
+                for finding in preliminary_red_flags:
+                    output_fn(f"- {finding['source_path']}: {finding['red_flag']}")
+                raise WorkflowError(
+                    "preliminary red flags block confirmed composition: "
+                    + "; ".join(
+                        f"{finding['source_path']}={finding['red_flag']}"
+                        for finding in preliminary_red_flags
+                    )
+                )
+            state = classify_composition(snapshot.draft)
+            apply_interactive_decisions(
+                state,
+                input_fn=input_fn,
+                output_fn=output_fn,
+            )
+        else:
+            state = apply_batch_decisions(
+                snapshot,
+                decisions_snapshot,
+                case_id=case_id,
+            )
         ensure_ready_for_approval(state)
         output_fn(
             render_final_summary(
@@ -1710,12 +2396,14 @@ def run_builder(
                 state=state,
             )
         )
-        phrase = input_fn(f"Type exact approval phrase [{APPROVAL_PHRASE}]: ")
-        if phrase != APPROVAL_PHRASE:
+        phrase = input_fn(f"Type exact approval phrase [{approval_phrase}]: ")
+        if phrase != approval_phrase:
             raise WorkflowError("exact technical composition approval phrase required")
         if before_drift_check is not None:
             before_drift_check()
         assert_snapshot_unchanged(snapshot)
+        if decisions_snapshot is not None:
+            assert_decisions_unchanged(decisions_snapshot)
         confirmed_at_value = now_fn()
         if confirmed_at_value.tzinfo is None or confirmed_at_value.utcoffset() is None:
             raise WorkflowError("confirmed_at must be timezone-aware")
@@ -1737,6 +2425,7 @@ def run_builder(
                 snapshot=snapshot,
                 state=state,
                 artifact_sha256=artifact_hash,
+                final_approval_phrase=approval_phrase,
             ),
             receipt_factory=lambda record, decision_hash: build_receipt(
                 record=record,
@@ -1786,6 +2475,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         case_id=args.case_id,
         confirmation_id=args.confirmation_id,
         approval_channel=args.approval_channel,
+        decisions_json=args.decisions_json,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

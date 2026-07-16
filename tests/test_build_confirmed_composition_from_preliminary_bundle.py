@@ -161,6 +161,123 @@ def create_bundle(
     return root, draft
 
 
+def create_batch_bundle(tmp_path: Path) -> tuple[Path, dict[str, Any], Path]:
+    def add_batch_review_data(draft: dict[str, Any]) -> None:
+        draft["red_flags"] = ["Synthetic source-quality warning."]
+        draft["assumptions"] = ["Synthetic technical extraction assumption."]
+        item = draft["items"][0]
+        item["red_flags"] = ["Synthetic item review required."]
+        item["cabinet_guess"]["red_flags"] = ["Synthetic cabinet review required."]
+        component = item["components"][0]
+        component.update(
+            {
+                "model_guess": "VA47",
+                "brand_guess": None,
+                "rating_guess": "16A",
+                "note_guess": "Synthetic source note.",
+                "red_flags": [
+                    "Synthetic component review required.",
+                    "Synthetic component has missing values.",
+                ],
+                "missing_fields": ["brand_guess"],
+            }
+        )
+
+    root, draft = create_bundle(tmp_path, mutate_draft=add_batch_review_data)
+    case_dir = root / "CASE-TEST-001"
+    decisions = valid_batch_decisions(case_dir, draft)
+    path = tmp_path / "batch-decisions.json"
+    path.write_bytes(canonical_json_bytes(decisions))
+    return root, draft, path
+
+
+def valid_batch_decisions(case_dir: Path, draft: dict[str, Any]) -> dict[str, Any]:
+    hashes = {
+        "source_bundle_manifest": hashlib.sha256(
+            (case_dir / builder.MANIFEST_NAME).read_bytes()
+        ).hexdigest(),
+        "preliminary_composition_draft": hashlib.sha256(
+            (case_dir / builder.DRAFT_NAME).read_bytes()
+        ).hexdigest(),
+        "igor_review_card": hashlib.sha256(
+            (case_dir / builder.REVIEW_NAME).read_bytes()
+        ).hexdigest(),
+    }
+    component = draft["items"][0]["components"][0]
+    return {
+        "schema_version": builder.DECISIONS_INPUT_SCHEMA,
+        "case_id": "CASE-TEST-001",
+        "draft_id": draft["draft_id"],
+        "input_sha256": hashes,
+        "items": [
+            {
+                "item_id": "ITEM-001",
+                "product_name": "Normalized panel VRU-1",
+                "quantity": 1,
+                "manufacturer": "CHINT",
+                "acknowledged_red_flags": draft["items"][0]["red_flags"],
+                "cabinet": {
+                    "code": "CAB-24",
+                    "label": "24-module cabinet",
+                    "acknowledged_red_flags": draft["items"][0]["cabinet_guess"][
+                        "red_flags"
+                    ],
+                },
+                "component_groups": [
+                    {
+                        "component_ids": [component["component_id"]],
+                        "total_quantity": component["quantity_guess"],
+                        "final_description": "CHINT, automatic breaker 1P 16A",
+                        "install_type": "modular_1p",
+                        "substitution": None,
+                        "acknowledged_red_flags": component["red_flags"],
+                    }
+                ],
+            }
+        ],
+        "source_quality_acknowledgements": [
+            {
+                "source_path": "red_flags[0]",
+                "warning": draft["red_flags"][0],
+                "reason": "Igor reviewed the synthetic source warning.",
+            }
+        ],
+        "technical_assumption_resolutions": [
+            {
+                "source_path": "assumptions[0]",
+                "assumption": draft["assumptions"][0],
+                "resolution": "resolved_by_explicit_composition_decisions",
+                "reason": "Every synthetic component is explicitly decided.",
+            }
+        ],
+        "supply_boundary": "Synthetic panel supply only.",
+    }
+
+
+SYNTHETIC_APPROVAL = "SYNTHETIC TECHNICAL APPROVAL"
+
+
+def run_batch(
+    root: Path,
+    decisions_path: Path,
+    *,
+    approval: str = SYNTHETIC_APPROVAL,
+    before_drift_check: Any = None,
+) -> Any:
+    return builder.run_builder(
+        case_id="CASE-TEST-001",
+        confirmation_id="CONFIRM-TEST-BATCH-001",
+        approval_channel="synthetic_test",
+        decisions_json=decisions_path,
+        canonical_root=root,
+        input_fn=answers([approval]),
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+        before_drift_check=before_drift_check,
+        approval_phrase=SYNTHETIC_APPROVAL,
+    )
+
+
 def fixed_now() -> datetime:
     return datetime(2099, 1, 1, 12, 30, tzinfo=timezone(timedelta(hours=5)))
 
@@ -529,6 +646,283 @@ def test_nonempty_final_root_red_flags_are_rejected(tmp_path: Path) -> None:
 
     assert not paths.output_dir.exists()
     assert not list(paths.case_dir.glob(".confirmed-staging-*"))
+
+
+def test_batch_mode_expands_components_and_preserves_source_audit(
+    tmp_path: Path,
+) -> None:
+    root, draft, decisions_path = create_batch_bundle(tmp_path)
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "PASS"
+    artifact, decisions, receipt = read_outputs(tmp_path)
+    component = artifact["items"][0]["components"][0]
+    assert artifact["items"][0]["product_name"] == "Normalized panel VRU-1"
+    assert component == {
+        "component_id": "COMP-001",
+        "component_code": "VA47",
+        "component_label": "CHINT, automatic breaker 1P 16A",
+        "quantity": 2,
+        "install_type": "modular_1p",
+    }
+    assert decisions["record_type"] == "igor_composition_decisions.v0.2"
+    assert decisions["decision_mode"] == "batch_json"
+    expanded = decisions["batch_decisions"]["expanded_component_decisions"][0]
+    source = expanded["source_component"]
+    original = draft["items"][0]["components"][0]
+    for field_name in (
+        "component_code_guess",
+        "model_guess",
+        "component_label_guess",
+        "rating_guess",
+        "note_guess",
+        "provenance",
+    ):
+        assert source[field_name] == original.get(field_name)
+    assert expanded["source_code_semantics"] == (
+        "project_designation_not_manufacturer_catalog_number"
+    )
+    assert "Synthetic source-quality warning." in receipt
+    assert "resolved_by_explicit_composition_decisions" in receipt
+
+
+def test_batch_mode_reaches_only_final_human_approval_before_output(
+    tmp_path: Path,
+) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    prompts: list[str] = []
+
+    def reject_approval(prompt: str) -> str:
+        prompts.append(prompt)
+        return "WRONG"
+
+    result = builder.run_builder(
+        case_id="CASE-TEST-001",
+        confirmation_id="CONFIRM-TEST-BATCH-001",
+        approval_channel="synthetic_test",
+        decisions_json=decisions_path,
+        canonical_root=root,
+        input_fn=reject_approval,
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+        approval_phrase=SYNTHETIC_APPROVAL,
+    )
+
+    assert result.status == "FAIL"
+    assert prompts == [f"Type exact approval phrase [{SYNTHETIC_APPROVAL}]: "]
+    assert not (root / "CASE-TEST-001" / builder.OUTPUT_DIR_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda value: value.pop("supply_boundary"), "missing required fields"),
+        (lambda value: value.update({"unknown": True}), "unknown fields"),
+        (lambda value: value.update({"case_id": "CASE-WRONG"}), "Case ID"),
+        (lambda value: value.update({"draft_id": "PRELIM-WRONG"}), "draft ID"),
+        (
+            lambda value: value["input_sha256"].update(
+                {"preliminary_composition_draft": "0" * 64}
+            ),
+            "hash binding",
+        ),
+        (lambda value: value.update({"supply_boundary": "  "}), "supply_boundary"),
+    ],
+)
+def test_batch_root_contract_fails_closed(
+    tmp_path: Path,
+    mutation: Any,
+    message: str,
+) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    value = json.loads(decisions_path.read_text("utf-8"))
+    mutation(value)
+    decisions_path.write_bytes(canonical_json_bytes(value))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert message in result.red_flags[0]
+    assert not (root / "CASE-TEST-001" / builder.OUTPUT_DIR_NAME).exists()
+
+
+def test_batch_duplicate_json_field_fails_closed(tmp_path: Path) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    text = decisions_path.read_text("utf-8")
+    decisions_path.write_text(
+        text.replace(
+            '  "case_id": "CASE-TEST-001",',
+            '  "case_id": "CASE-TEST-001",\n  "case_id": "CASE-TEST-001",',
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert "duplicate JSON field: case_id" in result.red_flags[0]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda value: value["items"][0]["component_groups"][0].update(
+                {"component_ids": []}
+            ),
+            "must not be empty",
+        ),
+        (
+            lambda value: value["items"][0]["component_groups"][0].update(
+                {"component_ids": ["COMP-001", "COMP-001"]}
+            ),
+            "duplicate values",
+        ),
+        (
+            lambda value: value["items"][0]["component_groups"][0].update(
+                {"component_ids": ["COMP-UNKNOWN"]}
+            ),
+            "unknown component_id",
+        ),
+        (
+            lambda value: value["items"][0]["component_groups"][0].update(
+                {"total_quantity": 15}
+            ),
+            "total_quantity",
+        ),
+        (
+            lambda value: value["items"][0]["component_groups"][0].update(
+                {"acknowledged_red_flags": []}
+            ),
+            "does not exactly match",
+        ),
+    ],
+)
+def test_batch_component_coverage_and_total_quantity_fail_closed(
+    tmp_path: Path,
+    mutation: Any,
+    message: str,
+) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    value = json.loads(decisions_path.read_text("utf-8"))
+    mutation(value)
+    decisions_path.write_bytes(canonical_json_bytes(value))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert message in result.red_flags[0]
+
+
+def test_batch_null_source_quantity_fails_closed(tmp_path: Path) -> None:
+    root, draft, decisions_path = create_batch_bundle(tmp_path)
+    case_dir = root / "CASE-TEST-001"
+    draft["items"][0]["components"][0]["quantity_guess"] = None
+    (case_dir / builder.DRAFT_NAME).write_bytes(canonical_json_bytes(draft))
+    decisions = valid_batch_decisions(case_dir, draft)
+    decisions["items"][0]["component_groups"][0]["total_quantity"] = 2
+    decisions_path.write_bytes(canonical_json_bytes(decisions))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert "quantity_guess" in result.red_flags[0]
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ("source_quality_acknowledgements", "source-quality warnings"),
+        ("technical_assumption_resolutions", "technical assumptions"),
+    ],
+)
+def test_batch_warnings_and_assumptions_require_exact_coverage(
+    tmp_path: Path,
+    section: str,
+    message: str,
+) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    value = json.loads(decisions_path.read_text("utf-8"))
+    value[section] = []
+    decisions_path.write_bytes(canonical_json_bytes(value))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert message in result.red_flags[0]
+
+
+def test_batch_explicit_substitution_is_expanded_per_component(
+    tmp_path: Path,
+) -> None:
+    root, draft, decisions_path = create_batch_bundle(tmp_path)
+    case_dir = root / "CASE-TEST-001"
+    component = draft["items"][0]["components"][0]
+    component["component_label_guess"] = "QF0 VN-32 3P 25A"
+    component["component_code_guess"] = "VN-32"
+    component["model_guess"] = "VN-32"
+    component["rating_guess"] = "25A"
+    (case_dir / builder.DRAFT_NAME).write_bytes(canonical_json_bytes(draft))
+    decisions = valid_batch_decisions(case_dir, draft)
+    group = decisions["items"][0]["component_groups"][0]
+    group["final_description"] = "CHINT, load switch 3P 32A"
+    group["install_type"] = "load_switch_3p"
+    group["substitution"] = {
+        "original": "QF0 VN-32 3P 25A",
+        "final": "CHINT, load switch 3P 32A",
+        "reason": "Explicit synthetic Igor substitution.",
+    }
+    decisions_path.write_bytes(canonical_json_bytes(decisions))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "PASS"
+    _artifact, record, receipt = read_outputs(tmp_path)
+    substitution = record["batch_decisions"]["expanded_component_decisions"][0][
+        "substitution"
+    ]
+    assert substitution == {
+        "source_component_id": "COMP-001",
+        "original": "QF0 VN-32 3P 25A",
+        "final": "CHINT, load switch 3P 32A",
+        "reason": "Explicit synthetic Igor substitution.",
+        "explicit_igor_decision": True,
+    }
+    assert "COMP-001" in receipt
+    assert "25A -> CHINT, load switch 3P 32A" in receipt
+
+
+def test_batch_hidden_rating_change_requires_substitution(tmp_path: Path) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+    value = json.loads(decisions_path.read_text("utf-8"))
+    value["items"][0]["component_groups"][0][
+        "final_description"
+    ] = "CHINT, automatic breaker 1P 20A"
+    decisions_path.write_bytes(canonical_json_bytes(value))
+
+    result = run_batch(root, decisions_path)
+
+    assert result.status == "FAIL"
+    assert "explicit substitution is required" in result.red_flags[0]
+
+
+def test_batch_decisions_hash_drift_after_approval_blocks_output(
+    tmp_path: Path,
+) -> None:
+    root, _draft, decisions_path = create_batch_bundle(tmp_path)
+
+    result = run_batch(
+        root,
+        decisions_path,
+        before_drift_check=lambda: decisions_path.write_text(
+            decisions_path.read_text("utf-8") + " ", encoding="utf-8"
+        ),
+    )
+
+    assert result.status == "FAIL"
+    assert "decisions JSON hash drift" in result.red_flags[0]
+    assert not (root / "CASE-TEST-001" / builder.OUTPUT_DIR_NAME).exists()
 
 
 def test_successful_publication_uses_exact_hash_links(tmp_path: Path) -> None:

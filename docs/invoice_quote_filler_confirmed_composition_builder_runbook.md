@@ -42,6 +42,112 @@ CASE-[A-Z0-9]+(?:-[A-Z0-9]+)* и точно совпадать с именем �
       --confirmation-id "CONFIRM-COMPOSITION-2026-001" `
       --approval-channel "igor_local_terminal"
 
+### Batch decisions JSON
+
+Для реального bundle с большим количеством однотипных компонентов тот же builder
+поддерживает optional batch-режим. Без `--decisions-json` прежний интерактивный
+режим и его outputs не меняются.
+
+    .\.venv\Scripts\python.exe `
+      .\scripts\build_confirmed_composition_from_preliminary_bundle.py `
+      --case-id "CASE-2026-001" `
+      --confirmation-id "CONFIRM-COMPOSITION-2026-001" `
+      --approval-channel "igor_local_terminal" `
+      --decisions-json "C:\approved-inputs\igor-decisions.json"
+
+JSON читается как strict UTF-8. Duplicate object keys, unknown или missing
+fields, пустые обязательные строки и неизвестные IDs блокируют workflow до
+Human Approval и без canonical outputs.
+
+Root contract `igor_composition_decisions_input.v0.1`:
+
+    {
+      "schema_version": "igor_composition_decisions_input.v0.1",
+      "case_id": "CASE-2026-001",
+      "draft_id": "PRELIM-2026-001",
+      "input_sha256": {
+        "source_bundle_manifest": "<64 lowercase hex>",
+        "preliminary_composition_draft": "<64 lowercase hex>",
+        "igor_review_card": "<64 lowercase hex>"
+      },
+      "items": [
+        {
+          "item_id": "ITEM-001",
+          "product_name": "ЩО-6",
+          "quantity": 1,
+          "manufacturer": "CHINT",
+          "acknowledged_red_flags": [],
+          "cabinet": {
+            "code": "ПР",
+            "label": "ПР 800×600×250 мм, металл",
+            "acknowledged_red_flags": []
+          },
+          "component_groups": [
+            {
+              "component_ids": ["ITEM-001-COMP-001"],
+              "total_quantity": 1,
+              "final_description": "CHINT, автоматический выключатель 3P 63А",
+              "install_type": "mccb_up_to_100a",
+              "substitution": null,
+              "acknowledged_red_flags": []
+            }
+          ]
+        }
+      ],
+      "source_quality_acknowledgements": [],
+      "technical_assumption_resolutions": [],
+      "supply_boundary": "Internal Igor-approved supply boundary."
+    }
+
+Каждый item ID должен присутствовать один раз и в исходном порядке. Каждый
+source component ID должен быть покрыт ровно одной группой своего item. Группа
+является только компактным input: перед review она детерминированно раскрывается
+в отдельную audit decision по каждому component ID.
+
+`total_quantity` является контрольной суммой группы. Количество каждого
+раскрытого компонента берётся только из его исходного `quantity_guess`.
+`total_quantity` должно точно равняться сумме этих source quantities; оно не
+назначается каждому компоненту. Null/non-positive source quantity, mismatch
+суммы, неизвестный или повторный ID блокируют workflow.
+
+Для каждого компонента expanded decision сохраняет без изменения source
+`component_code_guess`, `model_guess`, `component_label_guess`, `rating_guess`,
+`note_guess` и `provenance`. В confirmed artifact исходный `component_code`
+остаётся проектным обозначением, а утверждённый generic CHINT-текст записывается
+в `component_label`. Проектное обозначение явно помечается в audit record как не
+являющееся каталожным номером производителя. Каталожные номера не выводятся из
+обозначений проекта и не придумываются.
+
+Если меняется source rating, `substitution` обязателен:
+
+    {
+      "original": "QF0 ВН-32 3P 25А",
+      "final": "CHINT, выключатель нагрузки 3P 32А",
+      "reason": "Явная причина решения Игоря."
+    }
+
+Expanded record дополнительно содержит source component ID и
+`explicit_igor_decision = true`. `original` обязан дословно совпадать с одним из
+source technical values, а `final` — с `final_description`.
+
+`acknowledged_red_flags` группы сверяется отдельно с exact `red_flags` каждого
+перечисленного компонента. Item/cabinet red flags также требуют точного
+покрытия. Root source warnings задаются exact `source_path`, exact исходным
+`warning` и непустой причиной в `source_quality_acknowledgements`. Все source
+assumptions требуют exact path/text и resolution `acknowledged` либо
+`resolved_by_explicit_composition_decisions`. Неизвестная, повторная, устаревшая
+или пропущенная запись блокирует workflow; warning/assumption не исчезают из
+audit trail.
+
+`supply_boundary` обязателен как непустой внутренний audit-текст. Он не является
+командой добавлять границу поставки в CSV, XLSX или КП. Поле IP в этом contract
+не используется.
+
+После итогового review builder запрашивает прежнюю exact approval phrase. Затем
+повторно хеширует manifest, draft, review card и decisions JSON. Любой drift
+блокирует публикацию. Batch output decision record получает
+`igor_composition_decisions.v0.2`; canonical имена трёх outputs не меняются.
+
 confirmed_by всегда равен Igor. confirmed_at формируется программой после
 финального подтверждения как timezone-aware ISO 8601 timestamp.
 
@@ -79,10 +185,12 @@ provenanced значения не переносятся автоматичес�
 
 ## Preliminary red flags
 
-Любой непустой red_flags на root, item, cabinet, component или другом вложенном
-техническом объекте блокирует workflow. Builder выводит точные source paths,
-возвращает FAIL, не запрашивает approval phrase и не создаёт staging/canonical
-outputs. Интерактивного принятия preliminary red flag в этой версии нет.
+В интерактивном режиме без `--decisions-json` любой preliminary red flag
+блокирует workflow до Human Approval. В batch-режиме red flags не удаляются и
+не принимаются молча: каждый флаг должен быть точно покрыт соответствующим
+acknowledgement из decisions JSON. Пропущенное, неизвестное, повторное или
+несовпадающее acknowledgement блокирует workflow до Human Approval. Все
+подтверждённые red flags сохраняются в audit record и receipt.
 
 ## Вопросы Игорю
 
