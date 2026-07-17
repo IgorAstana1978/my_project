@@ -1,5 +1,6 @@
 import csv
 import importlib.util
+import io
 import json
 import sys
 from pathlib import Path
@@ -114,7 +115,14 @@ def valid_data() -> dict[str, Any]:
                         "component_label": "ВА47 1P",
                         "quantity": 4,
                         "install_type": "modular_1p",
-                    }
+                    },
+                    {
+                        "component_id": "C-002",
+                        "component_code": "EKF-VA47-29-3P",
+                        "component_label": "ВА47 3 полюсный до 63А",
+                        "quantity": 3,
+                        "install_type": "modular_3p",
+                    },
                 ],
             }
         ],
@@ -140,28 +148,127 @@ def valid_data() -> dict[str, Any]:
     }
 
 
+def multi_item_data() -> dict[str, Any]:
+    data = valid_data()
+    specs = (
+        (
+            "ЩО-TEST",
+            "ПР",
+            "ПР 800×600×250 мм, металл",
+            21,
+            "RAW-VA88",
+            "CHINT, автоматический выключатель 3P 63А",
+            "mccb_up_to_100a",
+        ),
+        (
+            "НЩР-TEST",
+            "КРН-36",
+            "КРН-36, 540×330×100 мм, металл",
+            13,
+            "RAW-AVDT",
+            "CHINT, АВДТ 2P C16/30мА",
+            "diff_1p_n",
+        ),
+        (
+            "АВР-TEST",
+            "КРН-36",
+            "КРН-36, 540×330×100 мм, металл",
+            12,
+            "RAW-VN",
+            "CHINT, выключатель нагрузки 3P 32А",
+            "load_switch_3p",
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    for item_index, spec in enumerate(specs, start=1):
+        product, cabinet_code, cabinet_label, count, code, label, install_type = spec
+        components: list[dict[str, Any]] = []
+        for component_index in range(1, count + 1):
+            component = {
+                "component_id": f"I{item_index}-C{component_index}",
+                "component_code": code,
+                "component_label": label,
+                "quantity": 1,
+                "install_type": install_type,
+            }
+            components.append(component)
+            rows.append(
+                {
+                    "product_name": product,
+                    "cabinet_code": cabinet_code,
+                    "consumables_factor": 1.2,
+                    "component_code": code,
+                    "component_qty": 1,
+                    "install_type": install_type,
+                }
+            )
+        items.append(
+            {
+                "item_id": f"ITEM-{item_index}",
+                "product_name": product,
+                "product_type": "switchboard",
+                "quantity": 1,
+                "cabinet": {
+                    "cabinet_code": cabinet_code,
+                    "cabinet_label": cabinet_label,
+                },
+                "components": components,
+            }
+        )
+    data["calculator_input_format"]["rows"] = rows
+    data["items"] = items
+    return data
+
+
 def write_json(tmp_path: Path, data: dict[str, Any]) -> Path:
     path = tmp_path / "completed-input.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
-def calculator_stdout(status: str = "PASS") -> str:
-    return "\n".join(
+def calculator_stdout(
+    status: str = "PASS",
+    *,
+    rows: int = 2,
+    total: int = 44512,
+    red_flags: list[str] | None = None,
+) -> str:
+    lines = [
+        "PRICE_CALCULATION_DRAFT_REPORT_START",
+        "",
+        "Status:",
+        status,
+        "",
+        "Mode:",
+        "read-only preliminary price draft",
+        "",
+        "Input rows count:",
+        str(rows),
+        "",
+        "Cabinet:",
+        "CAB-KRN-24 / Корпус КРН-24 395х330х100",
+        "",
+        "Cabinet price:",
+        "7 985",
+        "",
+        "Component material total:",
+        "16 900",
+        "",
+        "Work total:",
+        "2 700",
+        "",
+        "Additional materials total:",
+        "3 380",
+        "",
+        "Total preliminary price:",
+        f"{total:,}".replace(",", " "),
+        "",
+        "Red flags:",
+    ]
+    lines.extend(red_flags if red_flags is not None else ["none"])
+    lines.extend(
         [
-            "PRICE_CALCULATION_DRAFT_REPORT_START",
-            "",
-            "Status:",
-            status,
-            "",
-            "Mode:",
-            "read-only preliminary price draft",
-            "",
-            "Input rows count:",
-            "2",
-            "",
-            "Total preliminary price:",
-            "44 512",
             "",
             "Commercial status:",
             "preliminary only; PASS is not commercial approval",
@@ -172,6 +279,7 @@ def calculator_stdout(status: str = "PASS") -> str:
             "PRICE_CALCULATION_DRAFT_REPORT_END",
         ]
     )
+    return "\n".join(lines)
 
 
 def successful_calculator_result() -> Any:
@@ -203,6 +311,112 @@ def test_valid_completed_draft_runs_validator_then_calculator_path(
     assert result.checks["calculator execution"] == "pass"
     assert len(calls) == 1
     assert not calls[0].exists()
+
+
+def test_multi_item_split_runs_21_13_12_and_aggregates_total(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed_json = write_json(tmp_path, multi_item_data())
+    expected_counts = [21, 13, 12]
+    expected_totals = [101000, 202000, 303000]
+    calls: list[Path] = []
+
+    def fake_calculator(price_workbook: Path, input_csv: Path) -> Any:
+        call_index = len(calls)
+        with input_csv.open("r", encoding="utf-8", newline="") as csv_file:
+            csv_rows = list(csv.reader(csv_file, delimiter=";"))
+        assert len(csv_rows) - 1 == expected_counts[call_index]
+        assert len({row[0] for row in csv_rows[1:]}) == 1
+        calls.append(input_csv)
+        return runner.CalculatorProcessResult(
+            returncode=0,
+            stdout=calculator_stdout(
+                rows=expected_counts[call_index],
+                total=expected_totals[call_index],
+            ),
+        )
+
+    monkeypatch.setattr(runner, "run_calculator_cli", fake_calculator)
+    result = runner.run_checked_price_calculator_from_completed_draft(
+        completed_json,
+        PRICE_WORKBOOK,
+    )
+
+    assert result.status == "PASS"
+    assert [summary.input_rows_count for summary in result.item_summaries] == [
+        21,
+        13,
+        12,
+    ]
+    assert result.overall_preliminary_total == sum(expected_totals)
+    assert len(result.calculator_runs) == 3
+    assert len(result.temp_csv_paths) == 3
+    assert all(not path.exists() for path in calls)
+
+
+def test_item_component_audit_mismatch_fails_before_calculator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = valid_data()
+    data["items"][0]["components"][0]["component_code"] = "MISMATCH"
+    completed_json = write_json(tmp_path, data)
+    monkeypatch.setattr(
+        runner,
+        "run_calculator_cli",
+        lambda price_workbook, input_csv: (_ for _ in ()).throw(
+            AssertionError("calculator should not run")
+        ),
+    )
+
+    result = runner.run_checked_price_calculator_from_completed_draft(
+        completed_json,
+        PRICE_WORKBOOK,
+    )
+
+    assert result.status == "FAIL"
+    assert any("audit mismatch" in flag for flag in result.red_flags)
+
+
+def test_multi_item_run_preserves_safety_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data = multi_item_data()
+    original_safety = dict(data["safety"])
+    completed_json = write_json(tmp_path, data)
+    call_count = 0
+
+    def fake_calculator(price_workbook: Path, input_csv: Path) -> Any:
+        nonlocal call_count
+        rows = (21, 13, 12)[call_count]
+        call_count += 1
+        return runner.CalculatorProcessResult(
+            returncode=0,
+            stdout=calculator_stdout(rows=rows, total=1000),
+        )
+
+    monkeypatch.setattr(runner, "run_calculator_cli", fake_calculator)
+    result = runner.run_checked_price_calculator_from_completed_draft(
+        completed_json,
+        PRICE_WORKBOOK,
+    )
+
+    reloaded = json.loads(completed_json.read_text(encoding="utf-8"))
+    assert result.checks["safety boundary"] == "pass"
+    assert reloaded["safety"] == original_safety
+    assert all(
+        reloaded["safety"][field_name] is False
+        for field_name in (
+            "price_calculation_executed",
+            "price_approved_by_igor",
+            "commercial_csv_authorized",
+            "client_style_export_authorized",
+            "sending_authorized",
+            "production_authorized",
+        )
+    )
 
 
 def test_validator_fail_prevents_calculator_execution(
@@ -261,7 +475,7 @@ def test_csv_bridge_uses_exact_columns_and_semicolon_delimiter(
         captured_text.append(input_csv.read_text(encoding="utf-8"))
         with input_csv.open("r", encoding="utf-8", newline="") as csv_file:
             rows = list(csv.reader(csv_file, delimiter=";"))
-        assert rows[0] == CALCULATOR_COLUMNS
+        assert rows[0] == CALCULATOR_COLUMNS + ["component_label", "cabinet_label"]
         assert rows[1] == [
             "РУ-АВР / ЩРН-24",
             "CAB-KRN-24",
@@ -269,6 +483,8 @@ def test_csv_bridge_uses_exact_columns_and_semicolon_delimiter(
             "EKF-VA47-29-1P",
             "4",
             "modular_1p",
+            "ВА47 1P",
+            "КРН-24",
         ]
         return successful_calculator_result()
 
@@ -281,7 +497,9 @@ def test_csv_bridge_uses_exact_columns_and_semicolon_delimiter(
 
     assert result.status == "PASS"
     assert captured_text
-    assert captured_text[0].splitlines()[0] == ";".join(CALCULATOR_COLUMNS)
+    assert captured_text[0].splitlines()[0] == ";".join(
+        CALCULATOR_COLUMNS + ["component_label", "cabinet_label"]
+    )
     assert "," not in captured_text[0].splitlines()[0]
 
 
@@ -361,6 +579,107 @@ def test_calculator_non_zero_causes_runner_fail(
     assert result.status == "FAIL"
     assert result.checks["calculator execution"] == "fail"
     assert any("non-zero" in flag for flag in result.red_flags)
+
+
+def test_child_calculator_uses_utf8_environment_and_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(command: list[str], **kwargs: Any) -> Any:
+        captured["command"] = command
+        captured.update(kwargs)
+        return type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "ПР 800×600×250", "stderr": ""},
+        )()
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    result = runner.run_calculator_cli(PRICE_WORKBOOK, Path("input.csv"))
+
+    assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+    assert captured["env"]["PYTHONUTF8"] == "1"
+    assert captured["text"] is True
+    assert captured["encoding"] == "utf-8"
+    assert captured["errors"] == "strict"
+    assert result.stdout == "ПР 800×600×250"
+
+
+def test_cli_utf8_reconfigure_prints_multiplication_sign_from_cp1251(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stdout_bytes = io.BytesIO()
+    stderr_bytes = io.BytesIO()
+    stdout = io.TextIOWrapper(stdout_bytes, encoding="cp1251")
+    stderr = io.TextIOWrapper(stderr_bytes, encoding="cp1251")
+    monkeypatch.setattr(runner.sys, "stdout", stdout)
+    monkeypatch.setattr(runner.sys, "stderr", stderr)
+
+    runner.configure_cli_utf8()
+    stdout.write("ПР 800×600×250 мм, металл")
+    stdout.flush()
+
+    assert stdout.encoding == "utf-8"
+    assert stderr.encoding == "utf-8"
+    assert stdout_bytes.getvalue().decode("utf-8") == "ПР 800×600×250 мм, металл"
+
+
+def test_failed_calculator_report_preserves_full_output_and_all_red_flags(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed_json = write_json(tmp_path, valid_data())
+    stdout = calculator_stdout(
+        "FAIL",
+        red_flags=["- first exact flag", "- second exact flag"],
+    )
+    stderr = "Traceback (most recent call last):\n  exact frame\nExactError: boom\n"
+    monkeypatch.setattr(
+        runner,
+        "run_calculator_cli",
+        lambda price_workbook, input_csv: runner.CalculatorProcessResult(
+            returncode=1,
+            stdout=stdout,
+            stderr=stderr,
+        ),
+    )
+
+    result = runner.run_checked_price_calculator_from_completed_draft(
+        completed_json,
+        PRICE_WORKBOOK,
+    )
+    report = runner.format_report(result)
+
+    assert result.status == "FAIL"
+    assert result.calculator_stdout == stdout
+    assert result.calculator_stderr == stderr
+    assert "calculator: - first exact flag" in result.red_flags
+    assert "calculator: - second exact flag" in result.red_flags
+    assert f"Calculator stdout:\n{stdout}" in report
+    assert f"Calculator stderr:\n{stderr.rstrip()}" in report
+    assert "Traceback (most recent call last):\n  exact frame" in report
+
+
+def test_failed_calculator_report_marks_empty_stdout_and_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed_json = write_json(tmp_path, valid_data())
+    monkeypatch.setattr(
+        runner,
+        "run_calculator_cli",
+        lambda price_workbook, input_csv: runner.CalculatorProcessResult(returncode=1),
+    )
+
+    result = runner.run_checked_price_calculator_from_completed_draft(
+        completed_json,
+        PRICE_WORKBOOK,
+    )
+    report = runner.format_report(result)
+
+    assert "Calculator stdout:\nempty" in report
+    assert "Calculator stderr:\nempty" in report
 
 
 def test_report_has_required_markers(

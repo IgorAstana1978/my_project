@@ -7,7 +7,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
-from openpyxl import Workbook  # type: ignore[import-untyped]
+from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "calc_quote_price_draft.py"
@@ -69,6 +69,13 @@ def write_csv(path: Path, rows: list[list[str]] | None = None) -> None:
         writer.writerows(confirmed_rows() if rows is None else rows)
 
 
+def write_technical_csv(path: Path, rows: list[list[str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file, delimiter=";", lineterminator="\n")
+        writer.writerow(calculator.TECHNICAL_COLUMNS)
+        writer.writerows(rows)
+
+
 def write_workbook(
     path: Path,
     *,
@@ -96,6 +103,214 @@ def write_workbook(
 
     workbook.save(path)
     workbook.close()
+
+
+def write_approved_workbook(path: Path) -> None:
+    workbook = Workbook()
+    krn = workbook.active
+    krn.title = "КРН"
+    krn["A5"] = "УЗО АД-32 1Р+N до 63А EKF"
+    krn["B5"] = 4100
+    krn["C5"] = 432
+    krn["L9"] = "Корпус КРН-36 540х330х100"
+    krn["M9"] = 9405
+    krn["A14"] = "ВН-32 3Р 16-25-40-63-80-100А"
+    krn["B14"] = 2750
+    krn["C14"] = 540
+
+    shr = workbook.create_sheet("ЩР")
+    shr["A8"] = "ВА55/57/59, АМ1  3 полюсные от 16 до 63А"
+    shr["B8"] = 13000
+    shr["C8"] = 1800
+    shr["L8"] = "800х600х250"
+    shr["M8"] = 21336
+
+    forbidden = workbook.create_sheet("Прайс")
+    forbidden["A5"] = "УЗО АД-32 1Р+N до 63А EKF"
+    forbidden["B5"] = 1
+    forbidden["C5"] = 1
+    workbook.save(path)
+    workbook.close()
+
+
+def technical_row(
+    *,
+    product_name: str = "TEST-PANEL",
+    cabinet_code: str,
+    component_code: str,
+    install_type: str,
+    component_label: str,
+    cabinet_label: str,
+) -> list[str]:
+    return [
+        product_name,
+        cabinet_code,
+        "1.20",
+        component_code,
+        "1",
+        install_type,
+        component_label,
+        cabinet_label,
+    ]
+
+
+def test_approved_component_mappings_use_technical_signatures(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    cases = (
+        (
+            "RAW-VA88-32",
+            "mccb_up_to_100a",
+            "CHINT, автоматический выключатель 3P 63А",
+            "ПР",
+            "ПР 800×600×250 мм, металл",
+            13000,
+            1800,
+        ),
+        (
+            "RAW-AVDT32",
+            "diff_1p_n",
+            "CHINT, АВДТ 2P C16/30мА",
+            "КРН-36",
+            "КРН-36, 540×330×100 мм, металл",
+            4100,
+            432,
+        ),
+        (
+            "ANOTHER-RAW-CODE",
+            "load_switch_3p",
+            "CHINT, выключатель нагрузки 3P 32А",
+            "КРН-36",
+            "КРН-36, 540×330×100 мм, металл",
+            2750,
+            540,
+        ),
+    )
+
+    for index, case in enumerate(cases):
+        code, install_type, label, cabinet_code, cabinet_label, material, work = case
+        csv_path = tmp_path / f"technical-{index}.csv"
+        write_technical_csv(
+            csv_path,
+            [
+                technical_row(
+                    cabinet_code=cabinet_code,
+                    component_code=code,
+                    install_type=install_type,
+                    component_label=label,
+                    cabinet_label=cabinet_label,
+                )
+            ],
+        )
+        result = calculate(workbook_path, csv_path)
+        assert result.status == "PASS"
+        assert result.component_material_total == material
+        assert result.work_total == work
+
+
+def test_approved_cabinet_mappings_are_exact(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    cases = (
+        ("ПР", "ПР 800×600×250 мм, металл", 21336),
+        ("КРН-36", "КРН-36, 540×330×100 мм, металл", 9405),
+    )
+    for index, (cabinet_code, cabinet_label, expected_price) in enumerate(cases):
+        csv_path = tmp_path / f"cabinet-{index}.csv"
+        is_pr = cabinet_code == "ПР"
+        write_technical_csv(
+            csv_path,
+            [
+                technical_row(
+                    cabinet_code=cabinet_code,
+                    component_code="RAW",
+                    install_type=("mccb_up_to_100a" if is_pr else "diff_1p_n"),
+                    component_label=(
+                        "CHINT, автоматический выключатель 3P 63А"
+                        if is_pr
+                        else "CHINT, АВДТ 2P C20/30мА"
+                    ),
+                    cabinet_label=cabinet_label,
+                )
+            ],
+        )
+        assert calculate(workbook_path, csv_path).cabinet_price == expected_price
+
+
+def test_approved_workbook_row_signature_mismatch_fails(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "mismatch.xlsx"
+    write_approved_workbook(workbook_path)
+    workbook = load_workbook(workbook_path)
+    workbook["КРН"]["A5"] = "changed signature"
+    workbook.save(workbook_path)
+    workbook.close()
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="КРН-36",
+                component_code="RAW",
+                install_type="diff_1p_n",
+                component_label="CHINT, АВДТ 2P C16/30мА",
+                cabinet_label="КРН-36, 540×330×100 мм, металл",
+            )
+        ],
+    )
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert any("signature mismatch" in flag for flag in result.red_flags)
+
+
+def test_unknown_technical_mapping_fails_closed(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="КРН-36",
+                component_code="RAW",
+                install_type="diff_1p_n",
+                component_label="CHINT, АВДТ 2P C25/30мА",
+                cabinet_label="КРН-36, 540×330×100 мм, металл",
+            )
+        ],
+    )
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert any("unknown or ambiguous" in flag for flag in result.red_flags)
+
+
+def test_ambiguous_technical_mapping_fails_closed(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    duplicate = calculator.APPROVED_COMPONENT_PRICE_MAPPINGS[1]
+    monkeypatch.setattr(
+        calculator,
+        "APPROVED_COMPONENT_PRICE_MAPPINGS",
+        calculator.APPROVED_COMPONENT_PRICE_MAPPINGS + (duplicate,),
+    )
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="КРН-36",
+                component_code="RAW",
+                install_type="diff_1p_n",
+                component_label="CHINT, АВДТ 2P C16/30мА",
+                cabinet_label="КРН-36, 540×330×100 мм, металл",
+            )
+        ],
+    )
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert any("unknown or ambiguous" in flag for flag in result.red_flags)
 
 
 def sha256(path: Path) -> str:

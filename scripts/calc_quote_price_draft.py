@@ -15,6 +15,7 @@ from openpyxl import load_workbook  # type: ignore[import-untyped]
 
 CSV_DELIMITER = ";"
 KRN_SHEET_NAME = "КРН"
+FORBIDDEN_PRICE_SHEET_NAME = "Прайс"
 MAX_LOOKUP_ROW = 200
 REQUIRED_COLUMNS = (
     "product_name",
@@ -24,6 +25,7 @@ REQUIRED_COLUMNS = (
     "component_qty",
     "install_type",
 )
+TECHNICAL_COLUMNS = REQUIRED_COLUMNS + ("component_label", "cabinet_label")
 POSITIVE_INTEGER_RE = re.compile(r"[1-9][0-9]*\Z")
 POSITIVE_DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z")
 MATERIAL_MULTIPLIER = Decimal("1.25")
@@ -56,6 +58,97 @@ CABINET_DEFINITIONS = {
 
 
 @dataclass(frozen=True)
+class TechnicalSignature:
+    apparatus_category: str
+    poles: int
+    rating_a: int
+    residual_current_ma: int | None
+    trip_curve: str | None
+    install_type: str
+
+
+@dataclass(frozen=True)
+class ApprovedComponentPriceMapping:
+    signature: TechnicalSignature
+    sheet_name: str
+    row: int
+    expected_label: str
+    expected_material_price: int
+    expected_work_price: int
+
+
+@dataclass(frozen=True)
+class CabinetSignature:
+    cabinet_code: str
+    width_mm: int
+    height_mm: int
+    depth_mm: int
+    material: str
+
+
+@dataclass(frozen=True)
+class ApprovedCabinetPriceMapping:
+    signature: CabinetSignature
+    sheet_name: str
+    row: int
+    expected_label: str
+    expected_price: int
+
+
+APPROVED_COMPONENT_PRICE_MAPPINGS = (
+    ApprovedComponentPriceMapping(
+        TechnicalSignature("mccb", 3, 63, None, None, "mccb_up_to_100a"),
+        "ЩР",
+        8,
+        "ВА55/57/59, АМ1 3 полюсные от 16 до 63А",
+        13000,
+        1800,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature("rcbo", 2, 16, 30, "C", "diff_1p_n"),
+        "КРН",
+        5,
+        "УЗО АД-32 1Р+N до 63А EKF",
+        4100,
+        432,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature("rcbo", 2, 20, 30, "C", "diff_1p_n"),
+        "КРН",
+        5,
+        "УЗО АД-32 1Р+N до 63А EKF",
+        4100,
+        432,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature("load_switch", 3, 32, None, None, "load_switch_3p"),
+        "КРН",
+        14,
+        "ВН-32 3Р 16-25-40-63-80-100А",
+        2750,
+        540,
+    ),
+)
+
+APPROVED_CABINET_PRICE_MAPPINGS = (
+    ApprovedCabinetPriceMapping(
+        CabinetSignature("ПР", 800, 600, 250, "metal"),
+        "ЩР",
+        8,
+        "800х600х250",
+        21336,
+    ),
+    ApprovedCabinetPriceMapping(
+        CabinetSignature("КРН-36", 540, 330, 100, "metal"),
+        "КРН",
+        9,
+        "Корпус КРН-36 540х330х100",
+        9405,
+    ),
+)
+
+
+@dataclass(frozen=True)
 class CompositionRow:
     product_name: str
     cabinet_code: str
@@ -63,6 +156,10 @@ class CompositionRow:
     component_code: str
     component_qty: int
     install_type: str
+    component_label: str | None = None
+    cabinet_label: str | None = None
+    component_mapping: ApprovedComponentPriceMapping | None = None
+    cabinet_mapping: ApprovedCabinetPriceMapping | None = None
 
 
 @dataclass
@@ -77,6 +174,7 @@ class PriceCalculationResult:
     cabinet_price: int | None = None
     component_material_total: int | None = None
     work_total: int | None = None
+    additional_materials_total: Decimal | None = None
     consumables_factor: Decimal | None = None
     base: Decimal | None = None
     total_preliminary_price: int | None = None
@@ -87,7 +185,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Calculate a read-only preliminary price draft from confirmed "
-            "composition CSV using only the КРН worksheet."
+            "composition CSV using approved worksheet mappings."
         )
     )
     parser.add_argument(
@@ -126,6 +224,96 @@ def parse_positive_decimal(value: str) -> Decimal | None:
     return parsed
 
 
+def parse_component_signature(
+    component_label: str,
+    install_type: str,
+) -> TechnicalSignature | None:
+    normalized = normalize_workbook_label(component_label)
+    if normalized is None:
+        return None
+    folded = normalized.casefold()
+    poles_match = re.search(r"\b([1-4])\s*[pр]\b", folded)
+    if poles_match is None:
+        return None
+    poles = int(poles_match.group(1))
+
+    if install_type == "mccb_up_to_100a" and "автоматический выключатель" in folded:
+        category = "mccb"
+        rating_match = re.search(r"\b(\d+)\s*а\b", folded)
+        curve = None
+        residual_current = None
+    elif install_type == "diff_1p_n" and "авдт" in folded:
+        category = "rcbo"
+        rating_match = re.search(r"\bc\s*(\d+)\b", folded)
+        residual_match = re.search(r"/\s*(\d+)\s*ма\b", folded)
+        if residual_match is None:
+            return None
+        curve = "C"
+        residual_current = int(residual_match.group(1))
+    elif install_type == "load_switch_3p" and "выключатель нагрузки" in folded:
+        category = "load_switch"
+        rating_match = re.search(r"\b(\d+)\s*а\b", folded)
+        curve = None
+        residual_current = None
+    else:
+        return None
+
+    if rating_match is None:
+        return None
+    return TechnicalSignature(
+        apparatus_category=category,
+        poles=poles,
+        rating_a=int(rating_match.group(1)),
+        residual_current_ma=residual_current,
+        trip_curve=curve,
+        install_type=install_type,
+    )
+
+
+def parse_cabinet_signature(
+    cabinet_code: str,
+    cabinet_label: str,
+) -> CabinetSignature | None:
+    normalized = normalize_workbook_label(cabinet_label)
+    if normalized is None:
+        return None
+    dimensions = re.search(
+        r"(\d+)\s*[xх×*]\s*(\d+)\s*[xх×*]\s*(\d+)",
+        normalized.casefold(),
+    )
+    if dimensions is None or "металл" not in normalized.casefold():
+        return None
+    return CabinetSignature(
+        cabinet_code=normalize_workbook_label(cabinet_code) or cabinet_code,
+        width_mm=int(dimensions.group(1)),
+        height_mm=int(dimensions.group(2)),
+        depth_mm=int(dimensions.group(3)),
+        material="metal",
+    )
+
+
+def resolve_component_mapping(
+    signature: TechnicalSignature,
+) -> ApprovedComponentPriceMapping | None:
+    matches = [
+        mapping
+        for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
+        if mapping.signature == signature
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_cabinet_mapping(
+    signature: CabinetSignature,
+) -> ApprovedCabinetPriceMapping | None:
+    matches = [
+        mapping
+        for mapping in APPROVED_CABINET_PRICE_MAPPINGS
+        if mapping.signature == signature
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow]:
     path = result.input_csv
     if not path.is_file():
@@ -155,10 +343,11 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
         return []
 
     result.input_rows_count = len(raw_rows)
-    if tuple(header) != REQUIRED_COLUMNS:
+    header_tuple = tuple(header)
+    if header_tuple not in (REQUIRED_COLUMNS, TECHNICAL_COLUMNS):
         add_red_flag(
             result,
-            "input header must exactly match the confirmed composition contract",
+            "input header must exactly match a supported composition contract",
         )
         return []
     if not raw_rows:
@@ -167,14 +356,12 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
 
     rows: list[CompositionRow] = []
     for row_number, values in enumerate(raw_rows, start=2):
-        if len(values) != len(REQUIRED_COLUMNS):
+        if len(values) != len(header_tuple):
             add_red_flag(result, f"row {row_number}: field count mismatch")
             continue
 
-        row = dict(zip(REQUIRED_COLUMNS, values, strict=True))
-        empty_columns = [
-            column for column in REQUIRED_COLUMNS if row[column].strip() == ""
-        ]
+        row = dict(zip(header_tuple, values, strict=True))
+        empty_columns = [column for column in header_tuple if row[column].strip() == ""]
         if empty_columns:
             add_red_flag(
                 result,
@@ -200,31 +387,79 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
             )
             continue
 
-        component_code = row["component_code"]
-        component_definition = COMPONENT_DEFINITIONS.get(component_code)
-        if component_definition is None:
-            add_red_flag(
-                result,
-                f"row {row_number}: component_code is not confirmed: "
-                f"{component_code}; ask Igor",
-            )
-            continue
-        if row["install_type"] != component_definition.install_type:
-            add_red_flag(
-                result,
-                f"row {row_number}: install_type does not match confirmed "
-                f"component map for {component_code}; ask Igor",
-            )
-            continue
-
         cabinet_code = row["cabinet_code"]
-        if cabinet_code not in CABINET_DEFINITIONS:
-            add_red_flag(
-                result,
-                f"row {row_number}: cabinet_code is not confirmed: "
-                f"{cabinet_code}; ask Igor",
+        component_code = row["component_code"]
+        component_label: str | None = None
+        cabinet_label: str | None = None
+        component_mapping: ApprovedComponentPriceMapping | None = None
+        cabinet_mapping: ApprovedCabinetPriceMapping | None = None
+
+        if header_tuple == TECHNICAL_COLUMNS:
+            component_label = row["component_label"]
+            cabinet_label = row["cabinet_label"]
+            component_signature = parse_component_signature(
+                component_label,
+                row["install_type"],
             )
-            continue
+            component_mapping = (
+                resolve_component_mapping(component_signature)
+                if component_signature is not None
+                else None
+            )
+            if component_mapping is None:
+                legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
+                if (
+                    legacy_definition is None
+                    or legacy_definition.install_type != row["install_type"]
+                    or cabinet_code not in CABINET_DEFINITIONS
+                ):
+                    add_red_flag(
+                        result,
+                        f"row {row_number}: unknown or ambiguous technical "
+                        f"component mapping for {component_label}; ask Igor",
+                    )
+                    continue
+            else:
+                cabinet_signature = parse_cabinet_signature(
+                    cabinet_code,
+                    cabinet_label,
+                )
+                cabinet_mapping = (
+                    resolve_cabinet_mapping(cabinet_signature)
+                    if cabinet_signature is not None
+                    else None
+                )
+                if cabinet_mapping is None:
+                    add_red_flag(
+                        result,
+                        f"row {row_number}: unknown or ambiguous technical "
+                        f"cabinet mapping for {cabinet_code} / {cabinet_label}; "
+                        "ask Igor",
+                    )
+                    continue
+        else:
+            component_definition = COMPONENT_DEFINITIONS.get(component_code)
+            if component_definition is None:
+                add_red_flag(
+                    result,
+                    f"row {row_number}: component_code is not confirmed: "
+                    f"{component_code}; ask Igor",
+                )
+                continue
+            if row["install_type"] != component_definition.install_type:
+                add_red_flag(
+                    result,
+                    f"row {row_number}: install_type does not match confirmed "
+                    f"component map for {component_code}; ask Igor",
+                )
+                continue
+            if cabinet_code not in CABINET_DEFINITIONS:
+                add_red_flag(
+                    result,
+                    f"row {row_number}: cabinet_code is not confirmed: "
+                    f"{cabinet_code}; ask Igor",
+                )
+                continue
 
         rows.append(
             CompositionRow(
@@ -234,6 +469,10 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 component_code=component_code,
                 component_qty=int(quantity_text),
                 install_type=row["install_type"],
+                component_label=component_label,
+                cabinet_label=cabinet_label,
+                component_mapping=component_mapping,
+                cabinet_mapping=cabinet_mapping,
             )
         )
 
@@ -254,7 +493,11 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
 
     result.product_name = rows[0].product_name
     result.cabinet_code = rows[0].cabinet_code
-    result.cabinet_label = CABINET_DEFINITIONS[rows[0].cabinet_code]
+    result.cabinet_label = (
+        rows[0].cabinet_label
+        if rows[0].cabinet_label is not None
+        else CABINET_DEFINITIONS[rows[0].cabinet_code]
+    )
     result.consumables_factor = rows[0].consumables_factor
     return rows
 
@@ -276,6 +519,83 @@ def positive_integer_price(value: Any) -> int | None:
         integral = value.to_integral_value()
         return int(integral) if value > 0 and value == integral else None
     return None
+
+
+def mapping_worksheet(
+    workbook: Any,
+    sheet_name: str,
+    result: PriceCalculationResult,
+) -> Any | None:
+    if sheet_name.casefold() == FORBIDDEN_PRICE_SHEET_NAME.casefold():
+        add_red_flag(result, "worksheet Прайс is forbidden for price lookup")
+        return None
+    try:
+        return workbook[sheet_name]
+    except KeyError:
+        add_red_flag(result, f"required worksheet {sheet_name} was not found; ask Igor")
+        return None
+
+
+def read_approved_component_price(
+    workbook: Any,
+    mapping: ApprovedComponentPriceMapping,
+    result: PriceCalculationResult,
+) -> tuple[int, int] | None:
+    worksheet = mapping_worksheet(workbook, mapping.sheet_name, result)
+    if worksheet is None:
+        return None
+    actual_label = normalize_workbook_label(worksheet.cell(mapping.row, 1).value)
+    expected_label = normalize_workbook_label(mapping.expected_label)
+    if actual_label != expected_label:
+        add_red_flag(
+            result,
+            f"approved component mapping signature mismatch at "
+            f"{mapping.sheet_name}!A{mapping.row}: expected "
+            f"{mapping.expected_label}; ask Igor",
+        )
+        return None
+    material_price = positive_integer_price(worksheet.cell(mapping.row, 2).value)
+    work_price = positive_integer_price(worksheet.cell(mapping.row, 3).value)
+    if (
+        material_price != mapping.expected_material_price
+        or work_price != mapping.expected_work_price
+    ):
+        add_red_flag(
+            result,
+            f"approved component mapping price mismatch at "
+            f"{mapping.sheet_name}!B{mapping.row}:C{mapping.row}; ask Igor",
+        )
+        return None
+    return material_price, work_price
+
+
+def read_approved_cabinet_price(
+    workbook: Any,
+    mapping: ApprovedCabinetPriceMapping,
+    result: PriceCalculationResult,
+) -> int | None:
+    worksheet = mapping_worksheet(workbook, mapping.sheet_name, result)
+    if worksheet is None:
+        return None
+    actual_label = normalize_workbook_label(worksheet.cell(mapping.row, 12).value)
+    expected_label = normalize_workbook_label(mapping.expected_label)
+    if actual_label != expected_label:
+        add_red_flag(
+            result,
+            f"approved cabinet mapping signature mismatch at "
+            f"{mapping.sheet_name}!L{mapping.row}: expected "
+            f"{mapping.expected_label}; ask Igor",
+        )
+        return None
+    price = positive_integer_price(worksheet.cell(mapping.row, 13).value)
+    if price != mapping.expected_price:
+        add_red_flag(
+            result,
+            f"approved cabinet mapping price mismatch at "
+            f"{mapping.sheet_name}!M{mapping.row}; ask Igor",
+        )
+        return None
+    return price
 
 
 def read_component_prices(
@@ -404,23 +724,51 @@ def calculate_price_draft(
             data_only=False,
             keep_links=False,
         )
-        try:
-            worksheet = workbook[KRN_SHEET_NAME]
-        except KeyError:
-            add_red_flag(result, "required worksheet КРН was not found; ask Igor")
-            return result
-
-        required_codes = {row.component_code for row in rows}
-        component_prices = read_component_prices(
-            worksheet,
-            required_codes,
-            result,
-        )
-        cabinet_price = read_cabinet_price(
-            worksheet,
-            rows[0].cabinet_code,
-            result,
-        )
+        if rows[0].component_mapping is not None:
+            approved_component_prices: dict[
+                ApprovedComponentPriceMapping, tuple[int, int]
+            ] = {}
+            for row in rows:
+                mapping = row.component_mapping
+                if mapping is None:
+                    add_red_flag(
+                        result, "mixed legacy and technical rows are forbidden"
+                    )
+                    continue
+                if mapping not in approved_component_prices:
+                    price = read_approved_component_price(workbook, mapping, result)
+                    if price is not None:
+                        approved_component_prices[mapping] = price
+            cabinet_mapping = rows[0].cabinet_mapping
+            if cabinet_mapping is None or any(
+                row.cabinet_mapping != cabinet_mapping for row in rows
+            ):
+                add_red_flag(
+                    result, "technical cabinet mapping is inconsistent; ask Igor"
+                )
+                cabinet_price = None
+            else:
+                cabinet_price = read_approved_cabinet_price(
+                    workbook,
+                    cabinet_mapping,
+                    result,
+                )
+            component_prices: dict[str, tuple[int, int]] = {}
+        else:
+            worksheet = mapping_worksheet(workbook, KRN_SHEET_NAME, result)
+            if worksheet is None:
+                return result
+            required_codes = {row.component_code for row in rows}
+            component_prices = read_component_prices(
+                worksheet,
+                required_codes,
+                result,
+            )
+            cabinet_price = read_cabinet_price(
+                worksheet,
+                rows[0].cabinet_code,
+                result,
+            )
     except OSError, ValueError:
         add_red_flag(result, "price workbook could not be opened safely")
         return result
@@ -431,15 +779,31 @@ def calculate_price_draft(
     if result.red_flags or cabinet_price is None:
         return result
 
-    material_total = sum(
-        component_prices[row.component_code][0] * row.component_qty for row in rows
-    )
-    work_total = sum(
-        component_prices[row.component_code][1] * row.component_qty for row in rows
-    )
+    if rows[0].component_mapping is not None:
+        material_total = sum(
+            approved_component_prices[row.component_mapping][0] * row.component_qty
+            for row in rows
+            if row.component_mapping is not None
+        )
+        work_total = sum(
+            approved_component_prices[row.component_mapping][1] * row.component_qty
+            for row in rows
+            if row.component_mapping is not None
+        )
+    else:
+        material_total = sum(
+            component_prices[row.component_code][0] * row.component_qty for row in rows
+        )
+        work_total = sum(
+            component_prices[row.component_code][1] * row.component_qty for row in rows
+        )
     factor = rows[0].consumables_factor
+    additional_materials = Decimal(material_total) * (factor - Decimal("1"))
     base = (
-        Decimal(cabinet_price) + Decimal(material_total) * factor + Decimal(work_total)
+        Decimal(cabinet_price)
+        + Decimal(material_total)
+        + additional_materials
+        + Decimal(work_total)
     )
     total = int(
         (base * MATERIAL_MULTIPLIER * FINAL_MULTIPLIER).quantize(
@@ -451,6 +815,7 @@ def calculate_price_draft(
     result.cabinet_price = cabinet_price
     result.component_material_total = material_total
     result.work_total = work_total
+    result.additional_materials_total = additional_materials
     result.base = base
     result.total_preliminary_price = total
     result.status = "PASS"
@@ -515,6 +880,9 @@ def format_report(result: PriceCalculationResult) -> str:
         "",
         "Work total:",
         format_amount(result.work_total),
+        "",
+        "Additional materials total:",
+        format_amount(result.additional_materials_total),
         "",
         "Consumables factor:",
         factor,

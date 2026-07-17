@@ -11,8 +11,9 @@ This phase is the bridge:
 ```text
 completed price calculator input draft
 -> completed input validator
--> temporary CSV bridge
--> existing read-only price calculator
+-> one temporary CSV bridge per item
+-> one read-only price calculator execution per item
+-> per-item results and overall preliminary total
 -> draft price calculation report
 ```
 
@@ -51,21 +52,31 @@ Exit code:
 - `0` only on `PASS`;
 - `1` on any `FAIL`.
 
-## Temporary CSV bridge
+## Item split and temporary CSV bridges
 
-The existing read-only calculator accepts only semicolon-delimited CSV input.
-The runner therefore creates a temporary CSV bridge from:
+The runner joins `calculator_input_format.rows` back to the audit data in
+`items[].components` by product, cabinet and exact component order. Every row
+must belong to exactly one item and must match its component code, quantity and
+install type. Ambiguous routing or any audit mismatch fails closed before a
+calculator execution.
+
+The runner creates one temporary semicolon-delimited CSV per item. The enhanced
+internal header is:
 
 ```text
-calculator_input_format.columns
-calculator_input_format.rows
+product_name;cabinet_code;consumables_factor;component_code;component_qty;install_type;component_label;cabinet_label
 ```
 
-The CSV header is fixed:
+`component_code` remains audit data. New price lookup does not require it to
+equal a workbook label. The calculator normalizes the component label into a
+technical signature containing apparatus category, poles, rating,
+residual-current parameters where applicable, and install type.
 
-```text
-product_name;cabinet_code;consumables_factor;component_code;component_qty;install_type
-```
+Each approved signature mapping explicitly records worksheet, row, expected
+workbook label, material price and work price. Cabinet mappings likewise record
+worksheet, row, expected label and price. The exact workbook cells are checked
+before use. Unknown or ambiguous signatures, missing worksheets, label drift or
+price drift fail closed. The worksheet `Прайс` is forbidden for lookup.
 
 The temporary CSV:
 
@@ -78,14 +89,32 @@ The temporary CSV:
 
 If cleanup fails, the runner fails.
 
+## UTF-8 process and diagnostic contract
+
+The runner passes `PYTHONIOENCODING=utf-8` and `PYTHONUTF8=1` to every child
+calculator process. Child stdout and stderr are decoded explicitly with strict
+UTF-8. The runner configures its own stdout and stderr for UTF-8 only in the CLI
+`main` path and only when the active streams support `reconfigure`.
+
+Technical labels are not transliterated and characters such as `×` are not
+replaced to accommodate a local Windows code page.
+
+On a non-zero calculator exit, the runner report contains separate
+`Calculator stdout` and `Calculator stderr` sections with the complete captured
+text. Empty streams are shown as `empty`. Every line from a calculator
+`Red flags` section is also copied into the runner red flags; a traceback is
+preserved in full rather than replaced by a presence marker.
+
 ## What PASS means
 
 `PASS` means only:
 
 - the completed input validator passed;
-- the temporary CSV bridge was created safely;
-- the existing read-only calculator exited successfully;
-- the temporary CSV was deleted;
+- every item CSV bridge was created safely;
+- the read-only calculator exited successfully once per item;
+- per-item materials, work, cabinet, additional materials and preliminary
+  total were parsed and aggregated;
+- every temporary CSV was deleted;
 - no commercial, client or production action was taken.
 
 `PASS` is a technical calculator run result. It is not Igor price approval, not
@@ -107,7 +136,8 @@ This phase does not:
 - call client-style exporter or launcher;
 - authorize sending;
 - authorize production;
-- change `scripts/calc_quote_price_draft.py`.
+- modify the source price workbook or technical labels to accommodate a local
+  code page.
 
 Igor must review any draft price result before commercial CSV, КП sending or
 production.
@@ -141,6 +171,18 @@ Input rows count: 2
 Total preliminary price: 44 512
 calculator commercial boundary: preliminary only; PASS is not commercial approval
 calculator human approval boundary: required before using price in commercial КП
+
+Item results:
+item 1: РУ-АВР / ЩРН-24
+rows: 2
+cabinet price: 7 985
+component materials: 16 900
+work: 2 700
+additional materials: 3 380
+preliminary total: 44 512
+
+Overall preliminary total:
+44 512
 
 Commercial status:
 draft price calculation only; not price approval; not commercial CSV; not client-ready КП
@@ -176,6 +218,12 @@ Calculator result:
 calculator exit code: 1
 calculator technical status: FAIL
 
+Calculator stdout:
+<full calculator report, or empty>
+
+Calculator stderr:
+<full traceback/error text, or empty>
+
 Commercial status:
 draft price calculation only; not price approval; not commercial CSV; not client-ready КП
 
@@ -184,6 +232,25 @@ Igor approval required before commercial CSV, КП sending or production
 
 CHECKED_PRICE_CALCULATOR_RUN_REPORT_END
 ```
+
+## Confirmed multi-item regression
+
+On 2026-07-17, Igor authorized one read-only checked regression run for
+`CASE-QF-REAL-SMOKE-20260716-001`. The completed input SHA-256 was
+`d1b97b9cbcc54fb77a7bd9f0b50c06e383dddec7479ff758a76908fd88c332d6` and the
+canonical workbook SHA-256 was
+`f8bd69da1f61612d3853e608333486dcd3b6ecd572cd98beb2247c6accb31b5f`.
+
+The runner returned `PASS` with three calculator executions in item order:
+
+- `ЩО-6`: 21 rows, preliminary total `209 553`;
+- `НЩР-17`: 13 rows, preliminary total `111 362`;
+- `АВР-17`: 12 rows, preliminary total `103 668`;
+- overall preliminary total: `424 583`.
+
+All temporary `checked_price_calculator_*.csv` files were deleted. No
+persistent CSV, XLSX, PDF or КП was created. Price approval and commercial,
+client sending and production permissions remained `false`.
 
 ## Operator notes
 
