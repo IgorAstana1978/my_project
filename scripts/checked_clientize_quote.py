@@ -22,7 +22,7 @@ from xml.etree import ElementTree
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OOXML_PATCHER = PROJECT_ROOT / "scripts" / "ooxml_cell_patcher.py"
 SHEET_NAME = "Счёт-КП шаблон"
-SCHEMA_VERSION = "checked_clientization_approval.v0.1"
+SCHEMA_VERSION = "checked_clientization_approval.v0.2"
 ITEM_START_ROW = 17
 ITEM_END_ROW = 116
 TOTAL_ROW = 117
@@ -56,6 +56,9 @@ ROOT_FIELDS = frozenset(
         "payment_terms",
         "delivery_terms",
         "manufacturing_lead_time",
+        "manufacturing_lead_time_approved_by",
+        "manufacturing_lead_time_approved_at",
+        "manufacturing_lead_time_approval_role",
         "validity_period",
         "amount_words_text",
         "commercial_price_approved",
@@ -74,6 +77,8 @@ ITEM_FIELDS = frozenset(
         "instruments_and_devices",
         "cabinet_type_dimensions_material",
         "unit_price_kzt",
+        "source_note",
+        "client_note",
     }
 )
 GUARD_CELLS = (
@@ -96,8 +101,6 @@ FORBIDDEN_TOKENS = (
     "внутренним черновиком",
     "спецификация и условия подлежат проверке",
     "дата проверки:",
-    "25а заменён",
-    "номинал 25а отсутствует",
 )
 VAT_LABEL_FORMULA = (
     'IF(NOT(ISNUMBER($A$131)),"","В том числе НДС "' '&TEXT($A$131,"0")&"%")'
@@ -136,6 +139,8 @@ class ApprovedItem:
     instruments_and_devices: str
     cabinet_type_dimensions_material: str
     unit_price_kzt: int
+    source_note: str | None
+    client_note: str | None
 
     @property
     def line_total_kzt(self) -> int:
@@ -158,6 +163,9 @@ class Approval:
     payment_terms: str
     delivery_terms: str
     manufacturing_lead_time: str
+    manufacturing_lead_time_approved_by: str
+    manufacturing_lead_time_approved_at: datetime
+    manufacturing_lead_time_approval_role: str
     validity_period: str | None
     amount_words_text: str
     items: tuple[ApprovedItem, ...]
@@ -186,6 +194,9 @@ class ClientizationResult:
     approval_id: str | None = None
     approved_by: str | None = None
     approved_at: str | None = None
+    manufacturing_lead_time_approved_by: str | None = None
+    manufacturing_lead_time_approved_at: str | None = None
+    manufacturing_lead_time_approval_role: str | None = None
     checks: dict[str, str] = field(
         default_factory=lambda: {
             "path policy": "fail",
@@ -263,15 +274,24 @@ def positive_int(data: Mapping[str, Any], field_name: str, label: str) -> int:
     return value
 
 
-def parse_approved_at(value: str) -> datetime:
+def parse_timezone_datetime(value: str, label: str) -> datetime:
     normalized = f"{value[:-1]}+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        fail("approval approved_at is not valid ISO 8601")
+        fail(f"{label} is not valid ISO 8601")
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        fail("approval approved_at must include a timezone")
+        fail(f"{label} must include a timezone")
     return parsed
+
+
+def nullable_note(data: Mapping[str, Any], field_name: str) -> str | None:
+    value = data.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, str) or value.strip() == "":
+        fail(f"approval item {field_name} must be null or a non-empty string")
+    return value
 
 
 def parse_item(raw: object) -> ApprovedItem:
@@ -280,6 +300,12 @@ def parse_item(raw: object) -> ApprovedItem:
     item = cast(Mapping[str, Any], raw)
     if set(item) != ITEM_FIELDS:
         fail("approval item fields do not match the strict schema")
+    source_note = nullable_note(item, "source_note")
+    client_note = nullable_note(item, "client_note")
+    if (source_note is None) != (client_note is None):
+        fail("approval item source_note and client_note must both be null or strings")
+    if client_note is not None and contains_forbidden(client_note):
+        fail("approval item client_note contains an internal forbidden token")
     return ApprovedItem(
         row=positive_int(item, "row", "approval item"),
         source_name=required_string(item, "source_name", "approval item"),
@@ -293,6 +319,8 @@ def parse_item(raw: object) -> ApprovedItem:
             item, "cabinet_type_dimensions_material", "approval item"
         ),
         unit_price_kzt=positive_int(item, "unit_price_kzt", "approval item"),
+        source_note=source_note,
+        client_note=client_note,
     )
 
 
@@ -310,7 +338,22 @@ def parse_approval(path: Path) -> Approval:
         fail("approval schema_version is unsupported")
     approval_id = required_string(data, "approval_id", "approval")
     approved_by = required_string(data, "approved_by", "approval")
-    approved_at = parse_approved_at(required_string(data, "approved_at", "approval"))
+    approved_at = parse_timezone_datetime(
+        required_string(data, "approved_at", "approval"),
+        "approval approved_at",
+    )
+    lead_time_approved_by = required_string(
+        data, "manufacturing_lead_time_approved_by", "approval"
+    )
+    lead_time_approved_at = parse_timezone_datetime(
+        required_string(data, "manufacturing_lead_time_approved_at", "approval"),
+        "approval manufacturing_lead_time_approved_at",
+    )
+    lead_time_approval_role = required_string(
+        data, "manufacturing_lead_time_approval_role", "approval"
+    )
+    if lead_time_approval_role != "pto_engineer":
+        fail("approval manufacturing_lead_time_approval_role must be pto_engineer")
     source_hash = required_string(data, "internal_draft_xlsx_sha256", "approval")
     if HASH_RE.fullmatch(source_hash) is None:
         fail("approval internal draft SHA-256 must be lowercase hexadecimal")
@@ -375,6 +418,9 @@ def parse_approval(path: Path) -> Approval:
         manufacturing_lead_time=required_string(
             data, "manufacturing_lead_time", "approval"
         ),
+        manufacturing_lead_time_approved_by=lead_time_approved_by,
+        manufacturing_lead_time_approved_at=lead_time_approved_at,
+        manufacturing_lead_time_approval_role=lead_time_approval_role,
         validity_period=cast(str | None, raw_validity),
         amount_words_text=required_string(data, "amount_words_text", "approval"),
         items=items,
@@ -533,23 +579,22 @@ def reconcile_source(snapshot: WorkbookSnapshot, approval: Approval) -> None:
                 fail(f"internal draft item mismatch: {coordinate}")
         if cell(snapshot, f"I{row}").formula != item_formula(row):
             fail(f"internal draft item formula mismatch: I{row}")
+        source_note = cell(snapshot, f"J{row}")
+        if item.source_note is None:
+            if source_note.formula != '""' or source_note.value not in (None, ""):
+                fail(f"internal draft source note must use empty formula: J{row}")
+        elif source_note.value != item.source_note or source_note.formula is not None:
+            fail(f"internal draft source note mismatch: J{row}")
     last_approved_row = approval.items[-1].row
     for row in range(ITEM_START_ROW, ITEM_END_ROW + 1):
         if cell(snapshot, f"B{row}").value != row - ITEM_START_ROW + 1:
             fail(f"internal draft certified row number mismatch: B{row}")
         if cell(snapshot, f"I{row}").formula != item_formula(row):
             fail(f"internal draft certified item formula mismatch: I{row}")
-        note = cell(snapshot, f"J{row}")
-        standard_note = note.formula == '""' and note.value in (None, "")
-        certified_guard_note = (
-            row <= last_approved_row
-            and note.formula is None
-            and isinstance(note.value, str)
-            and contains_forbidden(note.value)
-        )
-        if not (standard_note or certified_guard_note):
-            fail(f"internal draft certified item note mismatch: J{row}")
     for row in range(last_approved_row + 1, ITEM_END_ROW + 1):
+        note = cell(snapshot, f"J{row}")
+        if note.formula != '""' or note.value not in (None, ""):
+            fail(f"internal draft trailing note mismatch: J{row}")
         for column in "CDEFGH":
             extra = cell(snapshot, f"{column}{row}")
             if extra.value not in (None, "") or extra.formula is not None:
@@ -581,9 +626,10 @@ def reconcile_source(snapshot: WorkbookSnapshot, approval: Approval) -> None:
         fail("internal draft manufacturing lead time does not match approval")
     for coordinate in GUARD_CELLS:
         guard_value = cell(snapshot, coordinate).value
-        if not isinstance(guard_value, str) or not any(
-            token in guard_value.casefold() for token in FORBIDDEN_TOKENS
-        ):
+        internal_guard = isinstance(guard_value, str) and contains_forbidden(
+            guard_value
+        )
+        if not internal_guard:
             fail(f"certified guard cell is missing or unexpected: {coordinate}")
 
 
@@ -595,6 +641,8 @@ def build_updates(approval: Approval) -> dict[str, object]:
     }
     for item in approval.items:
         updates[f"C{item.row}"] = item.client_name
+        if item.client_note is not None:
+            updates[f"J{item.row}"] = item.client_note
     return updates
 
 
@@ -603,19 +651,34 @@ def contains_forbidden(text: str) -> bool:
     return any(token in folded for token in FORBIDDEN_TOKENS)
 
 
-def referenced_shared_string_indexes(worksheet_xml: bytes) -> set[int]:
+def contains_sanitizable_source_text(
+    text: str,
+    source_notes: frozenset[str],
+) -> bool:
+    return contains_forbidden(text) or text in source_notes
+
+
+def shared_string_references(worksheet_xml: bytes) -> dict[int, set[str]]:
     try:
         worksheet = ElementTree.fromstring(worksheet_xml)
     except ElementTree.ParseError:
         fail("candidate worksheet XML is invalid")
-    indexes: set[int] = set()
+    references: dict[int, set[str]] = {}
     for cell_node in worksheet.findall(".//main:c[@t='s']", NS):
         value = cell_node.find("main:v", NS)
         try:
-            indexes.add(int(cast(ElementTree.Element, value).text or ""))
+            index = int(cast(ElementTree.Element, value).text or "")
         except (AttributeError, TypeError, ValueError):  # fmt: skip
             fail("candidate contains an invalid shared string reference")
-    return indexes
+        coordinate = cell_node.get("r", "").upper()
+        if coordinate == "":
+            fail("candidate contains an invalid shared string cell")
+        references.setdefault(index, set()).add(coordinate)
+    return references
+
+
+def referenced_shared_string_indexes(worksheet_xml: bytes) -> set[int]:
+    return set(shared_string_references(worksheet_xml))
 
 
 def rewrite_candidate_part(path: Path, part_name: str, content: bytes) -> None:
@@ -634,7 +697,11 @@ def rewrite_candidate_part(path: Path, part_name: str, content: bytes) -> None:
         raise
 
 
-def sanitize_unreferenced_shared_strings(path: Path, worksheet_part: str) -> None:
+def sanitize_unreferenced_shared_strings(
+    path: Path,
+    worksheet_part: str,
+    approval: Approval,
+) -> None:
     parts = ooxml_patcher.archive_bytes(path)
     if SHARED_STRINGS_PART not in parts:
         return
@@ -642,13 +709,29 @@ def sanitize_unreferenced_shared_strings(path: Path, worksheet_part: str) -> Non
         root = ElementTree.fromstring(parts[SHARED_STRINGS_PART])
     except ElementTree.ParseError:
         fail("candidate shared strings XML is invalid")
-    referenced = referenced_shared_string_indexes(parts[worksheet_part])
+    references = shared_string_references(parts[worksheet_part])
+    source_notes = frozenset(
+        item.source_note for item in approval.items if item.source_note is not None
+    )
+    approved_client_notes = {
+        f"J{item.row}": item.client_note
+        for item in approval.items
+        if item.client_note is not None
+    }
     changed = False
     for index, item in enumerate(root.findall("main:si", NS)):
-        if not contains_forbidden(rich_text(item)):
+        text = rich_text(item)
+        if not contains_sanitizable_source_text(text, source_notes):
             continue
-        if index in referenced:
-            fail("candidate still references a forbidden shared guard string")
+        item_references = references.get(index, set())
+        allowed_as_client_note = bool(item_references) and all(
+            approved_client_notes.get(coordinate) == text
+            for coordinate in item_references
+        )
+        if text in source_notes and allowed_as_client_note:
+            continue
+        if item_references:
+            fail("candidate still references a forbidden or source-note string")
         item.clear()
         ElementTree.SubElement(item, f"{{{SPREADSHEET_NS}}}t")
         changed = True
@@ -670,12 +753,24 @@ def package_forbidden_hits(path: Path) -> list[str]:
                     text = archive.read(name).decode("utf-8")
                 except UnicodeDecodeError:
                     continue
+                folded = text.casefold()
                 for token in FORBIDDEN_TOKENS:
-                    if token in text.casefold() and token not in hits:
+                    if token in folded and token not in hits:
                         hits.append(token)
     except (OSError, zipfile.BadZipFile):  # fmt: skip
         fail("candidate package could not be scanned safely")
     return hits
+
+
+def package_part_contains_text(content: bytes, expected: str) -> bool:
+    try:
+        root = ElementTree.fromstring(content)
+    except ElementTree.ParseError:
+        try:
+            return expected in content.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+    return expected in "".join(root.itertext())
 
 
 def canonical_element(element: ElementTree.Element) -> tuple[object, ...]:
@@ -798,6 +893,7 @@ def reconcile_worksheet_structure(
 def reconcile_shared_strings(
     source: WorkbookSnapshot,
     candidate: WorkbookSnapshot,
+    approval: Approval,
 ) -> None:
     if SHARED_STRINGS_PART not in source.parts:
         return
@@ -815,6 +911,9 @@ def reconcile_shared_strings(
     referenced = referenced_shared_string_indexes(
         candidate.parts[candidate.worksheet_part]
     )
+    source_notes = frozenset(
+        item.source_note for item in approval.items if item.source_note is not None
+    )
     for index, (source_item, candidate_item) in enumerate(
         zip(source_items, candidate_items, strict=True)
     ):
@@ -822,10 +921,77 @@ def reconcile_shared_strings(
             continue
         if (
             index in referenced
-            or not contains_forbidden(rich_text(source_item))
+            or not contains_sanitizable_source_text(
+                rich_text(source_item), source_notes
+            )
             or rich_text(candidate_item) != ""
         ):
             fail("candidate changed a non-permitted shared string")
+
+
+def reconcile_candidate_note_locations(
+    candidate: WorkbookSnapshot,
+    approval: Approval,
+) -> None:
+    approved_client_notes = {
+        f"J{item.row}": item.client_note
+        for item in approval.items
+        if item.client_note is not None
+    }
+    note_texts = {
+        note
+        for item in approval.items
+        for note in (item.source_note, item.client_note)
+        if note is not None
+    }
+    for coordinate, value in candidate.cells.items():
+        if not isinstance(value.value, str):
+            continue
+        expected = approved_client_notes.get(coordinate)
+        if expected == value.value and value.formula is None:
+            continue
+        if any(note in value.value for note in note_texts):
+            fail("candidate note text exists outside its exact approved J location")
+
+    for item in approval.items:
+        if item.client_note is None:
+            continue
+        coordinate = f"J{item.row}"
+        approved_cell = candidate.cells.get(coordinate)
+        if (
+            approved_cell is None
+            or approved_cell.value != item.client_note
+            or approved_cell.formula is not None
+        ):
+            fail("candidate approved J cell does not contain its exact client_note")
+
+    shared_references = shared_string_references(
+        candidate.parts[candidate.worksheet_part]
+    )
+    shared_items: list[ElementTree.Element] = []
+    if SHARED_STRINGS_PART in candidate.parts:
+        try:
+            shared_root = ElementTree.fromstring(candidate.parts[SHARED_STRINGS_PART])
+        except ElementTree.ParseError:
+            fail("candidate shared strings XML is invalid")
+        shared_items = shared_root.findall("main:si", NS)
+
+    for index, shared_item in enumerate(shared_items):
+        text = rich_text(shared_item)
+        if not any(note in text for note in note_texts):
+            continue
+        references = shared_references.get(index, set())
+        allowed = bool(references) and all(
+            approved_client_notes.get(coordinate) == text for coordinate in references
+        )
+        if not allowed:
+            fail("candidate note text has an unapproved shared-string location")
+
+    for name, content in candidate.parts.items():
+        if name in (candidate.worksheet_part, SHARED_STRINGS_PART):
+            continue
+        if any(package_part_contains_text(content, note) for note in note_texts):
+            fail("candidate note text exists in an unapproved OOXML part")
 
 
 def reconcile_candidate(
@@ -845,7 +1011,7 @@ def reconcile_candidate(
         candidate.parts[candidate.worksheet_part],
         approval,
     )
-    reconcile_shared_strings(source, candidate)
+    reconcile_shared_strings(source, candidate, approval)
     if candidate.parts[source.worksheet_part] == source.parts[source.worksheet_part]:
         fail("candidate worksheet was not changed")
     if package_forbidden_hits(candidate_path):
@@ -861,11 +1027,20 @@ def reconcile_candidate(
             fail(f"candidate guard cell was not cleared: {coordinate}")
         if guard.formula is not None:
             fail(f"candidate guard cell must not contain a formula: {coordinate}")
+    expected_notes = {
+        item.row: item.client_note
+        for item in approval.items
+        if item.client_note is not None
+    }
+    reconcile_candidate_note_locations(candidate, approval)
     for row in range(ITEM_START_ROW, ITEM_END_ROW + 1):
         coordinate = f"J{row}"
         item_note = cell(candidate, coordinate)
-        if item_note.value not in (None, ""):
+        expected_note = expected_notes.get(row)
+        if expected_note is None and item_note.value not in (None, ""):
             fail(f"candidate item note was not cleared: {coordinate}")
+        if expected_note is not None and item_note.value != expected_note:
+            fail(f"candidate client technical note mismatch: {coordinate}")
         if item_note.formula is not None:
             fail(f"candidate item note must not contain a formula: {coordinate}")
     for item in approval.items:
@@ -975,6 +1150,15 @@ def run_clientization(
         result.approval_id = approval.approval_id
         result.approved_by = approval.approved_by
         result.approved_at = approval.approved_at.isoformat()
+        result.manufacturing_lead_time_approved_by = (
+            approval.manufacturing_lead_time_approved_by
+        )
+        result.manufacturing_lead_time_approved_at = (
+            approval.manufacturing_lead_time_approved_at.isoformat()
+        )
+        result.manufacturing_lead_time_approval_role = (
+            approval.manufacturing_lead_time_approval_role
+        )
         result.checks["approval schema"] = "pass"
         source_hash = sha256_file(source_path)
         approval_hash = sha256_file(approval_path)
@@ -995,7 +1179,7 @@ def run_clientization(
         )
         result.checks["candidate generation"] = "pass"
 
-        sanitize_unreferenced_shared_strings(candidate, source.worksheet_part)
+        sanitize_unreferenced_shared_strings(candidate, source.worksheet_part, approval)
         result.checks["guard sanitation"] = "pass"
         reconcile_candidate(source, candidate, approval)
         result.checks["candidate reconciliation"] = "pass"
@@ -1051,6 +1235,15 @@ def format_report(result: ClientizationResult) -> str:
         "",
         "Approved at:",
         result.approved_at or "not parsed",
+        "",
+        "Manufacturing lead time approved by:",
+        result.manufacturing_lead_time_approved_by or "not parsed",
+        "",
+        "Manufacturing lead time approved at:",
+        result.manufacturing_lead_time_approved_at or "not parsed",
+        "",
+        "Manufacturing lead time approval role:",
+        result.manufacturing_lead_time_approval_role or "not parsed",
         "",
         "Output XLSX:",
         str(result.output_xlsx),

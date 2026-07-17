@@ -17,6 +17,13 @@ from openpyxl.worksheet.page import PageMargins  # type: ignore[import-untyped]
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "checked_clientize_quote.py"
 LAUNCHER = PROJECT_ROOT / "scripts" / "run_checked_clientization.ps1"
+SOURCE_NOTE = (
+    "ВН 3Р 25А заменён на ВН 3Р 32А — номинал 25А отсутствует в линейке CHINT."
+)
+CLIENT_NOTE = (
+    "Примечание: ВН 3Р 25А заменён на ВН 3Р 32А, поскольку номинал 25А "
+    "отсутствует в линейке CHINT."
+)
 
 
 def load_script_module(name: str, path: Path) -> ModuleType:
@@ -50,6 +57,8 @@ def item_rows() -> list[dict[str, Any]]:
             "instruments_and_devices": "CHINT DEVICES A",
             "cabinet_type_dimensions_material": "CABINET-A, металл",
             "unit_price_kzt": 100_000,
+            "source_note": None,
+            "client_note": None,
         },
         {
             "row": 18,
@@ -60,6 +69,8 @@ def item_rows() -> list[dict[str, Any]]:
             "instruments_and_devices": "CHINT DEVICES B 3P 32A",
             "cabinet_type_dimensions_material": "CABINET-B, металл",
             "unit_price_kzt": 50_000,
+            "source_note": None,
+            "client_note": None,
         },
         {
             "row": 19,
@@ -70,6 +81,8 @@ def item_rows() -> list[dict[str, Any]]:
             "instruments_and_devices": "CHINT DEVICES C 3P 32A",
             "cabinet_type_dimensions_material": "CABINET-C, металл",
             "unit_price_kzt": 90_000,
+            "source_note": None,
+            "client_note": None,
         },
     ]
 
@@ -159,11 +172,6 @@ def write_internal_draft(path: Path) -> None:
         worksheet[f"F{row}"] = item["instruments_and_devices"]
         worksheet[f"G{row}"] = item["cabinet_type_dimensions_material"]
         worksheet[f"H{row}"] = item["unit_price_kzt"]
-    warning = (
-        "ВН 3Р 25А заменён на ВН 3Р 32А — " "номинал 25А отсутствует в линейке CHINT."
-    )
-    worksheet["J18"] = warning
-    worksheet["J19"] = warning
     worksheet["I117"] = '=IF(COUNT(I17:I116)=0,"нужно уточнить",SUM(I17:I116))'
     worksheet["H118"] = (
         '=IF(NOT(ISNUMBER($A$131)),"","В том числе НДС "' '&TEXT($A$131,"0")&"%")'
@@ -253,6 +261,9 @@ def approval_payload(internal_draft: Path) -> dict[str, Any]:
         "payment_terms": "100% предоплата",
         "delivery_terms": "EXW, г. Астана",
         "manufacturing_lead_time": "7–10 рабочих дней",
+        "manufacturing_lead_time_approved_by": "SYNTHETIC-PTO-ENGINEER",
+        "manufacturing_lead_time_approved_at": "2099-01-01T11:30:00+05:00",
+        "manufacturing_lead_time_approval_role": "pto_engineer",
         "validity_period": None,
         "amount_words_text": ("Всего прописью: Двести девяносто тысяч тенге 00 тиын"),
         "commercial_price_approved": "yes",
@@ -292,10 +303,66 @@ def build_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any
     }
 
 
+def refresh_approval(case: Mapping[str, Any]) -> None:
+    case["payload"]["internal_draft_xlsx_sha256"] = sha256(case["internal_draft"])
+    write_json(case["approval"], case["payload"])
+
+
+def set_source_cell(case: Mapping[str, Any], coordinate: str, value: object) -> None:
+    workbook = load_workbook(case["internal_draft"])
+    workbook[clientizer.SHEET_NAME][coordinate] = value
+    workbook.save(case["internal_draft"])
+    workbook.close()
+    refresh_approval(case)
+
+
+def approve_item_note(
+    case: Mapping[str, Any],
+    row: int,
+    source_note: str = SOURCE_NOTE,
+    client_note: str = CLIENT_NOTE,
+) -> None:
+    item = next(item for item in case["payload"]["items"] if item["row"] == row)
+    item["source_note"] = source_note
+    item["client_note"] = client_note
+    set_source_cell(case, f"J{row}", source_note)
+
+
+def add_unreferenced_shared_text(case: Mapping[str, Any], value: str) -> None:
+    path = case["internal_draft"]
+    with zipfile.ZipFile(path) as source:
+        parts = {name: source.read(name) for name in source.namelist()}
+    if clientizer.SHARED_STRINGS_PART in parts:
+        root = ElementTree.fromstring(parts[clientizer.SHARED_STRINGS_PART])
+    else:
+        root = ElementTree.Element(
+            f"{{{clientizer.SPREADSHEET_NS}}}sst",
+            {"count": "0", "uniqueCount": "0"},
+        )
+    item = ElementTree.SubElement(root, f"{{{clientizer.SPREADSHEET_NS}}}si")
+    text = ElementTree.SubElement(item, f"{{{clientizer.SPREADSHEET_NS}}}t")
+    text.text = value
+    for attribute in ("count", "uniqueCount"):
+        root.set(attribute, str(int(root.get(attribute, "0")) + 1))
+    parts[clientizer.SHARED_STRINGS_PART] = ElementTree.tostring(
+        root, encoding="utf-8", xml_declaration=True
+    )
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as target:
+        for name, content in parts.items():
+            target.writestr(name, content)
+    refresh_approval(case)
+
+
 def run_case(case: Mapping[str, Any]) -> Any:
     return clientizer.run_clientization(
         case["internal_draft"], case["approval"], case["output"]
     )
+
+
+def assert_no_output_or_temporary_candidate(case: Mapping[str, Any]) -> None:
+    assert not case["output"].exists()
+    assert list(case["output"].parent.glob(".*.candidate.xlsx")) == []
+    assert list(case["output"].parent.glob(".*.sanitize.tmp.xlsx")) == []
 
 
 def package_text(path: Path) -> str:
@@ -340,6 +407,15 @@ def rewrite_worksheet(
         node = root.find("main:pageSetup", namespace)
         assert node is not None
         node.set("scale", "55")
+    elif mutation == "duplicate_client_note_j20":
+        node = root.find(".//main:c[@r='J20']", namespace)
+        assert node is not None
+        for child in list(node):
+            node.remove(child)
+        node.set("t", "inlineStr")
+        inline = ElementTree.SubElement(node, f"{{{clientizer.SPREADSHEET_NS}}}is")
+        text = ElementTree.SubElement(inline, f"{{{clientizer.SPREADSHEET_NS}}}t")
+        text.text = CLIENT_NOTE
     elif mutation in {"formula_guard", "formula_item_name", "formula_title"}:
         coordinate, cached_value = {
             "formula_guard": ("G12", None),
@@ -372,8 +448,12 @@ def install_post_patch_mutation(
 ) -> None:
     original = clientizer.sanitize_unreferenced_shared_strings
 
-    def sanitize_then_mutate(path: Path, worksheet_part: str) -> None:
-        original(path, worksheet_part)
+    def sanitize_then_mutate(
+        path: Path,
+        worksheet_part: str,
+        approval: Any,
+    ) -> None:
+        original(path, worksheet_part, approval)
         rewrite_worksheet(path, worksheet_part, mutation)
 
     monkeypatch.setattr(
@@ -396,6 +476,9 @@ def test_valid_multi_item_clientization_is_checked_and_atomic(
     assert result.item_count == 3
     assert result.approval_id == "SYNTHETIC-APPROVAL"
     assert result.approved_by == "SYNTHETIC-IGOR"
+    assert result.manufacturing_lead_time_approved_by == "SYNTHETIC-PTO-ENGINEER"
+    assert result.manufacturing_lead_time_approved_at == "2099-01-01T11:30:00+05:00"
+    assert result.manufacturing_lead_time_approval_role == "pto_engineer"
     assert all(status == "pass" for status in result.checks.values())
     assert sha256(case["internal_draft"]) == source_hash
     assert case["output"].is_file()
@@ -443,6 +526,299 @@ def test_valid_multi_item_clientization_is_checked_and_atomic(
     assert package_part(case["internal_draft"], relationship_part) == package_part(
         case["output"], relationship_part
     )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_by", "approval fields do not match the strict schema"),
+        ("blank_by", "manufacturing_lead_time_approved_by"),
+        ("naive_at", "manufacturing_lead_time_approved_at must include a timezone"),
+        ("wrong_role", "manufacturing_lead_time_approval_role must be pto_engineer"),
+    ],
+)
+def test_invalid_pto_approval_metadata_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+    message: str,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    if mutation == "missing_by":
+        del case["payload"]["manufacturing_lead_time_approved_by"]
+    elif mutation == "blank_by":
+        case["payload"]["manufacturing_lead_time_approved_by"] = "  "
+    elif mutation == "naive_at":
+        case["payload"]["manufacturing_lead_time_approved_at"] = "2099-01-01T11:30:00"
+    else:
+        case["payload"]["manufacturing_lead_time_approval_role"] = "sales"
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert message in "\n".join(result.failures)
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_c123_mismatch_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    set_source_cell(case, "C123", "Ориентировочный срок изготовления: 99 дней.")
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "manufacturing lead time does not match approval" in "\n".join(
+        result.failures
+    )
+    assert result.checks["candidate generation"] == "fail"
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_arbitrary_item_name_with_explicit_notes_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["items"][1]["client_name"] = "ARBITRARY-CLIENT-NAME"
+    approve_item_note(case, 18)
+    add_unreferenced_shared_text(case, SOURCE_NOTE)
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    assert all(status == "pass" for status in result.checks.values())
+    workbook = load_workbook(case["output"], data_only=False, read_only=False)
+    worksheet = workbook[clientizer.SHEET_NAME]
+    assert all(
+        worksheet.cell(row=row, column=column).value is None
+        for row in range(9, 14)
+        for column in range(7, 10)
+    )
+    assert worksheet["J17"].value is None
+    assert worksheet["J18"].value == CLIENT_NOTE
+    assert worksheet["J19"].value is None
+    assert worksheet["C123"].value == (
+        "Ориентировочный срок изготовления: 7–10 рабочих дней."
+    )
+    assert all(
+        worksheet[f"J{row}"].value is None
+        for row in range(20, clientizer.ITEM_END_ROW + 1)
+    )
+    workbook.close()
+    output_text = package_text(case["output"]).casefold()
+    assert CLIENT_NOTE.casefold() in output_text
+    assert SOURCE_NOTE.casefold() not in output_text
+    assert not any(token in output_text for token in clientizer.FORBIDDEN_TOKENS)
+
+
+def test_named_items_with_null_notes_do_not_gain_notes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["items"][1]["client_name"] = "НЩР-17"
+    case["payload"]["items"][2]["client_name"] = "АВР-17"
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    workbook = load_workbook(case["output"], data_only=False, read_only=False)
+    worksheet = workbook[clientizer.SHEET_NAME]
+    assert worksheet["J18"].value is None
+    assert worksheet["J19"].value is None
+    workbook.close()
+
+
+def test_arbitrary_item_receives_exact_approved_client_note(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 17, "source note for arbitrary item", "CLIENT NOTE: exact.")
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    candidate = clientizer.load_snapshot(case["output"])
+    assert clientizer.cell(candidate, "J17").value == "CLIENT NOTE: exact."
+    assert clientizer.cell(candidate, "J17").formula is None
+
+
+def test_source_note_equal_to_client_note_passes_only_in_approved_j(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    same_note = "Exact approved source and client note"
+    approve_item_note(case, 18, same_note, same_note)
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    candidate = clientizer.load_snapshot(case["output"])
+    matching = {
+        coordinate
+        for coordinate, value in candidate.cells.items()
+        if value.value == same_note
+    }
+    assert matching == {"J18"}
+    assert clientizer.cell(candidate, "J18").formula is None
+
+
+def test_source_note_substring_of_client_note_passes_only_in_approved_j(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    source_note = "approved source fragment"
+    client_note = f"Client prefix: {source_note}; client suffix."
+    approve_item_note(case, 18, source_note, client_note)
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    candidate = clientizer.load_snapshot(case["output"])
+    assert clientizer.cell(candidate, "J18").value == client_note
+    assert clientizer.cell(candidate, "J18").formula is None
+    assert all(
+        source_note not in value.value
+        for coordinate, value in candidate.cells.items()
+        if coordinate != "J18" and isinstance(value.value, str)
+    )
+
+
+def test_same_client_note_approved_for_two_j_cells_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    shared_client_note = "Same exact approved client note"
+    approve_item_note(case, 18, "source note row 18", shared_client_note)
+    approve_item_note(case, 19, "source note row 19", shared_client_note)
+
+    result = run_case(case)
+
+    assert result.status == "PASS"
+    candidate = clientizer.load_snapshot(case["output"])
+    matching = {
+        coordinate
+        for coordinate, value in candidate.cells.items()
+        if value.value == shared_client_note
+    }
+    assert matching == {"J18", "J19"}
+    assert clientizer.cell(candidate, "J18").formula is None
+    assert clientizer.cell(candidate, "J19").formula is None
+
+
+def test_source_note_mismatch_fails_before_candidate_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    case["payload"]["items"][1]["source_note"] = "different approved source note"
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "internal draft source note mismatch: J18" in result.failures
+    assert result.checks["candidate generation"] == "fail"
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize(
+    ("source_note", "client_note"),
+    [(SOURCE_NOTE, None), (None, CLIENT_NOTE)],
+)
+def test_note_pair_must_be_both_null_or_both_strings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source_note: str | None,
+    client_note: str | None,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["items"][1]["source_note"] = source_note
+    case["payload"]["items"][1]["client_note"] = client_note
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "must both be null or strings" in "\n".join(result.failures)
+    assert not case["output"].exists()
+
+
+@pytest.mark.parametrize("field", ["source_note", "client_note"])
+def test_note_fields_reject_empty_strings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["items"][1]["source_note"] = SOURCE_NOTE
+    case["payload"]["items"][1]["client_note"] = CLIENT_NOTE
+    case["payload"]["items"][1][field] = "  "
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert f"{field} must be null or a non-empty string" in "\n".join(result.failures)
+    assert not case["output"].exists()
+
+
+def test_client_note_with_internal_guard_fails_schema_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["items"][1]["source_note"] = SOURCE_NOTE
+    case["payload"]["items"][1]["client_note"] = "Клиенту не отправлять"
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "client_note contains an internal forbidden token" in "\n".join(
+        result.failures
+    )
+    assert not case["output"].exists()
+
+
+def test_v0_1_approval_is_unsupported(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["schema_version"] = "checked_clientization_approval.v0.1"
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "schema_version is unsupported" in "\n".join(result.failures)
+    assert not case["output"].exists()
+
+
+def test_missing_approved_manufacturing_lead_time_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    case["payload"]["manufacturing_lead_time"] = ""
+    write_json(case["approval"], case["payload"])
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "non-empty string: manufacturing_lead_time" in "\n".join(result.failures)
+    assert not case["output"].exists()
 
 
 def test_hash_mismatch_fails_without_candidate_or_output(
@@ -575,6 +951,122 @@ def test_residual_guard_outside_certified_cells_prevents_publish(
     assert not case["output"].exists()
 
 
+def test_source_note_remaining_elsewhere_in_package_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    set_source_cell(case, "K130", SOURCE_NOTE)
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "note text exists outside its exact approved J location" in "\n".join(
+        result.failures
+    )
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_duplicate_client_note_in_k130_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    set_source_cell(case, "K130", CLIENT_NOTE)
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "note text exists outside its exact approved J location" in "\n".join(
+        result.failures
+    )
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_prefixed_client_note_in_k130_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    set_source_cell(case, "K130", f"prefix {CLIENT_NOTE}")
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "note text exists outside its exact approved J location" in "\n".join(
+        result.failures
+    )
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_source_note_with_suffix_in_other_cell_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    set_source_cell(case, "K130", f"prefix {SOURCE_NOTE} suffix")
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "note text exists outside its exact approved J location" in "\n".join(
+        result.failures
+    )
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_duplicate_client_note_in_other_j_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    install_post_patch_mutation(monkeypatch, "duplicate_client_note_j20")
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "note text exists outside its exact approved J location" in "\n".join(
+        result.failures
+    )
+    assert result.checks["candidate generation"] == "pass"
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_unreferenced_duplicate_client_note_prevents_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    approve_item_note(case, 18)
+    add_unreferenced_shared_text(case, CLIENT_NOTE)
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "unapproved shared-string location" in "\n".join(result.failures)
+    assert_no_output_or_temporary_candidate(case)
+
+
+def test_unknown_unapproved_source_note_is_not_allowed_automatically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    set_source_cell(case, "J18", "unknown technical note")
+
+    result = run_case(case)
+
+    assert result.status == "FAIL"
+    assert "source note must use empty formula: J18" in "\n".join(result.failures)
+    assert result.checks["candidate generation"] == "fail"
+    assert not case["output"].exists()
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [
@@ -694,5 +1186,8 @@ def test_report_does_not_print_commercial_values(
     assert "CHINT DEVICES" not in report
     assert "SYNTHETIC-APPROVAL" in report
     assert "SYNTHETIC-IGOR" in report
+    assert "SYNTHETIC-PTO-ENGINEER" in report
+    assert "2099-01-01T11:30:00+05:00" in report
+    assert "pto_engineer" in report
     assert clientizer.REPORT_START in report
     assert clientizer.REPORT_END in report
