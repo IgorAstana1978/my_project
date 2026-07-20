@@ -259,6 +259,7 @@ class ExtractionArtifacts:
     manifest_text: str
     draft: dict[str, Any]
     summary: dict[str, Any]
+    boards: tuple[BoardCandidate, ...] = ()
 
 
 def compact_text(value: object) -> str:
@@ -1653,5 +1654,8 @@ def build_artifacts(
         "extraction_summary": summary,
     }
     return ExtractionArtifacts(
-        manifest_text=manifest_text, draft=draft, summary=summary
+        manifest_text=manifest_text,
+        draft=draft,
+        summary=summary,
+        boards=tuple(boards),
     )

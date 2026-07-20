@@ -5,6 +5,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from pypdf import PdfReader, PdfWriter
 
@@ -174,6 +175,42 @@ def first_item(draft: dict[str, Any]) -> dict[str, Any]:
 
 def first_component(draft: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], first_item(draft)["components"][0])
+
+
+def write_section_intake(
+    path: Path,
+    documents: list[dict[str, str]],
+    *,
+    project_id: str = "2024/086",
+) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "intake_version": "section_aware_extraction_intake.v0.1",
+                "project_id": project_id,
+                "source_documents": documents,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def section_document(
+    path: Path,
+    document_id: str,
+    *,
+    section_id: str = "13",
+    discipline: str = "ЭОМ",
+) -> dict[str, str]:
+    return {
+        "path": path.name,
+        "source_document_id": document_id,
+        "section_id": section_id,
+        "discipline": discipline,
+        "source_role": "project_pdf",
+    }
 
 
 def test_pdf_with_one_switchboard(tmp_path: Path) -> None:
@@ -688,6 +725,209 @@ def test_generated_draft_passes_existing_preliminary_validator(tmp_path: Path) -
     assert result.status == "PASS", result.red_flags
     assert result.checks["preliminary draft validation"] == "pass"
     assert result.checks["source bundle verification and review card"] == "pass"
+
+
+def test_old_pdf_mode_keeps_v01_contract_without_section_fields(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+
+    draft = extraction.build_artifacts(pdf, None).draft
+
+    assert draft["schema_version"] == "preliminary_composition_draft.v0.1"
+    serialized = json.dumps(draft, ensure_ascii=False)
+    for field_name in (
+        "project_id",
+        "section_id",
+        "discipline",
+        "source_document_id",
+        "source_role",
+        "source_designation",
+    ):
+        assert f'"{field_name}"' not in serialized
+
+
+def test_same_designation_in_different_sections_stays_separate(tmp_path: Path) -> None:
+    first_pdf = write_text_pdf(tmp_path / "section-12.pdf", [text_page()])
+    second_pdf = write_text_pdf(tmp_path / "section-13.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json",
+        [
+            section_document(first_pdf, "section-12-eom", section_id="12"),
+            section_document(second_pdf, "section-13-eom", section_id="13"),
+        ],
+    )
+
+    draft = operator.build_section_aware_artifacts(intake).draft
+
+    assert len(draft["items"]) == 2
+    assert {item["section_id"] for item in draft["items"]} == {"12", "13"}
+    assert {item["normalized_designation"] for item in draft["items"]} == {"VRU-1"}
+
+
+def test_same_designation_in_different_disciplines_stays_separate(
+    tmp_path: Path,
+) -> None:
+    eom_pdf = write_text_pdf(tmp_path / "eom.pdf", [text_page()])
+    eof_pdf = write_text_pdf(tmp_path / "eof.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json",
+        [
+            section_document(eom_pdf, "section-11-eom", section_id="11"),
+            section_document(
+                eof_pdf,
+                "section-11-eof",
+                section_id="11",
+                discipline="ЭОФ",
+            ),
+        ],
+    )
+
+    items = operator.build_section_aware_artifacts(intake).draft["items"]
+
+    assert len(items) == 2
+    assert {item["discipline"] for item in items} == {"ЭОМ", "ЭОФ"}
+
+
+def test_same_designation_in_different_source_documents_stays_separate(
+    tmp_path: Path,
+) -> None:
+    first_pdf = write_text_pdf(tmp_path / "part-a.pdf", [text_page()])
+    second_pdf = write_text_pdf(tmp_path / "part-b.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json",
+        [
+            section_document(first_pdf, "part-a"),
+            section_document(second_pdf, "part-b"),
+        ],
+    )
+
+    items = operator.build_section_aware_artifacts(intake).draft["items"]
+
+    assert len(items) == 2
+    assert {item["source_document_id"] for item in items} == {"part-a", "part-b"}
+
+
+def test_same_identity_merges_evidence_from_multiple_pages(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "two-pages.pdf", [text_page(), text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json", [section_document(pdf, "two-pages")]
+    )
+
+    item = first_item(operator.build_section_aware_artifacts(intake).draft)
+
+    assert {value["page"] for value in item["provenance"]} == {1, 2}
+    assert {value["source_document_id"] for value in item["provenance"]} == {
+        "two-pages"
+    }
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["source_document_id", "section_id", "discipline", "source_role"],
+)
+def test_section_intake_rejects_missing_document_metadata(
+    tmp_path: Path, missing_field: str
+) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+    document = section_document(pdf, "project")
+    del document[missing_field]
+    intake = write_section_intake(tmp_path / "intake.json", [document])
+
+    with pytest.raises(operator.ExtractionError, match="missing required fields"):
+        operator.build_section_aware_artifacts(intake)
+
+
+def test_section_intake_rejects_missing_project_id(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json", [section_document(pdf, "project")], project_id=""
+    )
+
+    with pytest.raises(operator.ExtractionError, match="project_id"):
+        operator.build_section_aware_artifacts(intake)
+
+
+def test_source_document_id_format_and_uniqueness_are_fail_closed(
+    tmp_path: Path,
+) -> None:
+    first_pdf = write_text_pdf(tmp_path / "first.pdf", [text_page()])
+    second_pdf = write_text_pdf(tmp_path / "second.pdf", [text_page()])
+    invalid = write_section_intake(
+        tmp_path / "invalid.json", [section_document(first_pdf, "bad id")]
+    )
+    duplicate = write_section_intake(
+        tmp_path / "duplicate.json",
+        [
+            section_document(first_pdf, "same-id", section_id="12"),
+            section_document(second_pdf, "same-id", section_id="13"),
+        ],
+    )
+
+    with pytest.raises(operator.ExtractionError, match="must match"):
+        operator.build_section_aware_artifacts(invalid)
+    with pytest.raises(operator.ExtractionError, match="conflicting metadata"):
+        operator.build_section_aware_artifacts(duplicate)
+
+
+def test_section_provenance_resolves_canonical_source_and_item(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json", [section_document(pdf, "section-13-eom")]
+    )
+
+    draft = operator.build_section_aware_artifacts(intake).draft
+    source = draft["source"]["source_documents"][0]
+    item = draft["items"][0]
+    component = item["components"][0]
+
+    assert source["source_document_id"] == item["source_document_id"]
+    assert item["provenance"][0]["item_id"] == item["item_id"]
+    assert component["provenance"][0]["item_id"] == item["item_id"]
+    assert component["provenance"][0]["component_id"] == component["component_id"]
+    assert Path(source["resolved_path"]) == pdf.resolve()
+    assert "resolved_path" not in item
+    assert "resolved_path" not in component
+
+
+def test_section_aware_operator_passes_new_validator(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json", [section_document(pdf, "section-13-eom")]
+    )
+    output = tmp_path / "section-output"
+
+    result = operator.run_operator(None, None, output, section_aware_intake=intake)
+
+    assert result.status == "PASS", result.red_flags
+    draft = json.loads((output / operator.DRAFT_NAME).read_text(encoding="utf-8"))
+    assert draft["schema_version"] == operator.SECTION_AWARE_SCHEMA_VERSION
+
+
+def test_section_aware_and_v01_inputs_are_mutually_exclusive(tmp_path: Path) -> None:
+    pdf = write_text_pdf(tmp_path / "project.pdf", [text_page()])
+    intake = write_section_intake(
+        tmp_path / "intake.json", [section_document(pdf, "project")]
+    )
+
+    result = operator.run_operator(
+        pdf,
+        None,
+        tmp_path / "output",
+        section_aware_intake=intake,
+    )
+
+    assert result.status == "FAIL"
+    assert "cannot be combined" in result.red_flags[0]
+    with pytest.raises(SystemExit):
+        operator.parse_args(
+            [
+                "--project-pdf",
+                str(pdf),
+                "--section-aware-intake",
+                str(intake),
+                "--output-dir",
+                str(tmp_path / "cli-output"),
+            ]
+        )
 
 
 def test_cli_requires_at_least_one_source(tmp_path: Path) -> None:

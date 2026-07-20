@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 from collections.abc import Mapping, Sequence
@@ -16,6 +17,8 @@ MODE = "preliminary composition draft validation only"
 COMMERCIAL_STATUS = "not confirmed composition; not price approval; not client-ready КП"
 HUMAN_APPROVAL = "Igor confirmation required before price calculation or commercial CSV"
 SCHEMA_VERSION = "preliminary_composition_draft.v0.1"
+SECTION_AWARE_SCHEMA_VERSION = "preliminary_composition_draft.section_aware.v0.1"
+SOURCE_DOCUMENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 ROOT_FIELDS = (
     "schema_version",
@@ -128,6 +131,22 @@ PDF_PAGE_FIELDS = (
     "qf_unresolved_count",
 )
 WORKBOOK_SHEET_FIELDS = ("sheet", "rows_checked")
+SECTION_CONTEXT_FIELDS = (
+    "project_id",
+    "section_id",
+    "discipline",
+    "source_document_id",
+    "source_role",
+)
+SECTION_SOURCE_DOCUMENT_FIELDS = (
+    *SOURCE_FILE_FIELDS,
+    *SECTION_CONTEXT_FIELDS,
+    "intake_path",
+    "resolved_path",
+)
+SECTION_ITEM_FIELDS = (*SECTION_CONTEXT_FIELDS, "source_designation")
+SECTION_COMPONENT_FIELDS = (*SECTION_CONTEXT_FIELDS, "item_id")
+SECTION_PROVENANCE_FIELDS = (*SECTION_CONTEXT_FIELDS, "item_id", "component_id")
 PDF_PAGE_STATUSES = {
     "text_available",
     "low_text_confidence",
@@ -574,6 +593,449 @@ def validate_extraction_summary(value: Any, result: ValidationResult) -> bool:
             value_at_field, f"extraction_summary.{field_name}", result
         ):
             valid = False
+    return valid
+
+
+def strip_section_provenance(values: object) -> None:
+    if not isinstance(values, list):
+        return
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        for field_name in SECTION_PROVENANCE_FIELDS:
+            value.pop(field_name, None)
+
+
+def strip_section_conflicts(values: object) -> None:
+    if not isinstance(values, list):
+        return
+    for value in values:
+        if isinstance(value, dict):
+            strip_section_provenance(value.get("sources"))
+
+
+def section_aware_v01_view(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    view = copy.deepcopy(dict(data))
+    view["schema_version"] = SCHEMA_VERSION
+    source = view.get("source")
+    if isinstance(source, dict):
+        documents = source.pop("source_documents", None)
+        if isinstance(documents, list):
+            source["source_files"] = [
+                (
+                    {
+                        key: value
+                        for key, value in document.items()
+                        if key in SOURCE_FILE_FIELDS
+                    }
+                    if isinstance(document, Mapping)
+                    else document
+                )
+                for document in documents
+            ]
+    items = view.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for field_name in SECTION_ITEM_FIELDS:
+                item.pop(field_name, None)
+            strip_section_provenance(item.get("provenance"))
+            strip_section_conflicts(item.get("conflicts"))
+            components = item.get("components")
+            if not isinstance(components, list):
+                continue
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                for field_name in SECTION_COMPONENT_FIELDS:
+                    component.pop(field_name, None)
+                strip_section_provenance(component.get("provenance"))
+                strip_section_conflicts(component.get("conflicts"))
+    return view
+
+
+def section_context(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    return tuple(value.get(field_name) for field_name in SECTION_CONTEXT_FIELDS)
+
+
+def section_item_identity(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        value.get("project_id"),
+        value.get("section_id"),
+        value.get("discipline"),
+        value.get("source_document_id"),
+        value.get("normalized_designation"),
+    )
+
+
+def source_record_pages(value: Mapping[str, Any]) -> set[int]:
+    pages = value.get("pages")
+    if not isinstance(pages, list):
+        return set()
+    return {
+        page["page"]
+        for page in pages
+        if isinstance(page, Mapping)
+        and isinstance(page.get("page"), int)
+        and not isinstance(page.get("page"), bool)
+        and page["page"] > 0
+    }
+
+
+def validate_section_context_strings(
+    value: Mapping[str, Any],
+    path: str,
+    result: ValidationResult,
+) -> bool:
+    valid = True
+    for field_name in SECTION_CONTEXT_FIELDS:
+        if field_name not in value or not require_string(
+            value.get(field_name), field_path(path, field_name), result
+        ):
+            valid = False
+    return valid
+
+
+def validate_section_provenance(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    source_records: Mapping[str, Mapping[str, Any]],
+    expected_context: tuple[Any, ...],
+    expected_item_id: str,
+    expected_component_id: str | None,
+) -> bool:
+    entries = require_list(value, path, result)
+    if entries is None:
+        return False
+    if not entries:
+        add_red_flag(result, f"field must be a non-empty list: {path}")
+        return False
+    valid = True
+    allowed = (
+        PROVENANCE_REQUIRED_FIELDS
+        + PROVENANCE_OPTIONAL_FIELDS
+        + (*SECTION_PROVENANCE_FIELDS,)
+    )
+    required: tuple[str, ...] = (
+        PROVENANCE_REQUIRED_FIELDS + ("page",) + SECTION_CONTEXT_FIELDS + ("item_id",)
+    )
+    if expected_component_id is not None:
+        required += ("component_id",)
+    for index, entry_value in enumerate(entries):
+        entry_path = f"{path}[{index}]"
+        entry = require_mapping(entry_value, entry_path, result)
+        if entry is None:
+            valid = False
+            continue
+        if not require_fields(entry, required, entry_path, result):
+            valid = False
+        if not reject_unknown_fields(entry, allowed, entry_path, result):
+            valid = False
+        if not validate_section_context_strings(entry, entry_path, result):
+            valid = False
+        if section_context(entry) != expected_context:
+            valid = False
+            add_red_flag(
+                result, f"cross-boundary provenance is not allowed: {entry_path}"
+            )
+        document_id = entry.get("source_document_id")
+        source_record = source_records.get(cast(str, document_id))
+        if source_record is None:
+            valid = False
+            add_red_flag(
+                result, f"provenance references unknown source document: {entry_path}"
+            )
+        else:
+            if entry.get("source_file") != source_record.get("file_name"):
+                valid = False
+                add_red_flag(
+                    result,
+                    "provenance source_file does not match source record: "
+                    f"{entry_path}",
+                )
+            page = entry.get("page")
+            if not require_positive_integer(
+                page, field_path(entry_path, "page"), result
+            ):
+                valid = False
+            elif page not in source_record_pages(source_record):
+                valid = False
+                add_red_flag(
+                    result,
+                    "provenance page is not present in canonical source document: "
+                    f"{entry_path}.page={page}",
+                )
+        if entry.get("source_type") != "pdf":
+            valid = False
+            add_red_flag(result, f"section-aware provenance must be PDF: {entry_path}")
+        if entry.get("item_id") != expected_item_id:
+            valid = False
+            add_red_flag(result, f"provenance item_id mismatch: {entry_path}")
+        if expected_component_id is None:
+            if "component_id" in entry:
+                valid = False
+                add_red_flag(
+                    result, f"item provenance cannot contain component_id: {entry_path}"
+                )
+        elif entry.get("component_id") != expected_component_id:
+            valid = False
+            add_red_flag(result, f"provenance component_id mismatch: {entry_path}")
+    return valid
+
+
+def validate_section_conflicts(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    source_records: Mapping[str, Mapping[str, Any]],
+    expected_context: tuple[Any, ...],
+    expected_item_id: str,
+    expected_component_id: str | None,
+) -> bool:
+    entries = require_list(value, path, result)
+    if entries is None:
+        return False
+    valid = True
+    for index, entry_value in enumerate(entries):
+        if not isinstance(entry_value, Mapping):
+            valid = False
+            continue
+        if not validate_section_provenance(
+            entry_value.get("sources"),
+            f"{path}[{index}].sources",
+            result,
+            source_records=source_records,
+            expected_context=expected_context,
+            expected_item_id=expected_item_id,
+            expected_component_id=expected_component_id,
+        ):
+            valid = False
+    return valid
+
+
+def validate_section_aware_contract(
+    data: Mapping[str, Any], result: ValidationResult
+) -> bool:
+    valid = True
+    if not reject_unknown_fields(data, ROOT_FIELDS + ROOT_OPTIONAL_FIELDS, "", result):
+        valid = False
+    source = require_mapping(data.get("source"), "source", result)
+    if source is None:
+        return False
+    section_source_fields = SOURCE_FIELDS + ("source_documents",)
+    if not require_fields(source, section_source_fields, "source", result):
+        valid = False
+    if not reject_unknown_fields(source, section_source_fields, "source", result):
+        valid = False
+    if "source_files" in source:
+        valid = False
+        add_red_flag(result, "section-aware source cannot contain v0.1 source_files")
+    documents = require_list(
+        source.get("source_documents"), "source.source_documents", result
+    )
+    source_records: dict[str, Mapping[str, Any]] = {}
+    project_ids: set[str] = set()
+    if documents is None or not documents:
+        valid = False
+        add_red_flag(result, "source.source_documents must be a non-empty list")
+    else:
+        for index, document_value in enumerate(documents):
+            path = f"source.source_documents[{index}]"
+            document = require_mapping(document_value, path, result)
+            if document is None:
+                valid = False
+                continue
+            source_required = (
+                SOURCE_FILE_FIELDS[:4]
+                + ("pages",)
+                + SECTION_CONTEXT_FIELDS
+                + (
+                    "intake_path",
+                    "resolved_path",
+                )
+            )
+            if not require_fields(document, source_required, path, result):
+                valid = False
+            if not reject_unknown_fields(
+                document, SECTION_SOURCE_DOCUMENT_FIELDS, path, result
+            ):
+                valid = False
+            if not validate_section_context_strings(document, path, result):
+                valid = False
+            document_id = document.get("source_document_id")
+            if (
+                not isinstance(document_id, str)
+                or SOURCE_DOCUMENT_ID_RE.fullmatch(document_id) is None
+            ):
+                valid = False
+                add_red_flag(result, f"source_document_id format is invalid: {path}")
+            elif document_id in source_records:
+                valid = False
+                add_red_flag(result, f"duplicate source_document_id: {document_id}")
+            else:
+                source_records[document_id] = document
+            if (
+                document.get("source_type") != "pdf"
+                or document.get("source_role") != "project_pdf"
+            ):
+                valid = False
+                add_red_flag(
+                    result, f"section-aware source must be a project PDF: {path}"
+                )
+            for field_name in ("file_name", "intake_path", "resolved_path"):
+                if not require_string(
+                    document.get(field_name), field_path(path, field_name), result
+                ):
+                    valid = False
+            project_id = document.get("project_id")
+            if isinstance(project_id, str):
+                project_ids.add(project_id)
+    if len(project_ids) > 1:
+        valid = False
+        add_red_flag(result, "section-aware source documents must share one project_id")
+
+    items = require_list(data.get("items"), "items", result)
+    if items is None:
+        return False
+    seen_item_ids: set[str] = set()
+    seen_item_identities: dict[tuple[Any, ...], str] = {}
+    seen_component_ids: dict[str, str] = {}
+    for index, item_value in enumerate(items):
+        path = f"items[{index}]"
+        item = require_mapping(item_value, path, result)
+        if item is None:
+            valid = False
+            continue
+        item_required = (
+            ITEM_FIELDS + ("normalized_designation", "provenance") + SECTION_ITEM_FIELDS
+        )
+        allowed = ITEM_FIELDS + ITEM_OPTIONAL_FIELDS + SECTION_ITEM_FIELDS
+        if not require_fields(item, item_required, path, result):
+            valid = False
+        if not reject_unknown_fields(item, allowed, path, result):
+            valid = False
+        if not validate_section_context_strings(item, path, result):
+            valid = False
+        if not require_string(
+            item.get("source_designation"),
+            field_path(path, "source_designation"),
+            result,
+        ):
+            valid = False
+        item_id = item.get("item_id")
+        if isinstance(item_id, str):
+            if item_id in seen_item_ids:
+                valid = False
+                add_red_flag(result, f"duplicate item_id: {item_id}")
+            seen_item_ids.add(item_id)
+        identity = section_item_identity(item)
+        if all(is_non_empty_string(value) for value in identity):
+            previous_item = seen_item_identities.get(identity)
+            if previous_item is not None:
+                valid = False
+                add_red_flag(
+                    result,
+                    "duplicate section-aware item identity: "
+                    f"{path} duplicates {previous_item}",
+                )
+            else:
+                seen_item_identities[identity] = path
+        context = section_context(item)
+        source_record = source_records.get(cast(str, item.get("source_document_id")))
+        if source_record is None or section_context(source_record) != context:
+            valid = False
+            add_red_flag(
+                result, f"item context does not match canonical source record: {path}"
+            )
+        if not validate_section_provenance(
+            item.get("provenance"),
+            field_path(path, "provenance"),
+            result,
+            source_records=source_records,
+            expected_context=context,
+            expected_item_id=cast(str, item_id),
+            expected_component_id=None,
+        ):
+            valid = False
+        if "conflicts" in item and not validate_section_conflicts(
+            item["conflicts"],
+            field_path(path, "conflicts"),
+            result,
+            source_records=source_records,
+            expected_context=context,
+            expected_item_id=cast(str, item_id),
+            expected_component_id=None,
+        ):
+            valid = False
+        components = item.get("components")
+        if not isinstance(components, list):
+            continue
+        for component_index, component_value in enumerate(components):
+            component_path = f"{path}.components[{component_index}]"
+            component = require_mapping(component_value, component_path, result)
+            if component is None:
+                valid = False
+                continue
+            component_required = (
+                COMPONENT_FIELDS + ("provenance",) + SECTION_COMPONENT_FIELDS
+            )
+            component_allowed = (
+                COMPONENT_FIELDS + COMPONENT_OPTIONAL_FIELDS + SECTION_COMPONENT_FIELDS
+            )
+            if not require_fields(
+                component, component_required, component_path, result
+            ):
+                valid = False
+            if not reject_unknown_fields(
+                component, component_allowed, component_path, result
+            ):
+                valid = False
+            if not validate_section_context_strings(component, component_path, result):
+                valid = False
+            if (
+                section_context(component) != context
+                or component.get("item_id") != item_id
+            ):
+                valid = False
+                add_red_flag(
+                    result, f"component crosses its item boundary: {component_path}"
+                )
+            component_id = component.get("component_id")
+            if isinstance(component_id, str):
+                previous_component = seen_component_ids.get(component_id)
+                if previous_component is not None:
+                    valid = False
+                    add_red_flag(
+                        result,
+                        f"duplicate component_id: {component_id} at "
+                        f"{component_path}; first seen at {previous_component}",
+                    )
+                else:
+                    seen_component_ids[component_id] = component_path
+            if not validate_section_provenance(
+                component.get("provenance"),
+                field_path(component_path, "provenance"),
+                result,
+                source_records=source_records,
+                expected_context=context,
+                expected_item_id=cast(str, item_id),
+                expected_component_id=cast(str, component_id),
+            ):
+                valid = False
+            if "conflicts" in component and not validate_section_conflicts(
+                component["conflicts"],
+                field_path(component_path, "conflicts"),
+                result,
+                source_records=source_records,
+                expected_context=context,
+                expected_item_id=cast(str, item_id),
+                expected_component_id=cast(str, component_id),
+            ):
+                valid = False
     return valid
 
 
@@ -1065,16 +1527,20 @@ def validate_preliminary_composition_draft(input_json: Path) -> ValidationResult
     if data is None:
         return result
 
+    section_aware = data.get("schema_version") == SECTION_AWARE_SCHEMA_VERSION
+    validation_data = section_aware_v01_view(data) if section_aware else data
     forbidden_ok = find_forbidden_keys(data, "", result)
     result.checks["forbidden keys"] = "pass" if forbidden_ok else "fail"
-    validate_schema_constants(data, result)
-    validate_source(data.get("source"), result)
-    validate_safety(data.get("safety"), result)
+    validate_schema_constants(validation_data, result)
+    validate_source(validation_data.get("source"), result)
+    validate_safety(validation_data.get("safety"), result)
     validate_items(
-        data.get("items"),
+        validation_data.get("items"),
         result,
-        allow_incomplete="extraction_summary" in data,
+        allow_incomplete="extraction_summary" in validation_data,
     )
+    if section_aware and not validate_section_aware_contract(data, result):
+        result.checks["schema constants"] = "fail"
     set_confidence_evidence_check(result)
 
     all_checks_pass = all(status == "pass" for status in result.checks.values())

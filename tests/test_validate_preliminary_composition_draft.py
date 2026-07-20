@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import json
 import sys
@@ -44,6 +45,131 @@ def valid_data() -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(EXAMPLE.read_text(encoding="utf-8")))
 
 
+def valid_section_data() -> dict[str, Any]:
+    data = valid_data()
+    context = {
+        "project_id": "2024/086",
+        "section_id": "13",
+        "discipline": "ЭОМ",
+        "source_document_id": "section-13-eom",
+        "source_role": "project_pdf",
+    }
+    data["schema_version"] = "preliminary_composition_draft.section_aware.v0.1"
+    data["source"] = {
+        "source_type": "other",
+        "source_summary": "Synthetic section-aware validator fixture.",
+        "raw_input_sha256": "a" * 64,
+        "source_documents": [
+            {
+                "file_name": "section-13-eom.pdf",
+                "source_type": "pdf",
+                "sha256": "b" * 64,
+                "status": "extracted",
+                "pages": [{"page": 1, "status": "text_available"}],
+                **context,
+                "intake_path": "section-13-eom.pdf",
+                "resolved_path": "C:/sources/section-13-eom.pdf",
+            }
+        ],
+    }
+    item = first_item(data)
+    item.update(context)
+    item["normalized_designation"] = "VRU-1"
+    item["source_designation"] = "VRU-1"
+    item["provenance"] = [
+        {
+            "source_file": "section-13-eom.pdf",
+            "source_type": "pdf",
+            "locator": "page=1; block=1",
+            "raw_text": "VRU-1",
+            "confidence": 0.9,
+            "reason": "synthetic board evidence",
+            "page": 1,
+            **context,
+            "item_id": item["item_id"],
+        }
+    ]
+    for component in cast(list[dict[str, Any]], item["components"]):
+        component.update(context)
+        component["item_id"] = item["item_id"]
+        component["provenance"] = [
+            {
+                "source_file": "section-13-eom.pdf",
+                "source_type": "pdf",
+                "locator": "page=1; block=2",
+                "raw_text": component["component_label_guess"],
+                "confidence": 0.8,
+                "reason": "synthetic component evidence",
+                "page": 1,
+                **context,
+                "item_id": item["item_id"],
+                "component_id": component["component_id"],
+            }
+        ]
+    return data
+
+
+def renumber_section_item(item: dict[str, Any], item_id: str) -> None:
+    item["item_id"] = item_id
+    for provenance in cast(list[dict[str, Any]], item["provenance"]):
+        provenance["item_id"] = item_id
+    for index, component in enumerate(
+        cast(list[dict[str, Any]], item["components"]), start=1
+    ):
+        component_id = f"{item_id}-COMP-{index:03d}"
+        component["component_id"] = component_id
+        component["item_id"] = item_id
+        for provenance in cast(list[dict[str, Any]], component["provenance"]):
+            provenance["item_id"] = item_id
+            provenance["component_id"] = component_id
+
+
+def append_section_item_variant(
+    data: dict[str, Any],
+    *,
+    section_id: str = "13",
+    discipline: str = "ЭОМ",
+) -> dict[str, Any]:
+    source = cast(dict[str, Any], data["source"])
+    documents = cast(list[dict[str, Any]], source["source_documents"])
+    document = copy.deepcopy(documents[0])
+    document_id = f"variant-{len(documents) + 1}"
+    file_name = f"{document_id}.pdf"
+    document.update(
+        {
+            "file_name": file_name,
+            "source_document_id": document_id,
+            "section_id": section_id,
+            "discipline": discipline,
+            "intake_path": file_name,
+            "resolved_path": f"C:/sources/{file_name}",
+        }
+    )
+    documents.append(document)
+
+    items = cast(list[dict[str, Any]], data["items"])
+    item = copy.deepcopy(items[0])
+    renumber_section_item(item, f"ITEM-{len(items) + 1:03d}")
+    context = {
+        "project_id": document["project_id"],
+        "section_id": section_id,
+        "discipline": discipline,
+        "source_document_id": document_id,
+        "source_role": document["source_role"],
+    }
+    item.update(context)
+    for provenance in cast(list[dict[str, Any]], item["provenance"]):
+        provenance.update(context)
+        provenance["source_file"] = file_name
+    for component in cast(list[dict[str, Any]], item["components"]):
+        component.update(context)
+        for provenance in cast(list[dict[str, Any]], component["provenance"]):
+            provenance.update(context)
+            provenance["source_file"] = file_name
+    items.append(item)
+    return item
+
+
 def write_json(tmp_path: Path, data: dict[str, Any]) -> Path:
     path = tmp_path / "draft.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -79,6 +205,148 @@ def test_valid_example_passes(tmp_path: Path) -> None:
     assert result.status == "PASS"
     assert result.red_flags == []
     assert all(status == "pass" for status in result.checks.values())
+
+
+def test_valid_section_aware_contract_passes(tmp_path: Path) -> None:
+    result = run_validation(valid_section_data(), tmp_path)
+
+    assert result.status == "PASS", result.red_flags
+    assert result.red_flags == []
+
+
+def test_v01_contract_rejects_section_aware_fields(tmp_path: Path) -> None:
+    data = valid_data()
+    first_item(data)["section_id"] = "13"
+
+    assert_fails_with(data, tmp_path, "unknown field is not allowed")
+
+
+@pytest.mark.parametrize("field_name", ["project_id", "section_id", "discipline"])
+def test_section_contract_rejects_missing_context(
+    tmp_path: Path, field_name: str
+) -> None:
+    data = valid_section_data()
+    del first_item(data)[field_name]
+
+    assert_fails_with(data, tmp_path, f"items[0].{field_name}")
+
+
+def test_section_contract_rejects_cross_boundary_provenance(tmp_path: Path) -> None:
+    data = valid_section_data()
+    item = first_item(data)
+    provenance = cast(list[dict[str, Any]], item["provenance"])[0]
+    provenance["section_id"] = "12"
+
+    assert_fails_with(data, tmp_path, "cross-boundary provenance is not allowed")
+
+
+def test_section_contract_rejects_unknown_source_document_reference(
+    tmp_path: Path,
+) -> None:
+    data = valid_section_data()
+    item = first_item(data)
+    item["source_document_id"] = "unknown-document"
+    for provenance in cast(list[dict[str, Any]], item["provenance"]):
+        provenance["source_document_id"] = "unknown-document"
+
+    assert_fails_with(data, tmp_path, "canonical source record")
+
+
+def test_section_contract_rejects_mixed_v01_source_structure(tmp_path: Path) -> None:
+    data = valid_section_data()
+    source = cast(dict[str, Any], data["source"])
+    source["source_files"] = source["source_documents"]
+
+    assert_fails_with(data, tmp_path, "source_files")
+
+
+def test_section_contract_rejects_duplicate_merge_identity(tmp_path: Path) -> None:
+    data = valid_section_data()
+    duplicate = copy.deepcopy(first_item(data))
+    renumber_section_item(duplicate, "ITEM-002")
+    cast(list[dict[str, Any]], data["items"]).append(duplicate)
+
+    assert_fails_with(data, tmp_path, "duplicate section-aware item identity")
+
+
+@pytest.mark.parametrize(
+    ("section_id", "discipline"),
+    [("12", "ЭОМ"), ("13", "ЭОФ")],
+)
+def test_same_designation_across_section_boundary_remains_valid(
+    tmp_path: Path, section_id: str, discipline: str
+) -> None:
+    data = valid_section_data()
+    variant = append_section_item_variant(
+        data, section_id=section_id, discipline=discipline
+    )
+
+    assert (
+        variant["normalized_designation"] == first_item(data)["normalized_designation"]
+    )
+    result = run_validation(data, tmp_path)
+    assert result.status == "PASS", result.red_flags
+
+
+def test_section_contract_rejects_duplicate_component_id(tmp_path: Path) -> None:
+    data = valid_section_data()
+    components = cast(list[dict[str, Any]], first_item(data)["components"])
+    duplicate_id = components[0]["component_id"]
+    components[1]["component_id"] = duplicate_id
+    for provenance in cast(list[dict[str, Any]], components[1]["provenance"]):
+        provenance["component_id"] = duplicate_id
+
+    assert_fails_with(data, tmp_path, "duplicate component_id")
+
+
+@pytest.mark.parametrize("provenance_owner", ["item", "component", "conflict"])
+def test_section_contract_rejects_page_absent_from_source_record(
+    tmp_path: Path, provenance_owner: str
+) -> None:
+    data = valid_section_data()
+    item = first_item(data)
+    if provenance_owner == "item":
+        provenance = cast(list[dict[str, Any]], item["provenance"])[0]
+    elif provenance_owner == "component":
+        provenance = cast(list[dict[str, Any]], first_component(data)["provenance"])[0]
+    else:
+        conflict_provenance = copy.deepcopy(
+            cast(list[dict[str, Any]], item["provenance"])[0]
+        )
+        item["conflicts"] = [
+            {
+                "conflict_id": "CONFLICT-001",
+                "type": "synthetic_conflict",
+                "field": "source_presence",
+                "message": "Synthetic conflict for provenance validation.",
+                "sources": [conflict_provenance],
+            }
+        ]
+        provenance = conflict_provenance
+    provenance["page"] = 999
+
+    assert_fails_with(
+        data,
+        tmp_path,
+        "provenance page is not present in canonical source document",
+    )
+
+
+def test_section_contract_accepts_multiple_canonical_pages(tmp_path: Path) -> None:
+    data = valid_section_data()
+    source = cast(dict[str, Any], data["source"])
+    document = cast(list[dict[str, Any]], source["source_documents"])[0]
+    cast(list[dict[str, Any]], document["pages"]).append(
+        {"page": 2, "status": "text_available"}
+    )
+    item = first_item(data)
+    second_page = copy.deepcopy(cast(list[dict[str, Any]], item["provenance"])[0])
+    second_page["page"] = 2
+    second_page["locator"] = "page=2; block=1"
+    cast(list[dict[str, Any]], item["provenance"]).append(second_page)
+
+    result = run_validation(data, tmp_path)
+    assert result.status == "PASS", result.red_flags
 
 
 def test_malformed_json_fails(tmp_path: Path) -> None:
