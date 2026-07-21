@@ -1139,3 +1139,206 @@ def test_schematic_qf_provenance_keeps_page_raw_segment_and_locator() -> None:
     assert provenance["page"] == 1
     assert "QF1" in provenance["raw_text"]
     assert "qf=QF1" in provenance["locator"]
+
+
+def specification_page(
+    rows: list[list[tuple[str, int, int]]],
+    *,
+    include_quantity_header: bool = True,
+) -> list[tuple[str, int, int]]:
+    header = [
+        ("Position", 50, 740),
+        ("Description", 150, 740),
+        ("Type/model", 300, 740),
+        ("Unit", 430, 740),
+    ]
+    if include_quantity_header:
+        header.append(("Quantity", 500, 740))
+    return header + [fragment for row in rows for fragment in row]
+
+
+def specification_blocks(
+    rows: list[list[tuple[str, int, int]]],
+    *,
+    include_quantity_header: bool = True,
+) -> list[Any]:
+    return [
+        pdf_block(text, x, y, number)
+        for number, (text, x, y) in enumerate(
+            specification_page(
+                rows,
+                include_quantity_header=include_quantity_header,
+            ),
+            start=1,
+        )
+    ]
+
+
+def test_gated_specification_extracts_top_level_fields_and_provenance() -> None:
+    blocks = specification_blocks(
+        [
+            [("1.1", 50, 650), ("VRU-1", 55, 640), ("pcs", 430, 645), ("2", 500, 645)],
+            [("1.2", 50, 550), ("AVR-2", 55, 540), ("pcs", 430, 545), ("3", 500, 545)],
+            [("1.3", 50, 450), ("SHRS-3", 55, 440), ("pcs", 430, 445), ("4", 500, 445)],
+        ]
+    )
+
+    result = extraction.extract_gated_specification_page(
+        "stable-specification.pdf", 1, blocks, "usable synthetic text layer"
+    )
+
+    assert result.gated
+    assert [board.normalized for board in result.boards] == [
+        "VRU-1",
+        "AVR-2",
+        "SHRS-3",
+    ]
+    assert [board.quantity for board in result.boards] == [2, 3, 4], [
+        board.red_flags for board in result.boards
+    ]
+    assert all(not board.components for board in result.boards)
+    provenance = result.boards[0].provenance[0].as_dict()
+    assert provenance["page"] == 1
+    assert "unit=pcs" in provenance["locator"]
+    assert provenance["raw_text"] == "1.1 | pcs | 2 | VRU-1"
+
+
+def test_gated_specification_ambiguous_quantities_stay_null() -> None:
+    blocks = specification_blocks(
+        [
+            [
+                ("1.1", 50, 650),
+                ("VRU-1", 55, 640),
+                ("pcs", 430, 645),
+                ("2", 500, 646),
+                ("7", 500, 642),
+            ],
+            [
+                ("1.2", 50, 550),
+                ("AVR-2", 55, 540),
+                ("8", 0, 0),
+                ("pcs", 430, 545),
+                ("3", 500, 545),
+            ],
+            [("1.3", 50, 450), ("SHRS-3", 55, 440), ("pcs", 430, 445), ("4", 500, 445)],
+        ]
+    )
+
+    boards = extraction.extract_gated_specification_page(
+        "ambiguous-quantity.pdf", 1, blocks, "usable synthetic text layer"
+    ).boards
+
+    assert [board.quantity for board in boards] == [None, None, 4], [
+        board.red_flags for board in boards
+    ]
+    assert "multiple numeric fragments" in " ".join(boards[0].red_flags)
+    assert "orphan zero-coordinate" in " ".join(boards[1].red_flags)
+
+
+def test_gated_specification_excludes_component_tail() -> None:
+    blocks = specification_blocks(
+        [
+            [("1.1", 50, 650), ("VRU-1", 55, 640), ("pcs", 430, 645), ("1", 500, 645)],
+            [
+                ("Breaker VA47 component tail 12 pcs", 150, 570),
+                ("VA47-63", 300, 570),
+            ],
+            [("1.2", 50, 550), ("AVR-2", 55, 540), ("pcs", 430, 545), ("2", 500, 545)],
+            [("1.3", 50, 450), ("SHRS-3", 55, 440), ("pcs", 430, 445), ("3", 500, 445)],
+        ]
+    )
+
+    boards = extraction.extract_gated_specification_page(
+        "tail-specification.pdf", 1, blocks, "usable synthetic text layer"
+    ).boards
+
+    assert [board.normalized for board in boards] == ["VRU-1", "AVR-2", "SHRS-3"]
+    assert all(not board.components for board in boards)
+    assert all(
+        "component tail" not in provenance.raw_text
+        for board in boards
+        for provenance in board.provenance
+    )
+
+
+def test_broken_specification_gate_and_model_substring_fail_closed() -> None:
+    blocks = specification_blocks(
+        [
+            [("8. Functional group heading", 150, 680)],
+            [
+                ("1.1", 50, 650),
+                ("Щит распределительный настенный с дверцей на 12 мод. IP65", 150, 640),
+                ("ЩРН-12", 300, 640),
+                ("шт.", 430, 640),
+                ("1", 500, 640),
+            ],
+            [
+                ("1.2", 50, 550),
+                ("Вводное устройство для лифтов", 150, 540),
+                ("ЯРВ-100", 300, 540),
+                ("шт.", 430, 540),
+                ("2", 500, 540),
+            ],
+            [
+                ("1.3", 50, 450),
+                ("ЩК", 55, 440),
+                (
+                    "Корпус настенный с дверью, размеры 600х400х200",
+                    150,
+                    440,
+                ),
+                ("ЩРВ-П-18", 300, 440),
+                ("шт.", 430, 440),
+                ("80", 500, 440),
+            ],
+            [
+                ("1.4", 50, 350),
+                ("АВР-9", 300, 340),
+                ("шт.", 430, 340),
+                ("1", 500, 340),
+            ],
+        ]
+    )
+
+    result = extraction.extract_gated_specification_page(
+        "valid-specification.pdf", 1, blocks, "usable synthetic text layer"
+    )
+
+    assert result.gated
+    assert [board.normalized for board in result.boards] == ["ЯРВ-100", "ЩК"]
+    assert [board.quantity for board in result.boards] == [2, 80]
+    assert all(board.normalized != "ЩР" for board in result.boards)
+    assert sum("generic enclosure" in value for value in result.diagnostics) == 1
+    assert (
+        sum("description cluster is empty" in value for value in result.diagnostics)
+        == 1
+    )
+    yarv_provenance = result.boards[0].provenance[0].raw_text
+    assert "Вводное устройство для лифтов" in yarv_provenance
+    assert "Functional group heading" not in yarv_provenance
+    assert extraction.specification_literal_designation("ЩРВ-П-18") is None
+    assert extraction.specification_board_model("ЩРВ-П-18") == "ЩРВ-П-18"
+    assert extraction.normalize_specification_model("ЩРВ-П-18") == "ЩРВ-П-18"
+
+
+def test_four_page_v01_semantics_are_unchanged_except_created_at(
+    tmp_path: Path,
+) -> None:
+    pdf = write_text_pdf(
+        tmp_path / "four-page-v01.pdf",
+        [text_page(board=f"VRU-{index}") for index in range(1, 5)],
+    )
+
+    default_draft = extraction.build_artifacts(pdf, None).draft
+    explicit_legacy_draft = extraction.build_artifacts(
+        pdf,
+        None,
+        specification_rows=False,
+    ).draft
+    default_created_at = default_draft.pop("created_at")
+    explicit_created_at = explicit_legacy_draft.pop("created_at")
+
+    assert default_created_at
+    assert explicit_created_at
+    assert default_draft == explicit_legacy_draft
+    assert default_draft["schema_version"] == "preliminary_composition_draft.v0.1"

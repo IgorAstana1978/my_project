@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
+from itertools import product
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,36 @@ QF_APPARATUS_RE = re.compile(
 )
 BOARD_QUANTITY_RE = re.compile(
     r"(?:кол(?:ичество|-во)?|qty|quantity)\s*[:=]?\s*(\d+)", re.IGNORECASE
+)
+SPEC_POSITION_ANCHOR_RE = re.compile(r"\d+\.\d+\Z")
+SPEC_NUMERIC_RE = re.compile(r"\d+(?:[.,]\d+)?\Z")
+SPEC_LITERAL_DESIGNATION_RE = re.compile(
+    r"(?:[A-ZА-ЯЁ]{0,4}Щ[A-ZА-ЯЁ]{0,4}\d*[A-ZА-ЯЁ]?|"
+    r"ВРУ\d*[A-ZА-ЯЁ]?|АВР\d*[A-ZА-ЯЁ]?|УКРМ\d*[A-ZА-ЯЁ]?|"
+    r"ПР\d*[A-ZА-ЯЁ]?|VRU-?\d+[A-Z]?|AVR-?\d+[A-Z]?|"
+    r"SHRS-?\d+[A-Z]?)\Z",
+    re.IGNORECASE,
+)
+SPEC_BOARD_MODEL_RE = re.compile(
+    r"(?=[A-ZА-ЯЁ0-9 ./-]{3,48}\Z)(?=.*\d)"
+    r"(?:[A-ZА-ЯЁ]{0,4}Щ[A-ZА-ЯЁ]{0,4}|ВРУ|АВР|ШРС|УКРМ|"
+    r"ЯРВ|ША|НКУ|VRU|AVR|SHRS|PANEL|BOARD)"
+    r"[A-ZА-ЯЁ0-9 ./-]*\Z",
+    re.IGNORECASE,
+)
+SPEC_GENERIC_ENCLOSURE_NOUN_RE = re.compile(
+    r"(?:щит|шкаф|корпус|панел|panel|cabinet|enclosure)\w*\Z",
+    re.IGNORECASE,
+)
+SPEC_GENERIC_ENCLOSURE_TOKEN_RE = re.compile(
+    r"(?:щит|шкаф|корпус|панел|распределительн|модульн|настен|навесн|"
+    r"встроен|встраиваем|напольн|двер|исполнен|металл|пластик|модул|"
+    r"размер|габарит|состав|panel|cabinet|enclosure|distribution|modul|"
+    r"wall|mounted|recessed|floor|door|execution|metal|plastic|size|"
+    r"dimension)\w*|мод|ip\d+|\d+(?:[xх×]\d+){1,3}|\d+(?:[.,]\d+)?|"
+    r"[xх×]|с|со|на|в|во|из|"
+    r"под|без|и|или|для|with|without|of|in|on|for|and|or\Z",
+    re.IGNORECASE,
 )
 COMPONENT_QUANTITY_RE = re.compile(
     r"^(?P<label>.+?)\s+(?P<qty>\d+(?:[.,]\d+)?)\s*"
@@ -183,6 +214,23 @@ class PdfBlock:
     x: float
     y: float
     number: int
+
+
+@dataclass(frozen=True)
+class SpecificationColumnBands:
+    position: tuple[float, float]
+    description: tuple[float, float]
+    type_model: tuple[float, float]
+    unit: tuple[float, float]
+    quantity: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class SpecificationPageResult:
+    attempted: bool
+    gated: bool
+    boards: tuple[BoardCandidate, ...] = ()
+    diagnostics: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -308,6 +356,425 @@ def pdf_blocks(raw_blocks: Sequence[tuple[str, float, float]]) -> list[PdfBlock]
         for index, (text, x, y) in enumerate(raw_blocks, start=1)
         if compact_text(text)
     ]
+
+
+def specification_header_role(text: str) -> str | None:
+    normalized = normalize_header(text)
+    aliases = {
+        "position": {"поз", "позиция", "position"},
+        "description": {
+            "наименование",
+            "наименование и техническая характеристика",
+            "description",
+        },
+        "type_model": {"тип", "тип модель", "type", "type model"},
+        "unit": {"ед", "ед изм", "единица", "unit"},
+        "quantity": {"кол", "количество", "qty", "quantity"},
+    }
+    for role, values in aliases.items():
+        if normalized in values:
+            return role
+    return None
+
+
+def specification_literal_designation(text: str) -> str | None:
+    candidate = compact_text(text).strip(".,;:()")
+    return candidate if SPEC_LITERAL_DESIGNATION_RE.fullmatch(candidate) else None
+
+
+def specification_board_model(text: str) -> str | None:
+    candidate = compact_text(text).strip(".,;:()")
+    return candidate if SPEC_BOARD_MODEL_RE.fullmatch(candidate) else None
+
+
+def normalize_specification_model(value: str) -> str:
+    text = DASH_RE.sub("-", compact_text(value).upper().replace("Ё", "Е"))
+    return re.sub(r"\s*([./-])\s*", r"\1", text)
+
+
+def specification_description_is_generic_enclosure(value: str) -> bool:
+    tokens = normalize_header(value).split()
+    return (
+        bool(tokens)
+        and any(SPEC_GENERIC_ENCLOSURE_NOUN_RE.fullmatch(token) for token in tokens)
+        and all(SPEC_GENERIC_ENCLOSURE_TOKEN_RE.fullmatch(token) for token in tokens)
+    )
+
+
+def provenance_has_full_designation(board: BoardCandidate) -> bool:
+    token = re.escape(compact_text(board.designation))
+    matcher = re.compile(
+        rf"(?<![0-9A-ZА-ЯЁ-]){token}(?![0-9A-ZА-ЯЁ-])",
+        re.IGNORECASE,
+    )
+    return any(matcher.search(value.raw_text) for value in board.provenance)
+
+
+def infer_specification_bands(
+    blocks: Sequence[PdfBlock],
+) -> tuple[SpecificationColumnBands | None, bool, str]:
+    role_blocks: dict[str, list[PdfBlock]] = defaultdict(list)
+    for block in blocks:
+        role = specification_header_role(block.text)
+        if role is not None and block.x > 0 and block.y > 0:
+            role_blocks[role].append(block)
+    attempted = len(role_blocks) >= 3
+    required = ("position", "description", "type_model", "unit", "quantity")
+    if any(not role_blocks[role] for role in required):
+        return None, attempted, "specification header is incomplete"
+
+    y_values = [block.y for block in blocks if block.x > 0 and block.y > 0]
+    y_tolerance = max(20.0, (max(y_values) - min(y_values)) * 0.06)
+    header_candidates: list[tuple[float, list[PdfBlock]]] = []
+    for position in role_blocks["position"]:
+        nearby = [
+            [
+                block
+                for block in role_blocks[role]
+                if abs(block.y - position.y) <= y_tolerance
+            ]
+            for role in required[1:]
+        ]
+        if any(not candidates for candidates in nearby):
+            continue
+        for values in product(*nearby):
+            selected = [position, *values]
+            x_values = [block.x for block in selected]
+            if all(
+                left < right
+                for left, right in zip(x_values, x_values[1:], strict=False)
+            ):
+                y_spread = max(block.y for block in selected) - min(
+                    block.y for block in selected
+                )
+                score = sum(block.y for block in selected) - y_spread
+                header_candidates.append((score, selected))
+    if not header_candidates:
+        return None, attempted, "specification header columns are not monotonic"
+
+    header = max(header_candidates, key=lambda value: value[0])[1]
+    position_x, description_x, model_x, unit_x, quantity_x = (
+        block.x for block in header
+    )
+    position_description_gap = description_x - position_x
+    description_model_gap = model_x - description_x
+    model_unit_gap = unit_x - model_x
+    unit_quantity_gap = quantity_x - unit_x
+    if (
+        min(
+            position_description_gap,
+            description_model_gap,
+            model_unit_gap,
+            unit_quantity_gap,
+        )
+        <= 0
+    ):
+        return None, attempted, "specification header column gaps are invalid"
+
+    position_description = position_x + 0.35 * position_description_gap
+    description_model = model_x - 0.10 * description_model_gap
+    model_unit = unit_x - 0.05 * model_unit_gap
+    unit_quantity = unit_x + 0.70 * unit_quantity_gap
+    quantity_right = quantity_x + 0.70 * unit_quantity_gap
+    bands = SpecificationColumnBands(
+        position=(
+            max(0.0, position_x - 0.40 * position_description_gap),
+            position_description,
+        ),
+        description=(position_description, description_model),
+        type_model=(description_model, model_unit),
+        unit=(model_unit, unit_quantity),
+        quantity=(unit_quantity, quantity_right),
+    )
+    return bands, True, "specification header columns are usable"
+
+
+def block_in_band(block: PdfBlock, band: tuple[float, float]) -> bool:
+    return block.x > 0 and block.y > 0 and band[0] <= block.x < band[1]
+
+
+def specification_anchor_key(text: str) -> tuple[int, ...]:
+    return tuple(int(value) for value in text.split("."))
+
+
+def merge_specification_board(
+    boards_by_key: dict[str, BoardCandidate], board: BoardCandidate
+) -> None:
+    current = boards_by_key.get(board.normalized)
+    if current is None:
+        boards_by_key[board.normalized] = board
+        return
+    current.provenance.extend(board.provenance)
+    current.source_types.update(board.source_types)
+    current.confidence = min(current.confidence, board.confidence)
+    current.red_flags.extend(
+        flag for flag in board.red_flags if flag not in current.red_flags
+    )
+    if current.quantity is None:
+        current.quantity = board.quantity
+    elif board.quantity is not None and current.quantity != board.quantity:
+        current.conflicts.append(
+            conflict(
+                f"{board.normalized}-SPEC-QTY",
+                "switchboard_quantity_mismatch",
+                "quantity_guess",
+                "different top-level quantities in specification rows",
+                current.provenance,
+            )
+        )
+        current.quantity = None
+
+
+def extract_gated_specification_page(
+    file_name: str,
+    page_number: int,
+    blocks: Sequence[PdfBlock],
+    page_text: str,
+) -> SpecificationPageResult:
+    bands, attempted, header_diagnostic = infer_specification_bands(blocks)
+    if bands is None:
+        return SpecificationPageResult(
+            attempted=attempted,
+            gated=False,
+            diagnostics=(header_diagnostic,) if attempted else (),
+        )
+
+    anchors = [
+        block
+        for block in blocks
+        if block_in_band(block, bands.position)
+        and SPEC_POSITION_ANCHOR_RE.fullmatch(block.text)
+    ]
+    anchors.sort(key=lambda block: (-block.y, block.x, block.number))
+    anchor_keys = [specification_anchor_key(block.text) for block in anchors]
+    if (
+        len(anchors) < 3
+        or len(set(anchor_keys)) != len(anchor_keys)
+        or any(
+            left >= right
+            for left, right in zip(anchor_keys, anchor_keys[1:], strict=False)
+        )
+    ):
+        return SpecificationPageResult(
+            attempted=True,
+            gated=False,
+            diagnostics=("specification position anchors are not uniquely monotonic",),
+        )
+
+    header_y = max(
+        block.y for block in blocks if specification_header_role(block.text) is not None
+    )
+    quantity_fragments = [
+        block
+        for block in blocks
+        if block.y < header_y
+        and block_in_band(block, bands.quantity)
+        and SPEC_NUMERIC_RE.fullmatch(block.text)
+    ]
+    quantity_width = bands.quantity[1] - bands.quantity[0]
+    if len(quantity_fragments) < 2 or max(
+        block.x for block in quantity_fragments
+    ) - min(block.x for block in quantity_fragments) > max(2.0, quantity_width * 0.40):
+        return SpecificationPageResult(
+            attempted=True,
+            gated=False,
+            diagnostics=("specification quantity column is not stably separate",),
+        )
+
+    zero_coordinate_numerics = [
+        block
+        for block in blocks
+        if (block.x == 0 or block.y == 0) and SPEC_NUMERIC_RE.fullmatch(block.text)
+    ]
+    boards: dict[str, BoardCandidate] = {}
+    diagnostics: list[str] = []
+    for index, anchor in enumerate(anchors):
+        previous_gap = (
+            anchors[index - 1].y - anchor.y
+            if index > 0
+            else anchors[index].y - anchors[index + 1].y
+        )
+        next_gap = (
+            anchor.y - anchors[index + 1].y
+            if index + 1 < len(anchors)
+            else anchors[index - 1].y - anchor.y
+        )
+        row_blocks = [
+            block
+            for block in blocks
+            if block.x > 0
+            and block.y > 0
+            and anchor.y - 0.48 * next_gap <= block.y <= anchor.y + 0.42 * previous_gap
+        ]
+        literal_candidates = list(
+            dict.fromkeys(
+                candidate
+                for block in row_blocks
+                if block_in_band(block, bands.position)
+                or block_in_band(block, bands.description)
+                if (candidate := specification_literal_designation(block.text))
+                is not None
+            )
+        )
+        model_candidates = list(
+            dict.fromkeys(
+                candidate
+                for block in row_blocks
+                if block_in_band(block, bands.type_model)
+                if (candidate := specification_board_model(block.text)) is not None
+            )
+        )
+        description_text = ""
+        local_description_blocks: list[PdfBlock] = []
+        if not literal_candidates and len(model_candidates) == 1:
+            model_identity_blocks = [
+                block
+                for block in row_blocks
+                if block_in_band(block, bands.type_model)
+                and specification_board_model(block.text) == model_candidates[0]
+            ]
+            model_y = sum(block.y for block in model_identity_blocks) / len(
+                model_identity_blocks
+            )
+            row_head_y = (anchor.y + model_y) / 2
+            local_row_gap = min(previous_gap, next_gap)
+            cluster_tolerance = max(
+                abs(anchor.y - model_y) * 2,
+                local_row_gap * 0.20,
+            )
+            description_blocks = [
+                block for block in row_blocks if block_in_band(block, bands.description)
+            ]
+            nearest_description = min(
+                description_blocks,
+                key=lambda block: abs(block.y - row_head_y),
+                default=None,
+            )
+            if nearest_description is not None and (
+                abs(nearest_description.y - row_head_y) <= cluster_tolerance
+            ):
+                local_description_blocks = [
+                    block
+                    for block in description_blocks
+                    if abs(block.y - nearest_description.y) <= cluster_tolerance
+                    and abs(block.y - row_head_y) <= cluster_tolerance
+                ]
+                description_text = " ".join(
+                    block.text
+                    for block in sorted(
+                        local_description_blocks, key=lambda value: value.number
+                    )
+                )
+            if not compact_text(description_text):
+                diagnostics.append(
+                    f"PDF page {page_number} specification row {anchor.text} "
+                    "model-only local description cluster is empty and requires "
+                    "manual review"
+                )
+                continue
+            if specification_description_is_generic_enclosure(description_text):
+                diagnostics.append(
+                    f"PDF page {page_number} specification row {anchor.text} "
+                    "model-only generic enclosure description requires manual review"
+                )
+                continue
+            candidates = model_candidates
+        else:
+            candidates = literal_candidates or model_candidates
+        if len(candidates) != 1:
+            diagnostics.append(
+                f"PDF page {page_number} specification row {anchor.text} has no "
+                "unique full-token designation"
+            )
+            continue
+        designation = candidates[0]
+        identity_blocks = [
+            block for block in row_blocks if compact_text(block.text) == designation
+        ]
+        unit_values = list(
+            dict.fromkeys(
+                block.text for block in row_blocks if block_in_band(block, bands.unit)
+            )
+        )
+        unit = unit_values[0] if len(unit_values) == 1 else None
+        row_quantities = [
+            block
+            for block in row_blocks
+            if block_in_band(block, bands.quantity)
+            and SPEC_NUMERIC_RE.fullmatch(block.text)
+        ]
+        reference_orders = {anchor.number, *(block.number for block in identity_blocks)}
+        orphan_numeric = any(
+            min(abs(block.number - order) for order in reference_orders) <= 2
+            for block in zero_coordinate_numerics
+        )
+        quantity = (
+            parse_number(row_quantities[0].text)
+            if len(row_quantities) == 1 and not orphan_numeric
+            else None
+        )
+        selected = [anchor, *identity_blocks, *local_description_blocks]
+        selected.extend(
+            block for block in row_blocks if block_in_band(block, bands.unit)
+        )
+        selected.extend(row_quantities)
+        selected = list({block.number: block for block in selected}.values())
+        selected.sort(key=lambda block: (-block.y, block.x, block.number))
+        raw_text = " | ".join(block.text for block in selected)
+        coordinates = f"x={anchor.x:.1f}, y={anchor.y:.1f}"
+        locator = (
+            f"page={page_number}; specification_row={anchor.text}; {coordinates}; "
+            f"unit={unit or 'unresolved'}"
+        )
+        row_flags: list[str] = []
+        if quantity is None:
+            row_flags.append("specification row quantity requires manual review")
+        if unit is None:
+            row_flags.append("specification row unit requires manual review")
+        if len(row_quantities) > 1:
+            row_flags.append(
+                "multiple numeric fragments in specification quantity column"
+            )
+        if orphan_numeric:
+            row_flags.append("orphan zero-coordinate numeric fragment near row head")
+        provenance = Provenance(
+            source_file=file_name,
+            source_type="pdf",
+            page=page_number,
+            locator=locator,
+            block_coordinates=coordinates,
+            raw_text=raw_text,
+            confidence=0.88 if quantity is not None and unit is not None else 0.62,
+            reason="gated specification row-head full-token extraction",
+        )
+        board = BoardCandidate(
+            designation=designation,
+            normalized=(
+                normalize_designation(designation)
+                if literal_candidates
+                else normalize_specification_model(designation)
+            ),
+            title=designation,
+            quantity=int(quantity) if isinstance(quantity, int) else None,
+            provenance=[provenance],
+            confidence=provenance.confidence,
+            source_types={"pdf"},
+            red_flags=row_flags,
+        )
+        merge_specification_board(boards, board)
+
+    if not compact_text(page_text):
+        return SpecificationPageResult(
+            attempted=True,
+            gated=False,
+            diagnostics=("specification page has no usable text layer",),
+        )
+    return SpecificationPageResult(
+        attempted=True,
+        gated=True,
+        boards=tuple(boards.values()),
+        diagnostics=tuple(diagnostics),
+    )
 
 
 def schematic_board_designations(text: str) -> list[str]:
@@ -666,7 +1133,7 @@ def page_has_image_xobject(page: Any) -> bool:
         return False
 
 
-def extract_pdf(path: Path) -> SourceExtraction:
+def extract_pdf(path: Path, *, specification_rows: bool = False) -> SourceExtraction:
     path = path.expanduser().resolve(strict=False)
     if path.suffix.casefold() != ".pdf":
         raise ExtractionError(f"project PDF must have .pdf suffix: {path}")
@@ -752,6 +1219,24 @@ def extract_pdf(path: Path) -> SourceExtraction:
         result.pages.append(page_metadata)
         if status == "image_only":
             continue
+
+        if specification_rows:
+            specification = extract_gated_specification_page(
+                path.name,
+                page_number,
+                structured_blocks,
+                page_text,
+            )
+            if specification.attempted:
+                for diagnostic in specification.diagnostics:
+                    result.red_flags.append(
+                        f"PDF page {page_number} gated specification: {diagnostic}"
+                    )
+                if not specification.gated:
+                    page_metadata["status"] = "low_text_confidence"
+                for board in specification.boards:
+                    merge_specification_board(boards_by_key, board)
+                continue
 
         confidence = 0.82 if status == "text_available" else 0.45
         schematic_page = bool(schematic_titles)
@@ -891,6 +1376,16 @@ def extract_pdf(path: Path) -> SourceExtraction:
                     f"project note requires Igor review: {line[:120]}"
                 )
 
+    if specification_rows:
+        for key, board in list(boards_by_key.items()):
+            if not re.search(
+                r"\d", board.normalized
+            ) and not provenance_has_full_designation(board):
+                del boards_by_key[key]
+                result.red_flags.append(
+                    "section-aware full-token guard rejected embedded designation "
+                    f"{board.designation!r}"
+                )
     result.boards = list(boards_by_key.values())
     return result
 
@@ -1523,12 +2018,14 @@ def board_to_draft(board: BoardCandidate, item_id: str) -> dict[str, Any]:
 def build_artifacts(
     project_pdf: Path | None,
     spec_workbook: Path | None,
+    *,
+    specification_rows: bool = False,
 ) -> ExtractionArtifacts:
     if project_pdf is None and spec_workbook is None:
         raise ExtractionError("at least one source must be provided")
     sources: list[SourceExtraction] = []
     if project_pdf is not None:
-        sources.append(extract_pdf(project_pdf))
+        sources.append(extract_pdf(project_pdf, specification_rows=specification_rows))
     if spec_workbook is not None:
         sources.append(extract_workbook(spec_workbook))
     boards, merge_counts = merge_boards(sources)

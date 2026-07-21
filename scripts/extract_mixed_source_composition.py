@@ -316,7 +316,11 @@ def build_section_aware_artifacts(intake_path: Path) -> ExtractionArtifacts:
     confidence_values: list[float] = []
 
     for document in intake.source_documents:
-        artifacts = build_artifacts(document.path, None)
+        artifacts = build_artifacts(
+            document.path,
+            None,
+            specification_rows=True,
+        )
         context = section_context(intake, document)
         summaries.append(artifacts.summary)
         root_red_flags.extend(cast(list[str], artifacts.draft["red_flags"]))
