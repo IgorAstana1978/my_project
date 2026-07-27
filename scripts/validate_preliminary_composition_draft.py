@@ -91,10 +91,24 @@ COMPONENT_OPTIONAL_FIELDS = (
     "rating_guess",
     "unit_guess",
     "note_guess",
+    "field_applicability",
     "provenance",
     "conflicts",
     "missing_fields",
     "review_status",
+)
+FIELD_APPLICABILITY_FIELDS = ("field", "status", "source")
+FIELD_APPLICABILITY_OPTIONAL_FIELDS = ("reason",)
+FIELD_APPLICABILITY_STATUSES = frozenset(
+    {
+        "REQUIRED",
+        "NOT_APPLICABLE_WITH_REASON",
+        "MODEL_OR_TYPE_SEMANTICS",
+        "UNRESOLVED_TECHNICAL_DETAIL",
+    }
+)
+FIELD_APPLICABILITY_SOURCES = frozenset(
+    {"contract", "raw_model_semantics", "unresolved"}
 )
 PROVENANCE_REQUIRED_FIELDS = (
     "source_file",
@@ -480,6 +494,80 @@ def validate_conflict_list(
             conflict["sources"], field_path(entry_path, "sources"), result
         ):
             valid = False
+    return valid
+
+
+def validate_field_applicability_list(
+    value: Any,
+    path: str,
+    result: ValidationResult,
+) -> bool:
+    entries = require_list(value, path, result)
+    if entries is None:
+        return False
+    if not entries:
+        add_red_flag(result, f"field_applicability must not be empty: {path}")
+        return False
+
+    valid = True
+    seen_fields: set[str] = set()
+    for index, raw_entry in enumerate(entries):
+        entry_path = f"{path}[{index}]"
+        entry = require_mapping(raw_entry, entry_path, result)
+        if entry is None:
+            valid = False
+            continue
+        if not require_fields(entry, FIELD_APPLICABILITY_FIELDS, entry_path, result):
+            valid = False
+        if not reject_unknown_fields(
+            entry,
+            FIELD_APPLICABILITY_FIELDS + FIELD_APPLICABILITY_OPTIONAL_FIELDS,
+            entry_path,
+            result,
+        ):
+            valid = False
+
+        field_name = entry.get("field")
+        if field_name != "rating_guess":
+            valid = False
+            add_red_flag(
+                result,
+                f"field_applicability field is not allowed: {entry_path}.field",
+            )
+        elif field_name in seen_fields:
+            valid = False
+            add_red_flag(
+                result,
+                f"duplicate field_applicability field: {entry_path}.field",
+            )
+        else:
+            seen_fields.add(field_name)
+
+        status = entry.get("status")
+        if status not in FIELD_APPLICABILITY_STATUSES:
+            valid = False
+            add_red_flag(
+                result,
+                f"field_applicability status is not allowed: {entry_path}.status",
+            )
+
+        source = entry.get("source")
+        if source not in FIELD_APPLICABILITY_SOURCES:
+            valid = False
+            add_red_flag(
+                result,
+                f"field_applicability source is not allowed: {entry_path}.source",
+            )
+
+        reason = entry.get("reason")
+        if status == "REQUIRED":
+            if "reason" in entry and not require_string(
+                reason, f"{entry_path}.reason", result
+            ):
+                valid = False
+        elif not require_string(reason, f"{entry_path}.reason", result):
+            valid = False
+
     return valid
 
 
@@ -1348,6 +1436,12 @@ def validate_component(
         valid = False
     if "conflicts" in component and not validate_conflict_list(
         component["conflicts"], field_path(path, "conflicts"), result
+    ):
+        valid = False
+    if "field_applicability" in component and not validate_field_applicability_list(
+        component["field_applicability"],
+        field_path(path, "field_applicability"),
+        result,
     ):
         valid = False
     for field_name in ("missing_fields",):

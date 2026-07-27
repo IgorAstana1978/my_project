@@ -177,6 +177,38 @@ def first_component(draft: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], first_item(draft)["components"][0])
 
 
+def synthetic_component(
+    label: str,
+    *,
+    quantity: int | float | None = 1,
+    model: str | None = None,
+    rating: str | None = None,
+    raw_text: str | None = None,
+    conflicts: list[dict[str, Any]] | None = None,
+) -> Any:
+    return extraction.ComponentCandidate(
+        label=label,
+        quantity=quantity,
+        unit="шт.",
+        model=model,
+        brand=None,
+        rating=rating,
+        note=None,
+        provenance=[
+            extraction.Provenance(
+                source_file="synthetic.txt",
+                source_type="manual",
+                locator="row=1",
+                raw_text=raw_text or label,
+                confidence=0.9,
+                reason="bounded synthetic regression fixture",
+            )
+        ],
+        confidence=0.9,
+        conflicts=conflicts or [],
+    )
+
+
 def write_section_intake(
     path: Path,
     documents: list[dict[str, str]],
@@ -1342,3 +1374,270 @@ def test_four_page_v01_semantics_are_unchanged_except_created_at(
     assert explicit_created_at
     assert default_draft == explicit_legacy_draft
     assert default_draft["schema_version"] == "preliminary_composition_draft.v0.1"
+
+
+def test_exact_n_pe_bus_has_no_false_rating_blocker() -> None:
+    component = synthetic_component("Шина N/PE", quantity=2)
+
+    draft = extraction.component_to_draft(component, "COMP-NPE-001")
+
+    assert draft["component_id"] == "COMP-NPE-001"
+    assert draft["quantity_guess"] == 2
+    assert "rating_guess" not in draft["missing_fields"]
+    assert draft["field_applicability"] == [
+        {
+            "field": "rating_guess",
+            "status": "NOT_APPLICABLE_WITH_REASON",
+            "reason": (
+                "Exact normalized N/PE bus identity has no separate rating field."
+            ),
+            "source": "contract",
+        }
+    ]
+
+
+def test_n_pe_bus_missing_quantity_stays_missing_without_default() -> None:
+    component = synthetic_component("Шина PE", quantity=None)
+
+    draft = extraction.component_to_draft(component, "COMP-NPE-002")
+
+    assert draft["quantity_guess"] is None
+    assert "quantity_guess" in draft["missing_fields"]
+    assert "rating_guess" not in draft["missing_fields"]
+
+
+def test_ambiguous_bus_identity_does_not_use_non_applicability() -> None:
+    component = synthetic_component("Шина N дополнительная", quantity=1)
+
+    draft = extraction.component_to_draft(component, "COMP-NPE-UNKNOWN")
+
+    assert "field_applicability" not in draft
+    assert "rating_guess" in draft["missing_fields"]
+
+
+def test_meter_model_semantics_preserve_section_specific_variants() -> None:
+    first = synthetic_component(
+        "Счетчик электроэнергии",
+        model="Mercury 230 ART-01",
+    )
+    second = synthetic_component(
+        "Счетчик электроэнергии",
+        model="Mercury 230 ART-02",
+    )
+
+    drafts = [
+        extraction.component_to_draft(first, "SECTION-12-COMP-001"),
+        extraction.component_to_draft(second, "SECTION-13-COMP-001"),
+    ]
+
+    assert [value["model_guess"] for value in drafts] == [
+        "Mercury 230 ART-01",
+        "Mercury 230 ART-02",
+    ]
+    assert all("rating_guess" not in value["missing_fields"] for value in drafts)
+    assert all(
+        value["field_applicability"][0]["status"] == "MODEL_OR_TYPE_SEMANTICS"
+        for value in drafts
+    )
+
+
+def test_meter_with_missing_model_fails_closed_without_variant_repair() -> None:
+    component = synthetic_component("Счетчик электроэнергии", model=None)
+
+    draft = extraction.component_to_draft(component, "COMP-METER-BROKEN")
+
+    assert draft["model_guess"] is None
+    assert "rating_guess" in draft["missing_fields"]
+    assert draft["field_applicability"][0]["status"] == ("UNRESOLVED_TECHNICAL_DETAIL")
+    assert draft["field_applicability"][0]["source"] == "unresolved"
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_model"),
+    [
+        ("Регулятор температуры РТ 007S 1 шт", "РТ 007S"),
+        ("Датчик температуры TST05 1 шт", "TST05"),
+    ],
+)
+def test_exact_contextual_model_type_is_model_not_rating(
+    line: str,
+    expected_model: str,
+) -> None:
+    provenance = extraction.Provenance(
+        source_file="shu-t2.txt",
+        source_type="manual",
+        locator="row=1",
+        raw_text=line,
+        confidence=0.9,
+        reason="bounded synthetic ШУ-Т2 row",
+    )
+
+    component = extraction.component_from_text(line, provenance, 0.9)
+
+    assert component is not None
+    assert component.model == expected_model
+    assert component.rating is None
+    assert component.provenance[0].raw_text == line
+    draft = extraction.component_to_draft(component, "COMP-SHU-T2")
+    assert draft["model_guess"] == expected_model
+    assert "rating_guess" not in draft["missing_fields"]
+    assert draft["field_applicability"][0]["status"] == ("MODEL_OR_TYPE_SEMANTICS")
+    assert draft["field_applicability"][0]["source"] == "raw_model_semantics"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Регулятор температуры РТ 007S РТ 007S 1 шт",
+        "Датчик температуры TST0 1 шт",
+    ],
+)
+def test_multiple_or_partial_model_candidates_fail_closed(line: str) -> None:
+    provenance = extraction.Provenance(
+        source_file="shu-t2.txt",
+        source_type="manual",
+        locator="row=1",
+        raw_text=line,
+        confidence=0.9,
+        reason="bounded ambiguous ШУ-Т2 row",
+    )
+
+    component = extraction.component_from_text(line, provenance, 0.9)
+
+    assert component is not None
+    assert component.model not in {"РТ 007S", "TST05"}
+    draft = extraction.component_to_draft(component, "COMP-SHU-T2-AMBIGUOUS")
+    assert "rating_guess" in draft["missing_fields"]
+    assert draft["field_applicability"][0]["status"] == ("UNRESOLVED_TECHNICAL_DETAIL")
+
+
+def test_explicit_model_semantics_are_evaluated_per_provenance_row() -> None:
+    component = synthetic_component(
+        "Датчик температуры TST05",
+        model="TST05",
+        raw_text="Датчик температуры TST05 1 шт",
+    )
+    component.provenance.append(
+        extraction.Provenance(
+            source_file="second-source.txt",
+            source_type="manual",
+            locator="row=2",
+            raw_text="Датчик температуры TST05 1 шт",
+            confidence=0.9,
+            reason="independent bounded synthetic row",
+        )
+    )
+
+    draft = extraction.component_to_draft(component, "COMP-SHU-T2-MULTI-SOURCE")
+
+    assert draft["model_guess"] == "TST05"
+    assert len(draft["provenance"]) == 2
+    assert "rating_guess" not in draft["missing_fields"]
+    assert draft["field_applicability"][0]["status"] == "MODEL_OR_TYPE_SEMANTICS"
+
+
+def test_tst05_quantity_conflict_is_not_corrected() -> None:
+    first = synthetic_component(
+        "Датчик температуры TST05",
+        quantity=5,
+        model="TST05",
+        raw_text="Датчик температуры TST05 5 шт",
+    )
+    second = synthetic_component(
+        "Датчик температуры TST05",
+        quantity=1,
+        model="TST05",
+        raw_text="Датчик температуры TST05 1 шт",
+    )
+    board = extraction.BoardCandidate(
+        designation="ШУ-Т2",
+        normalized="ШУ-Т2",
+        title="ШУ-Т2",
+        quantity=1,
+        provenance=first.provenance,
+        confidence=0.9,
+    )
+
+    merged, _count = extraction.merge_components(board, [first, second], False)
+
+    assert len(merged) == 1
+    assert merged[0].quantity is None
+    assert any(
+        conflict["field"] == "quantity_guess" for conflict in merged[0].conflicts
+    )
+
+
+@pytest.mark.parametrize(
+    "component_id",
+    [
+        "COMP-040",
+        "COMP-137",
+        "COMP-187",
+        "COMP-034",
+        "COMP-088",
+        "COMP-131",
+        "COMP-181",
+    ],
+)
+def test_frozen_quantity_conflicts_remain_unresolved(component_id: str) -> None:
+    component = synthetic_component(
+        "Шина N" if component_id in {"COMP-040", "COMP-137", "COMP-187"} else "TST05",
+        quantity=None,
+        model=None if component_id.startswith("COMP-0") else "TST05",
+        conflicts=[
+            {
+                "conflict_id": f"{component_id}-QTY",
+                "type": "component_quantity_mismatch",
+                "field": "quantity_guess",
+                "message": "bounded frozen quantity conflict",
+                "sources": [],
+            }
+        ],
+    )
+
+    draft = extraction.component_to_draft(component, component_id)
+
+    assert draft["component_id"] == component_id
+    assert draft["quantity_guess"] is None
+    assert "quantity_guess" in draft["missing_fields"]
+    assert draft["conflicts"][0]["field"] == "quantity_guess"
+
+
+def test_bounded_policy_addresses_expected_rating_record_counts() -> None:
+    components = [
+        *[synthetic_component("Шина N") for _index in range(29)],
+        *[
+            synthetic_component("Счетчик электроэнергии", model=f"METER-{index}")
+            for index in range(16)
+        ],
+        *[
+            synthetic_component(
+                "Датчик температуры TST05",
+                model="TST05",
+                raw_text="Датчик температуры TST05 1 шт",
+            )
+            for _index in range(8)
+        ],
+    ]
+
+    drafts = [
+        extraction.component_to_draft(component, f"COMP-{index:03d}")
+        for index, component in enumerate(components, start=1)
+    ]
+
+    assert len(drafts) == 53
+    assert (
+        sum(
+            value["field_applicability"][0]["status"] == "NOT_APPLICABLE_WITH_REASON"
+            for value in drafts
+        )
+        == 29
+    )
+    assert (
+        sum(
+            value["field_applicability"][0]["status"] == "MODEL_OR_TYPE_SEMANTICS"
+            for value in drafts
+        )
+        == 24
+    )
+    assert all("rating_guess" not in value["missing_fields"] for value in drafts)

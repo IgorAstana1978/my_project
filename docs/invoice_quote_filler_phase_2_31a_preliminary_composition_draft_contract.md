@@ -171,6 +171,44 @@ Rules:
 - `evidence` must be a non-empty list of strings;
 - `requires_igor_confirmation` must be `true`.
 
+### Optional rating applicability
+
+A preliminary component may contain one optional `field_applicability` list:
+
+```json
+{
+  "field_applicability": [
+    {
+      "field": "rating_guess",
+      "status": "NOT_APPLICABLE_WITH_REASON",
+      "reason": "Exact normalized N/PE bus identity has no separate rating field.",
+      "source": "contract"
+    }
+  ]
+}
+```
+
+This representation is preliminary-only audit metadata. It is not a Human
+Approval, a confirmed field, or a replacement for mandatory component quantity.
+Older drafts without `field_applicability` remain valid under the existing
+contract.
+
+Rules:
+
+- `field_applicability`, when present, must be a non-empty list with at most one
+  entry;
+- `field` must be exactly `rating_guess`;
+- `status` must be one of `REQUIRED`, `NOT_APPLICABLE_WITH_REASON`,
+  `MODEL_OR_TYPE_SEMANTICS`, or `UNRESOLVED_TECHNICAL_DETAIL`;
+- `source` must be one of `contract`, `raw_model_semantics`, or `unresolved`;
+- `reason` is mandatory and non-empty for every status except `REQUIRED`;
+- `reason` may be omitted for `REQUIRED`, but must be non-empty when present;
+- duplicate applicability entries for `rating_guess` are forbidden;
+- unknown applicability keys, fields, statuses, and sources are rejected;
+- `UNRESOLVED_TECHNICAL_DETAIL` does not remove `rating_guess` from
+  `missing_fields`;
+- applicability cannot make a missing or conflicted `quantity_guess` valid.
+
 Allowed `install_type_guess` values:
 
 ```text

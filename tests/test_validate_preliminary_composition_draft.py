@@ -207,6 +207,130 @@ def test_valid_example_passes(tmp_path: Path) -> None:
     assert all(status == "pass" for status in result.checks.values())
 
 
+def applicability_entry(
+    *,
+    status: str = "NOT_APPLICABLE_WITH_REASON",
+    source: str = "contract",
+) -> dict[str, str]:
+    return {
+        "field": "rating_guess",
+        "status": status,
+        "reason": "Bounded synthetic applicability reason.",
+        "source": source,
+    }
+
+
+def test_legacy_component_without_field_applicability_passes(tmp_path: Path) -> None:
+    data = valid_data()
+    assert "field_applicability" not in first_component(data)
+
+    result = run_validation(data, tmp_path)
+
+    assert result.status == "PASS", result.red_flags
+
+
+def test_valid_field_applicability_passes(tmp_path: Path) -> None:
+    data = valid_data()
+    first_component(data)["field_applicability"] = [applicability_entry()]
+
+    result = run_validation(data, tmp_path)
+
+    assert result.status == "PASS", result.red_flags
+
+
+def test_required_applicability_reason_may_be_absent(tmp_path: Path) -> None:
+    data = valid_data()
+    entry = applicability_entry(status="REQUIRED")
+    entry.pop("reason")
+    first_component(data)["field_applicability"] = [entry]
+
+    result = run_validation(data, tmp_path)
+
+    assert result.status == "PASS", result.red_flags
+
+
+def test_field_applicability_unknown_key_fails(tmp_path: Path) -> None:
+    data = valid_data()
+    entry = applicability_entry()
+    entry["approval"] = "forbidden"
+    first_component(data)["field_applicability"] = [entry]
+
+    assert_fails_with(data, tmp_path, "unknown field is not allowed")
+
+
+def test_field_applicability_unknown_field_fails(tmp_path: Path) -> None:
+    data = valid_data()
+    entry = applicability_entry()
+    entry["field"] = "model_guess"
+    first_component(data)["field_applicability"] = [entry]
+
+    assert_fails_with(data, tmp_path, "field_applicability field is not allowed")
+
+
+def test_field_applicability_unknown_status_fails(tmp_path: Path) -> None:
+    data = valid_data()
+    first_component(data)["field_applicability"] = [
+        applicability_entry(status="SOMETIMES_REQUIRED")
+    ]
+
+    assert_fails_with(data, tmp_path, "field_applicability status is not allowed")
+
+
+def test_field_applicability_unknown_source_fails(tmp_path: Path) -> None:
+    data = valid_data()
+    first_component(data)["field_applicability"] = [
+        applicability_entry(source="inferred")
+    ]
+
+    assert_fails_with(data, tmp_path, "field_applicability source is not allowed")
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "NOT_APPLICABLE_WITH_REASON",
+        "MODEL_OR_TYPE_SEMANTICS",
+        "UNRESOLVED_TECHNICAL_DETAIL",
+    ],
+)
+@pytest.mark.parametrize("reason", [None, ""])
+def test_non_required_applicability_requires_non_empty_reason(
+    tmp_path: Path,
+    status: str,
+    reason: str | None,
+) -> None:
+    data = valid_data()
+    entry: dict[str, Any] = applicability_entry(status=status)
+    if reason is None:
+        entry.pop("reason")
+    else:
+        entry["reason"] = reason
+    first_component(data)["field_applicability"] = [entry]
+
+    assert_fails_with(data, tmp_path, "field_applicability[0].reason")
+
+
+def test_duplicate_rating_applicability_fails(tmp_path: Path) -> None:
+    data = valid_data()
+    first_component(data)["field_applicability"] = [
+        applicability_entry(),
+        applicability_entry(status="MODEL_OR_TYPE_SEMANTICS"),
+    ]
+
+    assert_fails_with(data, tmp_path, "duplicate field_applicability field")
+
+
+def test_field_applicability_does_not_replace_missing_quantity(
+    tmp_path: Path,
+) -> None:
+    data = valid_data()
+    component = first_component(data)
+    component["quantity_guess"] = None
+    component["field_applicability"] = [applicability_entry()]
+
+    assert_fails_with(data, tmp_path, "quantity_guess")
+
+
 def test_valid_section_aware_contract_passes(tmp_path: Path) -> None:
     result = run_validation(valid_section_data(), tmp_path)
 

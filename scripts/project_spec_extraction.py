@@ -120,6 +120,34 @@ PROJECT_NOTE_RE = re.compile(
 MODEL_RE = re.compile(
     r"\b(?=[A-ZА-ЯЁ0-9./-]{4,}\b)(?=\S*[A-ZА-ЯЁ])(?=\S*\d)\S+", re.IGNORECASE
 )
+N_PE_BUS_IDENTITY_PATTERN = (
+    r"(?:шина\s+(?:n|pe|n\s+pe|pe\s+n)|",
+    r"(?:n|pe|n\s+pe|pe\s+n)\s+шина)\Z",
+)
+N_PE_BUS_IDENTITY_RE = re.compile(
+    "".join(N_PE_BUS_IDENTITY_PATTERN),
+    re.IGNORECASE,
+)
+METER_IDENTITY_RE = re.compile(
+    r"(?:^|\s)(?:счетчик\w*|электросчетчик\w*|meter)(?:\s|$)",
+    re.IGNORECASE,
+)
+REGULATOR_CONTEXT_RE = re.compile(
+    r"(?:^|\s)регулятор\w*(?:\s|$)",
+    re.IGNORECASE,
+)
+TEMPERATURE_SENSOR_CONTEXT_RE = re.compile(
+    r"(?:^|\s)датчик\w*\s+температур\w*(?:\s|$)",
+    re.IGNORECASE,
+)
+RT_007S_TOKEN_RE = re.compile(
+    r"(?<![0-9A-ZА-ЯЁ])РТ\s+007S(?![0-9A-ZА-ЯЁ])",
+    re.IGNORECASE,
+)
+TST05_TOKEN_RE = re.compile(
+    r"(?<![0-9A-ZА-ЯЁ])TST05(?![0-9A-ZА-ЯЁ])",
+    re.IGNORECASE,
+)
 BRANDS = (
     "Schneider Electric",
     "Schneider",
@@ -1065,6 +1093,159 @@ def explicit_model(text: str) -> str | None:
     return None
 
 
+def normalize_explicit_component_model_type(
+    component_label: str,
+    raw_text: str,
+    model: str | None,
+    rating: str | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Normalize only exact single-row model/type tokens with bounded context."""
+    normalized_label = normalize_header(component_label)
+    normalized_raw = normalize_header(raw_text)
+    regulator_context = REGULATOR_CONTEXT_RE.search(normalized_label) is not None
+    sensor_context = TEMPERATURE_SENSOR_CONTEXT_RE.search(normalized_label) is not None
+    rt_matches = RT_007S_TOKEN_RE.findall(raw_text)
+    tst_matches = TST05_TOKEN_RE.findall(raw_text)
+
+    if regulator_context:
+        allowed_current_models = {"", "007s", "рт 007s"}
+        if (
+            len(rt_matches) == 1
+            and not tst_matches
+            and normalize_header(model) in allowed_current_models
+        ):
+            normalized_rating = (
+                None if normalize_header(rating) in {"007s", "рт 007s"} else rating
+            )
+            return (
+                "РТ 007S",
+                normalized_rating,
+                "MODEL_OR_TYPE_SEMANTICS",
+                "Exact contextual model/type token is preserved in model_guess; "
+                "no separate rating is present.",
+            )
+        if "рт" in normalized_raw or rt_matches or tst_matches:
+            return (
+                model,
+                rating,
+                "UNRESOLVED_TECHNICAL_DETAIL",
+                "Rating applicability cannot be determined from ambiguous regulator "
+                "model/type semantics.",
+            )
+
+    if sensor_context:
+        allowed_current_models = {"", "tst05"}
+        if (
+            len(tst_matches) == 1
+            and not rt_matches
+            and normalize_header(model) in allowed_current_models
+        ):
+            normalized_rating = None if normalize_header(rating) == "tst05" else rating
+            return (
+                "TST05",
+                normalized_rating,
+                "MODEL_OR_TYPE_SEMANTICS",
+                "Exact contextual model/type token is preserved in model_guess; "
+                "no separate rating is present.",
+            )
+        if "tst" in normalized_raw or rt_matches or tst_matches:
+            return (
+                model,
+                rating,
+                "UNRESOLVED_TECHNICAL_DETAIL",
+                "Rating applicability cannot be determined from ambiguous temperature "
+                "sensor model/type semantics.",
+            )
+
+    return model, rating, None, None
+
+
+def classify_component_field_applicability(
+    component: ComponentCandidate,
+    field_name: str,
+) -> dict[str, str] | None:
+    """Classify preliminary rating applicability without changing component values."""
+    if field_name != "rating_guess":
+        raise ValueError(f"unsupported component applicability field: {field_name}")
+    if component.rating not in (None, ""):
+        return None
+
+    identities = {
+        normalize_header(component.label),
+        normalize_header(component.model),
+        normalize_header(f"{component.label} {component.model or ''}"),
+    }
+    if any(N_PE_BUS_IDENTITY_RE.fullmatch(value) for value in identities if value):
+        return {
+            "field": "rating_guess",
+            "status": "NOT_APPLICABLE_WITH_REASON",
+            "reason": (
+                "Exact normalized N/PE bus identity has no separate rating field."
+            ),
+            "source": "contract",
+        }
+
+    normalized_label = normalize_header(component.label)
+    if METER_IDENTITY_RE.search(normalized_label):
+        if component.model not in (None, ""):
+            return {
+                "field": "rating_guess",
+                "status": "MODEL_OR_TYPE_SEMANTICS",
+                "reason": (
+                    "The bounded meter model identity carries the applicable "
+                    "semantics; no separate rating is present."
+                ),
+                "source": "raw_model_semantics",
+            }
+        return {
+            "field": "rating_guess",
+            "status": "UNRESOLVED_TECHNICAL_DETAIL",
+            "reason": (
+                "Rating applicability cannot be determined because the bounded meter "
+                "model identity is missing or ambiguous."
+            ),
+            "source": "unresolved",
+        }
+
+    row_results = [
+        normalize_explicit_component_model_type(
+            component.label,
+            value.raw_text,
+            component.model,
+            component.rating,
+        )
+        for value in component.provenance
+    ]
+    unresolved = next(
+        (
+            result
+            for result in row_results
+            if result[2] == "UNRESOLVED_TECHNICAL_DETAIL"
+        ),
+        None,
+    )
+    model_semantics = next(
+        (result for result in row_results if result[2] == "MODEL_OR_TYPE_SEMANTICS"),
+        None,
+    )
+    selected = unresolved or model_semantics
+    if selected is None or selected[3] is None:
+        return None
+    status = selected[2]
+    reason = selected[3]
+    assert status is not None
+    return {
+        "field": "rating_guess",
+        "status": status,
+        "reason": reason,
+        "source": (
+            "raw_model_semantics"
+            if status == "MODEL_OR_TYPE_SEMANTICS"
+            else "unresolved"
+        ),
+    }
+
+
 def component_from_text(
     line: str,
     provenance: Provenance,
@@ -1078,13 +1259,19 @@ def component_from_text(
         return None
     quantity = parse_number(match.group("qty"))
     rating_match = RATING_RE.search(label)
+    model, rating, _status, _reason = normalize_explicit_component_model_type(
+        label,
+        provenance.raw_text,
+        explicit_model(label),
+        compact_text(rating_match.group(0)) if rating_match else None,
+    )
     return ComponentCandidate(
         label=label,
         quantity=quantity,
         unit=compact_text(match.group("unit")),
-        model=explicit_model(label),
+        model=model,
         brand=explicit_brand(label),
-        rating=compact_text(rating_match.group(0)) if rating_match else None,
+        rating=rating,
         note=None,
         provenance=[provenance],
         confidence=confidence,
@@ -1543,13 +1730,19 @@ def component_from_workbook_row(
         0.9,
         "structured workbook row matched item and quantity headers",
     )
+    model, rating, _status, _reason = normalize_explicit_component_model_type(
+        name,
+        provenance.raw_text,
+        cell_value(row, mapping, "model") or None,
+        cell_value(row, mapping, "rating") or None,
+    )
     component = ComponentCandidate(
         label=name,
         quantity=quantity,
         unit=cell_value(row, mapping, "unit") or None,
-        model=cell_value(row, mapping, "model") or None,
+        model=model,
         brand=cell_value(row, mapping, "brand") or None,
-        rating=cell_value(row, mapping, "rating") or None,
+        rating=rating,
         note=cell_value(row, mapping, "note") or None,
         provenance=[provenance],
         confidence=0.9 if quantity is not None else 0.58,
@@ -1921,6 +2114,9 @@ def merge_boards(
 def component_to_draft(
     component: ComponentCandidate, component_id: str
 ) -> dict[str, Any]:
+    rating_applicability = classify_component_field_applicability(
+        component, "rating_guess"
+    )
     missing = [
         field_name
         for field_name, value in (
@@ -1932,7 +2128,12 @@ def component_to_draft(
         )
         if value in (None, "")
     ]
-    return {
+    if rating_applicability is not None and rating_applicability["status"] in {
+        "NOT_APPLICABLE_WITH_REASON",
+        "MODEL_OR_TYPE_SEMANTICS",
+    }:
+        missing.remove("rating_guess")
+    draft = {
         "component_id": component_id,
         "component_code_guess": component.model,
         "component_label_guess": component.label,
@@ -1963,6 +2164,9 @@ def component_to_draft(
         "missing_fields": missing,
         "review_status": "requires_igor_review",
     }
+    if rating_applicability is not None:
+        draft["field_applicability"] = [rating_applicability]
+    return draft
 
 
 def board_to_draft(board: BoardCandidate, item_id: str) -> dict[str, Any]:

@@ -410,9 +410,8 @@ def test_manual_review_required_is_never_transferred_automatically(
     tmp_path: Path,
 ) -> None:
     def manual_install(draft: dict[str, Any]) -> None:
-        draft["items"][0]["components"][0][
-            "install_type_guess"
-        ] = "manual_review_required"
+        component = draft["items"][0]["components"][0]
+        component["install_type_guess"] = "manual_review_required"
 
     root, _draft = create_bundle(tmp_path, mutate_draft=manual_install)
     snapshot = builder.load_snapshot(
@@ -426,6 +425,82 @@ def test_manual_review_required_is_never_transferred_automatically(
         transfer.target_path.endswith(".install_type")
         for transfer in state.automatic_transfers
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "source"),
+    [
+        ("NOT_APPLICABLE_WITH_REASON", "contract"),
+        ("MODEL_OR_TYPE_SEMANTICS", "raw_model_semantics"),
+    ],
+)
+def test_preclassified_rating_has_no_false_technical_detail_issue(
+    status: str,
+    source: str,
+) -> None:
+    draft = valid_draft("0" * 64)
+    component = draft["items"][0]["components"][0]
+    component["rating_guess"] = None
+    component["field_applicability"] = [
+        {
+            "field": "rating_guess",
+            "status": status,
+            "reason": "Bounded rating applicability regression.",
+            "source": source,
+        }
+    ]
+    component["missing_fields"] = []
+
+    state = builder.classify_composition(draft)
+
+    assert not any(issue.kind == "technical_details" for issue in state.issues)
+    assert len(state.items[0]["components"]) == 1
+    assert not any(
+        "field_applicability" in transfer.target_path
+        for transfer in state.automatic_transfers
+    )
+
+
+def test_rating_applicability_does_not_remove_real_component_blockers() -> None:
+    draft = valid_draft("0" * 64)
+    component = draft["items"][0]["components"][0]
+    component["rating_guess"] = None
+    component["quantity_guess"] = None
+    component["install_type_guess"] = "manual_review_required"
+    component["missing_fields"] = ["quantity_guess"]
+    component["field_applicability"] = [
+        {
+            "field": "rating_guess",
+            "status": "NOT_APPLICABLE_WITH_REASON",
+            "reason": (
+                "Exact normalized N/PE bus identity has no separate rating field."
+            ),
+            "source": "contract",
+        }
+    ]
+    component["conflicts"] = [
+        {
+            "conflict_id": "COMP-040-QTY",
+            "type": "component_quantity_mismatch",
+            "field": "quantity_guess",
+            "message": "bounded frozen quantity conflict",
+            "sources": provenance(),
+        }
+    ]
+
+    state = builder.classify_composition(draft)
+
+    assert len(state.items[0]["components"]) == 1
+    assert any(
+        issue.target_path == ("items", 0, "components", 0, "quantity")
+        for issue in state.issues
+    )
+    assert any(issue.kind == "manual_review_required" for issue in state.issues)
+    assert not any(
+        transfer.target_path == "items[0].components[0].quantity"
+        for transfer in state.automatic_transfers
+    )
+    assert not any(issue.kind == "technical_details" for issue in state.issues)
 
 
 def test_cabinet_is_one_linked_exception_and_assumption_cannot_be_rejected(
@@ -896,9 +971,8 @@ def test_batch_explicit_substitution_is_expanded_per_component(
 def test_batch_hidden_rating_change_requires_substitution(tmp_path: Path) -> None:
     root, _draft, decisions_path = create_batch_bundle(tmp_path)
     value = json.loads(decisions_path.read_text("utf-8"))
-    value["items"][0]["component_groups"][0][
-        "final_description"
-    ] = "CHINT, automatic breaker 1P 20A"
+    group = value["items"][0]["component_groups"][0]
+    group["final_description"] = "CHINT, automatic breaker 1P 20A"
     decisions_path.write_bytes(canonical_json_bytes(value))
 
     result = run_batch(root, decisions_path)
@@ -1247,9 +1321,8 @@ def test_legacy_profile_does_not_auto_transfer_provenanced_values() -> None:
 
 def test_provenance_metadata_mismatch_blocks_before_questions(tmp_path: Path) -> None:
     def mismatch(draft: dict[str, Any]) -> None:
-        draft["items"][0]["components"][0]["provenance"][0][
-            "source_file"
-        ] = "missing.xlsx"
+        component = draft["items"][0]["components"][0]
+        component["provenance"][0]["source_file"] = "missing.xlsx"
 
     root, _draft = create_bundle(tmp_path, mutate_draft=mismatch)
     prompts: list[str] = []
