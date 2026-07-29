@@ -250,6 +250,15 @@ def test_invalid_install_type_fails(tmp_path: Path) -> None:
     assert_fails_with(data, tmp_path, "install_type is not allowed")
 
 
+def test_n_pe_bus_set_install_type_passes(tmp_path: Path) -> None:
+    data = valid_data()
+    first_component(data)["install_type"] = "n_pe_bus_set"
+
+    result = run_validation(data, tmp_path)
+
+    assert result.status == "PASS", result.red_flags
+
+
 def test_report_has_safety_boundaries(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

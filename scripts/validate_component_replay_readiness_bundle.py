@@ -18,25 +18,31 @@ from typing import Any, cast
 
 INTAKE_SCHEMA = "component_replay_intake.v0.1"
 BUNDLE_SCHEMA = "component_replay_readiness_bundle.v0.1"
+BUNDLE_SCHEMA_V021 = "component_replay_readiness_bundle.v0.2"
 BUNDLE_STATUS = "PRELIMINARY_REPLAY_ONLY_NOT_CONFIRMED"
 BUNDLE_NAME = "component_replay_readiness_bundle.json"
 
 CUMULATIVE_SCHEMA = "technical_field_component_scheme_completion_review.v0.1"
 APPLICABILITY_SCHEMA = "unresolved_field_applicability_audit.v0.1"
-AUTHORITY_SCHEMAS = (
+CORRECTION_SCHEMA = "component_replay_row_alignment_correction.v0.1"
+AUTHORITY_SCHEMA_V021 = "human_decisions_batch.v0.21"
+BASE_AUTHORITY_SCHEMAS = (
     "human_decisions_batch.v0.17",
     "human_decisions_batch.v0.18",
     "human_decisions_batch.v0.19",
     "human_decisions_batch.v0.20",
 )
+AUTHORITY_SCHEMAS = BASE_AUTHORITY_SCHEMAS + (AUTHORITY_SCHEMA_V021,)
 SCHEMA_ROLES = {
     CUMULATIVE_SCHEMA: "cumulative_review",
     APPLICABILITY_SCHEMA: "field_applicability",
+    CORRECTION_SCHEMA: "row_alignment_correction",
     **{schema: "authority_batch" for schema in AUTHORITY_SCHEMAS},
 }
 SCHEMA_STATUSES = {
     CUMULATIVE_SCHEMA: "REVIEW_ONLY_NOT_CONFIRMED",
     APPLICABILITY_SCHEMA: "READY_FOR_HUMAN_FIELD_APPLICABILITY_REVIEW",
+    CORRECTION_SCHEMA: "FROZEN_BOUNDED_ROW_ALIGNMENT_CORRECTIONS",
     **{schema: "FROZEN_HUMAN_APPROVAL_DECISIONS" for schema in AUTHORITY_SCHEMAS},
 }
 AUTHORITY_CODES = {
@@ -44,22 +50,26 @@ AUTHORITY_CODES = {
     "human_decisions_batch.v0.18": {"IP1"},
     "human_decisions_batch.v0.19": {"H19-1", "H19-2", "H19-3", "H19-4"},
     "human_decisions_batch.v0.20": {"H20-1", "H20-2", "H20-3", "H20-4"},
+    AUTHORITY_SCHEMA_V021: {"H21-1"},
 }
 AUTHORITY_COMPATIBILITY = {
     "human_decisions_batch.v0.17": "human_decisions_batch.v0.16",
     "human_decisions_batch.v0.18": "human_decisions_batch.v0.17",
     "human_decisions_batch.v0.19": "human_decisions_batch.v0.18",
     "human_decisions_batch.v0.20": "human_decisions_batch.v0.19",
+    AUTHORITY_SCHEMA_V021: "human_decisions_batch.v0.20",
 }
 AUTHORITY_PRIOR_BATCH = {
     "human_decisions_batch.v0.19": "018",
     "human_decisions_batch.v0.20": "019",
+    AUTHORITY_SCHEMA_V021: "020",
 }
 AUTHORITY_VALUE = {
     "human_decisions_batch.v0.17": "IGOR_HUMAN_APPROVAL",
     "human_decisions_batch.v0.18": "IGOR_HUMAN_APPROVAL",
     "human_decisions_batch.v0.19": "IGOR_DIRECT_HUMAN_APPROVAL",
     "human_decisions_batch.v0.20": "IGOR_DIRECT_HUMAN_APPROVAL",
+    AUTHORITY_SCHEMA_V021: "IGOR_DIRECT_HUMAN_APPROVAL",
 }
 
 CLASSIFICATIONS = {
@@ -146,6 +156,10 @@ ROOT_FIELDS = {
     "safety",
     "next_required_human_actions",
 }
+ROOT_FIELDS_V021 = ROOT_FIELDS | {
+    "row_alignment_corrections",
+    "authority_application",
+}
 FORBIDDEN_OUTPUT_KEYS = {
     "canonical_components",
     "canonical_component_count",
@@ -197,7 +211,10 @@ class DirectProjection:
     identified_records: tuple[Mapping[str, Any], ...]
     applicability_records: tuple[Mapping[str, Any], ...]
     absence_records: tuple[Mapping[str, Any], ...]
+    source_blockers: tuple[Mapping[str, Any], ...]
     blockers: tuple[Mapping[str, Any], ...]
+    row_alignment_corrections: tuple[Mapping[str, Any], ...]
+    authority_application: Mapping[str, Any] | None
     supply_boundary: Mapping[str, Any]
     complete_set_controls: Mapping[str, Any]
     authority_lineage: Mapping[str, Any]
@@ -214,6 +231,9 @@ class IntakeContext:
     cumulative: ArtifactSnapshot
     applicability: ArtifactSnapshot
     authority_batches: tuple[ArtifactSnapshot, ...]
+    row_alignment_correction: ArtifactSnapshot | None
+    authority_v021: ArtifactSnapshot | None
+    bundle_schema: str
     projection: DirectProjection
 
 
@@ -343,6 +363,17 @@ def _require_fields(value: Any, label: str, fields: set[str]) -> Mapping[str, An
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _load_sibling_module(file_name: str, module_name: str) -> ModuleType:
+    path = Path(__file__).with_name(file_name)
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ReplayValidationError(f"could not load contract validator: {file_name}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _git_blob_bytes(commit: str, owner_path: str) -> bytes:
@@ -494,16 +525,23 @@ def _validate_authority_chain(
             "authority_lineage.ordered_batch_ids",
         )
     ]
-    if tuple(ordered_schemas) != AUTHORITY_SCHEMAS:
+    ordered_schema_tuple = tuple(ordered_schemas)
+    allowed_lineages = {
+        BASE_AUTHORITY_SCHEMAS,
+        AUTHORITY_SCHEMAS,
+    }
+    if ordered_schema_tuple not in allowed_lineages:
         raise ReplayValidationError("authority schema lineage order mismatch")
-    if len(ordered_ids) != 4 or len(set(ordered_ids)) != 4:
-        raise ReplayValidationError("authority batch ID lineage must contain four IDs")
+    if len(ordered_ids) != len(ordered_schemas) or len(set(ordered_ids)) != len(
+        ordered_ids
+    ):
+        raise ReplayValidationError("authority batch ID lineage mismatch")
     by_schema = {
         cast(str, batch.descriptor["schema_version"]): batch for batch in batches
     }
-    if set(by_schema) != set(AUTHORITY_SCHEMAS) or len(batches) != 4:
+    if set(by_schema) != set(ordered_schemas) or len(batches) != len(ordered_schemas):
         raise ReplayValidationError(
-            "exactly authority batches v0.17-v0.20 are required"
+            "authority batches must exactly match the declared closed lineage"
         )
     projected: list[Mapping[str, Any]] = []
     for schema, expected_id in zip(ordered_schemas, ordered_ids, strict=True):
@@ -1797,6 +1835,11 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
     applicability_items = [
         item for item in artifacts if item.descriptor["role"] == "field_applicability"
     ]
+    correction_items = [
+        item
+        for item in artifacts
+        if item.descriptor["role"] == "row_alignment_correction"
+    ]
     batches = [
         item for item in artifacts if item.descriptor["role"] == "authority_batch"
     ]
@@ -1804,6 +1847,23 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
         raise ReplayValidationError(
             "exactly one cumulative and one applicability input are required"
         )
+    v021_items = [
+        item
+        for item in batches
+        if item.descriptor["schema_version"] == AUTHORITY_SCHEMA_V021
+    ]
+    if len(v021_items) > 1:
+        raise ReplayValidationError("v0.21 authority may be applied only once")
+    if v021_items:
+        if len(correction_items) != 1:
+            raise ReplayValidationError(
+                "v0.21 authority requires exactly one correction artifact"
+            )
+        bundle_schema = BUNDLE_SCHEMA_V021
+    else:
+        if correction_items:
+            raise ReplayValidationError("correction artifact requires v0.21 authority")
+        bundle_schema = BUNDLE_SCHEMA
     authority_lineage = _validate_authority_chain(
         manifest["authority_lineage"],
         batches,
@@ -1819,11 +1879,51 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
         policy_module,
         policy_binding["expected_classification_counts"],
     )
-    blockers = _validate_blockers(
+    source_blockers = _validate_blockers(
         manifest["blocker_requirements"],
         applicability_items[0],
         applicability_records,
     )
+    projected_corrections: tuple[Mapping[str, Any], ...] = ()
+    authority_application: Mapping[str, Any] | None = None
+    blockers = source_blockers
+    if v021_items:
+        correction_validator = _load_sibling_module(
+            "validate_component_replay_row_alignment_correction.py",
+            "component_replay_correction_validator",
+        )
+        try:
+            projected_corrections = tuple(
+                correction_validator.validate_correction_data(
+                    correction_items[0].data,
+                    cumulative=cumulative_items[0].data,
+                    cumulative_sha256=_sha256(cumulative_items[0].content),
+                    applicability=applicability_items[0].data,
+                    applicability_sha256=_sha256(applicability_items[0].content),
+                    project_id=project_id,
+                )
+            )
+        except RuntimeError as exc:
+            raise ReplayValidationError(f"correction validation failed: {exc}") from exc
+        authority_validator = _load_sibling_module(
+            "validate_human_decisions_batch_v0_21.py",
+            "human_decisions_batch_v021_validator",
+        )
+        try:
+            authority_application = cast(
+                Mapping[str, Any],
+                authority_validator.validate_and_expand_batch(
+                    v021_items[0].data,
+                    project_id=project_id,
+                    applicability_records=applicability_records,
+                    identified_records=identified,
+                    projected_corrections=projected_corrections,
+                    source_blockers=source_blockers,
+                ),
+            )
+        except RuntimeError as exc:
+            raise ReplayValidationError(f"v0.21 validation failed: {exc}") from exc
+        blockers = ()
     supply, complete = _validate_hard_controls(
         manifest,
         cumulative_items[0],
@@ -1849,7 +1949,7 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
         {"schema_version", "artifact_status", "authorization"},
     )
     if (
-        output_contract["schema_version"] != BUNDLE_SCHEMA
+        output_contract["schema_version"] != bundle_schema
         or output_contract["artifact_status"] != BUNDLE_STATUS
         or output_contract["authorization"] is not False
     ):
@@ -1859,7 +1959,10 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
         identified,
         applicability_records,
         absences,
+        source_blockers,
         blockers,
+        projected_corrections,
+        authority_application,
         supply,
         complete,
         authority_lineage,
@@ -1874,6 +1977,9 @@ def load_intake_context(intake_manifest: Path) -> IntakeContext:
         cumulative_items[0],
         applicability_items[0],
         tuple(batches),
+        correction_items[0] if correction_items else None,
+        v021_items[0] if v021_items else None,
+        bundle_schema,
         projection,
     )
 
@@ -1890,9 +1996,10 @@ def validate_output_location(context: IntakeContext, path: Path) -> Path:
 def expected_bundle(context: IntakeContext) -> Mapping[str, Any]:
     manifest = context.manifest
     policy = _mapping(manifest["policy_binding"], "policy_binding")
-    return {
-        "schema_version": BUNDLE_SCHEMA,
-        "bundle_id": f"{manifest['case_id']}:component-replay-readiness:v0.1",
+    version = "v0.2" if context.bundle_schema == BUNDLE_SCHEMA_V021 else "v0.1"
+    bundle: dict[str, Any] = {
+        "schema_version": context.bundle_schema,
+        "bundle_id": f"{manifest['case_id']}:component-replay-readiness:{version}",
         "artifact_status": BUNDLE_STATUS,
         "project_id": manifest["project_id"],
         "source_artifacts": [_source_output(item) for item in context.artifacts],
@@ -1928,14 +2035,27 @@ def expected_bundle(context: IntakeContext) -> Mapping[str, Any]:
             "Provide separate approval before any confirmed or downstream action",
         ],
     }
+    if context.projection.authority_application is not None:
+        bundle["row_alignment_corrections"] = list(
+            context.projection.row_alignment_corrections
+        )
+        bundle["authority_application"] = context.projection.authority_application
+        bundle["next_required_human_actions"] = [
+            "Validate real v0.21 replay output and retained authority audit",
+            "Provide separate approval before confirmed composition",
+        ]
+    return bundle
 
 
 def _validate_bundle(context: IntakeContext, bundle: Mapping[str, Any]) -> None:
-    _exact_object(bundle, "bundle", ROOT_FIELDS)
+    root_fields = (
+        ROOT_FIELDS_V021 if context.bundle_schema == BUNDLE_SCHEMA_V021 else ROOT_FIELDS
+    )
+    _exact_object(bundle, "bundle", root_fields)
     _reject_output_paths_or_authorization(bundle)
     expected = expected_bundle(context)
     if not _safe_equal(bundle, expected):
-        for key in ROOT_FIELDS:
+        for key in root_fields:
             if not _safe_equal(bundle.get(key), expected.get(key)):
                 raise ReplayValidationError(f"bundle {key} mismatch")
         raise ReplayValidationError("bundle mismatch")

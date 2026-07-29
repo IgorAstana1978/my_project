@@ -82,6 +82,7 @@ INSTALL_TYPES = {
     "mccb_up_to_100a",
     "mccb_125_250a",
     "mccb_400a_plus",
+    "n_pe_bus_set",
 }
 FORBIDDEN_KEYS = {
     "price_confirmed_by_igor",

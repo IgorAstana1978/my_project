@@ -263,3 +263,22 @@ Before publication the builder:
 Any failure removes private staging and leaves the requested output absent.
 No PDF/Excel extraction, confirmed composition, pricing, CSV/XLSX/PDF
 generation or downstream workflow is invoked.
+
+## Optional v0.21 authority extension
+
+The v0.17-v0.20 workflow and v0.1 output remain unchanged. An intake that adds
+`human_decisions_batch.v0.21` must also add exactly one
+`component_replay_row_alignment_correction.v0.1` artifact and must request
+`component_replay_readiness_bundle.v0.2`.
+
+The v0.2 projection validates the bounded corrections before applying the
+v0.21 authority decision. One grouped N/PE decision expands into exactly 29
+audit mappings. Every source COMP ID is covered once, the combined
+`ШИНА N/PE` identity is preserved, quantity per cabinet is one, install type is
+`n_pe_bus_set`, and no new evidence identity is created. The three conflicted
+records cannot be applied without their exact validated corrections.
+
+The v0.2 output adds `row_alignment_corrections` and
+`authority_application`. Resolved source blockers remain traceable in the
+authority audit mappings; the output `blockers` list contains only remaining
+blockers. Confirmed composition and downstream authorization remain false.

@@ -153,9 +153,15 @@ load_switch_4p
 mccb_up_to_100a
 mccb_125_250a
 mccb_400a_plus
+n_pe_bus_set
 ```
 
 `manual_review_required` is not allowed in a confirmed composition artifact.
+
+`n_pe_bus_set` is the authoritative install type for one combined
+`ШИНА N/PE` component representing one N+PE bus set per cabinet. It does not
+authorize separate N and PE component identities and must not be used to count
+the combined set twice.
 
 ## Forbidden keys
 

@@ -800,6 +800,328 @@ def source(fixture: Fixture, key: str) -> dict[str, Any]:
     return fixture.sources[key][1]
 
 
+V021_MAPPING = (
+    ("ICF-009", "COMP-012", "TFE-007", "9"),
+    ("ICF-017", "COMP-015", "TFE-008", "9"),
+    ("ICF-033", "COMP-018", "TFE-009", "9"),
+    ("ICF-041", "COMP-021", "TFE-010", "9"),
+    ("ICF-025", "COMP-037", "TFE-017", "10"),
+    ("ICF-049", "COMP-040", "TFE-018", "10"),
+    ("ICF-051", "COMP-043", "TFE-018", "10"),
+    ("ICF-011", "COMP-062", "TFE-030", "11"),
+    ("ICF-019", "COMP-065", "TFE-031", "11"),
+    ("ICF-035", "COMP-068", "TFE-032", "11"),
+    ("ICF-043", "COMP-071", "TFE-033", "11"),
+    ("ICF-063", "COMP-076", "TFE-034", "11"),
+    ("ICF-027", "COMP-091", "TFE-042", "12"),
+    ("ICF-053", "COMP-094", "TFE-043", "12"),
+    ("ICF-013", "COMP-112", "TFE-053", "13"),
+    ("ICF-021", "COMP-115", "TFE-054", "13"),
+    ("ICF-037", "COMP-118", "TFE-055", "13"),
+    ("ICF-045", "COMP-121", "TFE-056", "13"),
+    ("ICF-029", "COMP-134", "TFE-062", "14"),
+    ("ICF-055", "COMP-137", "TFE-063", "14"),
+    ("ICF-057", "COMP-140", "TFE-063", "14"),
+    ("ICF-015", "COMP-159", "TFE-075", "15"),
+    ("ICF-023", "COMP-162", "TFE-076", "15"),
+    ("ICF-039", "COMP-166", "TFE-077", "15"),
+    ("ICF-047", "COMP-169", "TFE-078", "15"),
+    ("ICF-065", "COMP-174", "TFE-079", "15"),
+    ("ICF-031", "COMP-184", "TFE-084", "16"),
+    ("ICF-059", "COMP-187", "TFE-085", "16"),
+    ("ICF-061", "COMP-190", "TFE-085", "16"),
+)
+V021_CONFLICT_IDS = {"COMP-040", "COMP-137", "COMP-187"}
+
+
+def _recompute_position_expectations(fixture: Fixture) -> None:
+    positions = cast(list[dict[str, Any]], source(fixture, "cumulative")["positions"])
+    component_fields = [
+        entry
+        for position in positions
+        for entry in cast(
+            list[dict[str, Any]],
+            position["technical_fields"]["components"]["evidence_values"],
+        )
+        if "component_evidence_id" in entry
+    ]
+    fixture.manifest["expected_counts"].update(
+        {
+            "canonical_position_count": len(positions),
+            "component_bearing_position_count": sum(
+                any(
+                    "component_evidence_id" in entry
+                    for entry in position["technical_fields"]["components"][
+                        "evidence_values"
+                    ]
+                )
+                for position in positions
+            ),
+            "component_field_evidence_entry_count": len(component_fields),
+            "identified_component_evidence_record_count": len(component_fields),
+            "unique_component_evidence_id_count": len(
+                {entry["component_evidence_id"] for entry in component_fields}
+            ),
+            "position_quantity_total": sum(
+                position["quantity"]["value"] for position in positions
+            ),
+        }
+    )
+    partition_totals: dict[str, int] = {}
+    for position in positions:
+        section = position["canonical_identity"]["section_id"]
+        partition_totals[section] = (
+            partition_totals.get(section, 0) + position["quantity"]["value"]
+        )
+    fixture.manifest["expected_quantity_invariants"] = [
+        {
+            "type": "POSITION_QUANTITY_TOTAL_EQUALS",
+            "partition": None,
+            "expected_total": fixture.manifest["expected_counts"][
+                "position_quantity_total"
+            ],
+        },
+        *[
+            {
+                "type": "PARTITION_QUANTITY_EQUALS",
+                "partition": section,
+                "expected_total": total,
+            }
+            for section, total in sorted(partition_totals.items())
+        ],
+    ]
+
+
+def upgrade_fixture_to_v021(fixture: Fixture) -> None:
+    records = cast(list[dict[str, Any]], source(fixture, "applicability")["records"])
+    quantity_records = [
+        record
+        for record in records
+        if record["applicability_classification"]
+        in {"REQUIRED_VALUE_MISSING", "REQUIRED_VALUE_CONFLICTED"}
+    ]
+    assert len(quantity_records) == len(V021_MAPPING)
+    quantity_record_objects = {id(record) for record in quantity_records}
+    for record in records:
+        if id(record) not in quantity_record_objects:
+            record["record_id"] = f"BASE-{record['record_id']}"
+    cumulative = source(fixture, "cumulative")
+    first_position = cumulative["positions"][0]
+    entries = first_position["technical_fields"]["components"]["evidence_values"]
+    entry_by_id = {
+        entry["component_evidence_id"]: entry
+        for entry in entries
+        if "component_evidence_id" in entry
+    }
+    moved_entries: dict[str, list[dict[str, Any]]] = {}
+    section_by_position: dict[str, str] = {}
+    moved_old_ids: set[str] = set()
+    for record, mapping in zip(quantity_records, V021_MAPPING, strict=True):
+        record_id, evidence_id, position_id, section = mapping
+        is_conflicted = evidence_id in V021_CONFLICT_IDS
+        old_id = record["component_evidence_id"]
+        moved_old_ids.add(old_id)
+        entry = entry_by_id[old_id]
+        entry["component_evidence_id"] = evidence_id
+        entry["value"] = "ШИНА N/PE"
+        moved_entries.setdefault(position_id, []).append(entry)
+        section_by_position[position_id] = section
+        record.update(
+            {
+                "record_id": record_id,
+                "component_evidence_id": evidence_id,
+                "evidence_position_id": position_id,
+                "section": section,
+                "applicability_classification": (
+                    "REQUIRED_VALUE_CONFLICTED"
+                    if is_conflicted
+                    else "REQUIRED_VALUE_MISSING"
+                ),
+                "remediation_route": (
+                    "EXTRACTOR_ROW_ALIGNMENT_CORRECTION_REQUIRED"
+                    if is_conflicted
+                    else "NEW_ENGINEERING_SOURCE_REQUIRED"
+                ),
+                "raw_designation": (
+                    "Шина N и PE\n"
+                    "Щит модульный распределительный на 12 модулей "
+                    "навесной ,(IP31), в составе:"
+                    if is_conflicted
+                    else "Шина N и PE"
+                ),
+                "raw_type_model": "ЩРН-12" if is_conflicted else None,
+            }
+        )
+    first_position["technical_fields"]["components"]["evidence_values"] = [
+        entry
+        for entry in entries
+        if entry.get("component_evidence_id")
+        not in {mapping[1] for mapping in V021_MAPPING}
+        and entry.get("component_evidence_id") not in moved_old_ids
+    ]
+    for position_id, position_entries in moved_entries.items():
+        section = section_by_position[position_id]
+        cumulative["positions"].append(
+            {
+                "evidence_position_id": position_id,
+                "existing_review_position_id": f"REVIEW-{position_id}",
+                "canonical_identity": {
+                    "section_id": section,
+                    "discipline": "ЭОМ",
+                    "canonical_designation": f"NPE-{position_id}",
+                },
+                "project_source": {
+                    "pdf": f"Synthetic section {section}.pdf",
+                    "pdf_sha256": section[0] * 64,
+                },
+                "quantity": {
+                    "value": 1,
+                    "status": "FROZEN_APPROVED_QUANTITY",
+                },
+                "technical_fields": {
+                    "components": {"evidence_values": position_entries},
+                    "apparatus": {"evidence_values": []},
+                    "ratings": {"evidence_values": []},
+                },
+            }
+        )
+
+    fixture.manifest["blocker_requirements"]["quantity_blocker_fingerprints"] = (
+        quantity_fingerprints(records)
+    )
+    _recompute_position_expectations(fixture)
+    cumulative_content = json_bytes(cumulative)
+    applicability = source(fixture, "applicability")
+    applicability_content = json_bytes(applicability)
+    identified_entries = {
+        entry["component_evidence_id"]: entry
+        for position in cumulative["positions"]
+        for entry in position["technical_fields"]["components"]["evidence_values"]
+        if "component_evidence_id" in entry
+    }
+    record_by_id = {record["record_id"]: record for record in records}
+    corrections = []
+    for record_id, evidence_id, position_id, section in V021_MAPPING:
+        if evidence_id not in V021_CONFLICT_IDS:
+            continue
+        record = record_by_id[record_id]
+        corrections.append(
+            {
+                "correction_id": f"CORR-{evidence_id}",
+                "record_id": record_id,
+                "component_evidence_id": evidence_id,
+                "evidence_position_id": position_id,
+                "section": section,
+                "action": "DETACH_ADJACENT_CABINET_TEXT",
+                "original_conflict": {
+                    "raw_designation": record["raw_designation"],
+                    "raw_type_model": record["raw_type_model"],
+                    "raw_quantity": record["raw_quantity"],
+                    "applicability_classification": record[
+                        "applicability_classification"
+                    ],
+                    "remediation_route": record["remediation_route"],
+                    "provenance": copy.deepcopy(
+                        identified_entries[evidence_id]["provenance"]
+                    ),
+                },
+                "corrected_component": {
+                    "component_identity": "ШИНА N/PE",
+                    "detached_adjacent_text": "ЩРН-12",
+                    "quantity_per_cabinet": None,
+                },
+                "preserves_original_evidence": True,
+                "creates_new_evidence_id": False,
+            }
+        )
+    correction = {
+        "schema_version": "component_replay_row_alignment_correction.v0.1",
+        "case_id": "CASE-CORRECTION-021-SYNTHETIC",
+        "project_id": PROJECT_ID,
+        "artifact_status": "FROZEN_BOUNDED_ROW_ALIGNMENT_CORRECTIONS",
+        "source_bindings": {
+            "cumulative_review_sha256": sha256(cumulative_content),
+            "field_applicability_sha256": sha256(applicability_content),
+        },
+        "corrections": corrections,
+        "safety": {
+            "frozen_sources_modified": False,
+            "extraction_repeated": False,
+            "new_evidence_ids_created": False,
+            "confirmed_composition_created": False,
+            "pricing_executed": False,
+        },
+    }
+    batch = {
+        "schema_version": "human_decisions_batch.v0.21",
+        "compatible_with": "human_decisions_batch.v0.20",
+        "case_id": "CASE-AUTHORITY-021-SYNTHETIC",
+        "project_id": PROJECT_ID,
+        "batch_id": "021",
+        "prior_batch_id": "020",
+        "artifact_status": "FROZEN_HUMAN_APPROVAL_DECISIONS",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "technical_field_decisions": [
+            {
+                "decision_id": "HDA-021-H21-1",
+                "decision_code": "H21-1",
+                "decision_type": "N_PE_BUS_SET_AUTHORITY",
+                "technical_field": "component_identity_quantity_and_install_type",
+                "accepted_status": "APPROVED_BY_IGOR",
+                "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+                "component_identity": "ШИНА N/PE",
+                "quantity_per_cabinet": 1,
+                "install_type": "n_pe_bus_set",
+                "component_mapping": [
+                    {
+                        "record_id": record_id,
+                        "component_evidence_id": evidence_id,
+                        "evidence_position_id": position_id,
+                        "section": section,
+                    }
+                    for record_id, evidence_id, position_id, section in V021_MAPPING
+                ],
+                "group_expansion_count": 29,
+                "separate_n_pe_identities_created": False,
+                "anti_double_counting": True,
+                "application_status": "NOT_EXECUTED",
+            }
+        ],
+        "approval_boundary": {
+            "correction_schema": "component_replay_row_alignment_correction.v0.1",
+            "conflicted_component_ids": sorted(V021_CONFLICT_IDS),
+            "correction_required_before_application": True,
+            "confirmed_composition_created": False,
+        },
+        "safety_flags": {
+            "frozen_sources_modified": False,
+            "extraction_repeated": False,
+            "new_evidence_ids_created": False,
+            "split_n_pe_identities_created": False,
+            "confirmed_composition_created": False,
+            "pricing_executed": False,
+        },
+    }
+    correction_path = fixture.root / "case-correction-021" / "correction.json"
+    batch_path = fixture.root / "case-authority-021" / "batch-021.json"
+    fixture.sources["correction-021"] = (correction_path, correction)
+    fixture.sources["batch-021"] = (batch_path, batch)
+    fixture.manifest["source_artifacts"].extend(
+        [
+            descriptor("row_alignment_correction", correction_path, correction),
+            descriptor("authority_batch", batch_path, batch),
+        ]
+    )
+    fixture.manifest["authority_lineage"]["ordered_schemas"].append(
+        "human_decisions_batch.v0.21"
+    )
+    fixture.manifest["authority_lineage"]["ordered_batch_ids"].append("021")
+    fixture.manifest["output_contract"][
+        "schema_version"
+    ] = "component_replay_readiness_bundle.v0.2"
+    fixture.write()
+
+
 def componentless_field(fixture: Fixture, field: str) -> dict[str, Any]:
     return cast(
         dict[str, Any],
@@ -1431,3 +1753,146 @@ def test_direct_contract_has_no_normalized_intermediate_schemas() -> None:
     )
     for token in forbidden_calls:
         assert token not in combined
+
+
+def test_v021_happy_path_corrects_then_expands_29_audits(tmp_path: Path) -> None:
+    fixture = make_fixture(tmp_path)
+    upgrade_fixture_to_v021(fixture)
+    output = tmp_path / "output-v021"
+
+    result = run(fixture, output)
+
+    assert result.status == "PASS", result.red_flags
+    bundle = json.loads((output / builder.BUNDLE_NAME).read_text(encoding="utf-8"))
+    assert bundle["schema_version"] == "component_replay_readiness_bundle.v0.2"
+    assert len(bundle["row_alignment_corrections"]) == 3
+    assert bundle["blockers"] == []
+    application = bundle["authority_application"]
+    assert application["grouped_input_count"] == 29
+    assert application["expanded_audit_count"] == 29
+    assert application["resolved_blockers"] == {"quantity": 29, "install_type": 1}
+    assert application["remaining_blocker_count"] == 0
+    assert application["component_identity"] == "ШИНА N/PE"
+    assert application["quantity_per_cabinet"] == 1
+    assert application["install_type"] == "n_pe_bus_set"
+    assert application["separate_n_pe_identities_created"] is False
+    audit_ids = {
+        mapping["component_evidence_id"] for mapping in application["audit_mappings"]
+    }
+    assert audit_ids == {mapping[1] for mapping in V021_MAPPING}
+    assert (
+        sum(
+            mapping["correction_id"] is not None
+            for mapping in application["audit_mappings"]
+        )
+        == 3
+    )
+    assert len(bundle["authority_lineage"]["ordered_batches"]) == 5
+    validation = validator.validate_component_replay_readiness_bundle(
+        fixture.manifest_path,
+        output / builder.BUNDLE_NAME,
+    )
+    assert validation.status == "PASS", validation.red_flags
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda correction: correction["corrections"][0].update(
+            component_evidence_id="COMP-UNKNOWN"
+        ),
+        lambda correction: correction["corrections"].pop(),
+        lambda correction: correction["corrections"][0]["original_conflict"][
+            "provenance"
+        ].pop("pdf_sha256"),
+        lambda correction: correction["corrections"][0].update(
+            creates_new_evidence_id=True
+        ),
+    ],
+    ids=["unknown", "incomplete", "lost-provenance", "new-evidence-id"],
+)
+def test_v021_correction_mapping_fails_closed(
+    tmp_path: Path,
+    mutation: Callable[[dict[str, Any]], None],
+) -> None:
+    fixture = make_fixture(tmp_path)
+    upgrade_fixture_to_v021(fixture)
+    mutation(source(fixture, "correction-021"))
+
+    result = run(fixture, tmp_path / "output-v021")
+
+    assert result.status == "FAIL"
+    assert not (tmp_path / "output-v021").exists()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda decision: decision["component_mapping"].__setitem__(
+            -1,
+            copy.deepcopy(decision["component_mapping"][0]),
+        ),
+        lambda decision: decision["component_mapping"].pop(),
+        lambda decision: decision.update(component_identity="ШИНА N"),
+        lambda decision: decision.update(group_expansion_count=28),
+    ],
+    ids=["duplicate-comp", "missing-comp", "split-identity", "wrong-expansion"],
+)
+def test_v021_grouped_authority_fails_closed(
+    tmp_path: Path,
+    mutation: Callable[[dict[str, Any]], None],
+) -> None:
+    fixture = make_fixture(tmp_path)
+    upgrade_fixture_to_v021(fixture)
+    decision = source(fixture, "batch-021")["technical_field_decisions"][0]
+    mutation(decision)
+
+    result = run(fixture, tmp_path / "output-v021")
+
+    assert result.status == "FAIL"
+    assert not (tmp_path / "output-v021").exists()
+
+
+def test_v021_conflicted_component_requires_correction(tmp_path: Path) -> None:
+    fixture = make_fixture(tmp_path)
+    upgrade_fixture_to_v021(fixture)
+    source(fixture, "correction-021")["corrections"] = [
+        correction
+        for correction in source(fixture, "correction-021")["corrections"]
+        if correction["component_evidence_id"] != "COMP-040"
+    ]
+
+    result = run(fixture, tmp_path / "output-v021")
+
+    assert result.status == "FAIL"
+    assert "correction" in " ".join(result.red_flags).casefold()
+
+
+def test_v021_cannot_be_applied_twice(tmp_path: Path) -> None:
+    fixture = make_fixture(tmp_path)
+    upgrade_fixture_to_v021(fixture)
+    duplicate = copy.deepcopy(source(fixture, "batch-021"))
+    duplicate["case_id"] = "CASE-AUTHORITY-021-DUPLICATE"
+    duplicate_path = fixture.root / "case-authority-021-duplicate" / "batch.json"
+    fixture.sources["batch-021-duplicate"] = (duplicate_path, duplicate)
+    fixture.manifest["source_artifacts"].append(
+        descriptor("authority_batch", duplicate_path, duplicate)
+    )
+
+    result = run(fixture, tmp_path / "output-v021")
+
+    assert result.status == "FAIL"
+    assert "only once" in " ".join(result.red_flags)
+
+
+def test_v017_v020_path_remains_v01_without_extension_fields(tmp_path: Path) -> None:
+    fixture = make_fixture(tmp_path)
+    output = tmp_path / "output-v01"
+
+    result = run(fixture, output)
+
+    assert result.status == "PASS", result.red_flags
+    bundle = json.loads((output / builder.BUNDLE_NAME).read_text(encoding="utf-8"))
+    assert bundle["schema_version"] == "component_replay_readiness_bundle.v0.1"
+    assert "row_alignment_corrections" not in bundle
+    assert "authority_application" not in bundle
