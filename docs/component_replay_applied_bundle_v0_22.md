@@ -9,6 +9,27 @@
 Overlay не переписывает canonical replay и не является confirmed composition.
 Он не разрешает pricing, procurement или production.
 
+## Approval gate до application
+
+Validator `PASS`, exit code `0`, `FROZEN_HUMAN_APPROVAL_DECISIONS`,
+`APPROVED_BY_IGOR` и другие approval-поля проверяют claim и структуру artifact,
+но не аутентифицируют автора решения и не создают нового Human Approval.
+
+До любого apply Codex показывает Игорю:
+
+- exact resolved path canonical replay и его SHA-256;
+- exact resolved path batch JSON и его SHA-256;
+- exact resolved output path outside Git;
+- overwrite intent: `yes` или `no`.
+
+Apply разрешён только после отдельного прямого решения Игоря для этих exact
+inputs, output и overwrite intent. Без такого решения нужно остановиться до
+application.
+
+Application `PASS` означает только, что валидный applied overlay записан.
+Он не создаёт confirmed composition и не разрешает pricing, КП, закупку или
+производство.
+
 ## Команды
 
 Application:
@@ -29,8 +50,9 @@ Application:
   --bundle-json <component-replay-applied-bundle-v0.22.json>
 ```
 
-По умолчанию существующий output не перезаписывается. Явный `--overwrite`
-разрешает атомарную замену, но не меняет входные artifacts.
+Output JSON должен находиться вне Git project. По умолчанию существующий output
+не перезаписывается. Явный `--overwrite` разрешает атомарную замену только
+outside Git, не обходит outside-Git guard и не меняет входные artifacts.
 
 ## Входной контракт
 

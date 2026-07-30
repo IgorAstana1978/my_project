@@ -266,6 +266,7 @@ def test_pass_projects_three_kinds_without_mutating_inputs(
     tmp_path: Path,
 ) -> None:
     canonical_path, batch_path, output_path, _, _ = write_inputs(tmp_path)
+    assert not output_path.resolve().is_relative_to(application.PROJECT_ROOT)
     canonical_before = canonical_path.read_bytes()
     batch_before = batch_path.read_bytes()
 
@@ -505,6 +506,81 @@ def test_existing_output_is_preserved(tmp_path: Path) -> None:
     assert result.output_created is False
     assert "output already exists" in result.red_flags[0]
     assert output_path.read_text(encoding="utf-8") == "existing"
+
+
+def test_inside_git_output_is_blocked_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setattr(application, "PROJECT_ROOT", project_root)
+    canonical_path, batch_path, _, _, _ = write_inputs(tmp_path)
+    output_path = project_root / "applied.json"
+
+    result = application.apply_artifacts(
+        canonical_path,
+        batch_path,
+        output_path,
+    )
+
+    assert result.status == "FAIL"
+    assert result.output_created is False
+    assert "output JSON must be outside the Git project" in result.red_flags[0]
+    assert not output_path.exists()
+    assert not list(project_root.glob(f".{output_path.name}.*.tmp"))
+
+
+def test_overwrite_does_not_bypass_inside_git_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root = tmp_path / "repo"
+    project_root.mkdir()
+    monkeypatch.setattr(application, "PROJECT_ROOT", project_root)
+    canonical_path, batch_path, _, _, _ = write_inputs(tmp_path)
+    output_path = project_root / "applied.json"
+
+    result = application.apply_artifacts(
+        canonical_path,
+        batch_path,
+        output_path,
+        overwrite=True,
+    )
+
+    assert result.status == "FAIL"
+    assert result.output_created is False
+    assert "output JSON must be outside the Git project" in result.red_flags[0]
+    assert not output_path.exists()
+    assert not list(project_root.glob(f".{output_path.name}.*.tmp"))
+
+
+def test_outside_git_overwrite_still_works(tmp_path: Path) -> None:
+    canonical_path, batch_path, output_path, _, _ = write_inputs(tmp_path)
+    output_path.write_text("existing", encoding="utf-8")
+
+    result = application.apply_artifacts(
+        canonical_path,
+        batch_path,
+        output_path,
+        overwrite=True,
+    )
+
+    assert result.status == "PASS"
+    assert result.output_created is True
+    assert validator.validate_applied_value(applied_data(output_path)) == result.counts
+
+
+def test_cli_help_states_outside_git_requirement(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        application.parse_args(["--help"])
+
+    assert error.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "outside the Git project" in help_text
+    assert "--overwrite" in help_text
 
 
 def test_atomic_failure_leaves_no_output_or_temp(

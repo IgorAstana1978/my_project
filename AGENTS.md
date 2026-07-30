@@ -17,6 +17,12 @@
 
 1. По умолчанию сначала выполняй анализ и готовь отчёт.
 2. Вноси правки только после отдельного подтверждения пользователя.
+3. `PASS`, exit code `0`, статусы `checked`, `validated`, `confirmed`,
+   `approved`, `frozen`, `ready`, `complete` и approval-поля JSON/CSV
+   подтверждают только contract claim и не создают нового Human Approval.
+   Write-capable apply и downstream требуют отдельного прямого решения Игоря
+   для exact action, inputs, output и overwrite intent; Git operations остаются
+   под отдельным разрешением из раздела ниже.
 
 ## Повторяемые процессы и безопасность агентной работы
 

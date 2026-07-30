@@ -21,6 +21,7 @@ BATCH_SCHEMA_VERSION = "human_decisions_batch.v0.22"
 APPLIED_SCHEMA_VERSION = "component_replay_applied_bundle.v0.22"
 AUTHORITY = "IGOR_DIRECT_HUMAN_APPROVAL"
 APPLICATION_STATUS = "APPLIED"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 DIRECT_COMPONENT_QUANTITY = "DIRECT_COMPONENT_QUANTITY"
 CABINET_LEVEL_AGGREGATE = "CABINET_LEVEL_AGGREGATE"
@@ -345,6 +346,13 @@ def _serialize(value: Any) -> bytes:
     ).encode()
 
 
+def _validated_output_path(output_json: Path) -> Path:
+    output_path = output_json.expanduser().resolve(strict=False)
+    if output_path.is_relative_to(PROJECT_ROOT.resolve(strict=False)):
+        raise V022ApplicationError("output JSON must be outside the Git project")
+    return output_path
+
+
 def _atomic_write(output_json: Path, content: bytes, overwrite: bool) -> None:
     parent = output_json.parent
     if not parent.is_dir():
@@ -386,7 +394,9 @@ def apply_artifacts(
 
     result = ApplicationResult(canonical_replay, batch_json, output_json)
     try:
-        if output_json.exists() and not overwrite:
+        output_path = _validated_output_path(output_json)
+        result.output_json = output_path
+        if output_path.exists() and not overwrite:
             raise V022ApplicationError(
                 "output already exists; use --overwrite explicitly"
             )
@@ -404,7 +414,7 @@ def apply_artifacts(
             result.batch_sha256,
         )
         result.counts = dict(applied["coverage"])
-        _atomic_write(output_json, _serialize(applied), overwrite)
+        _atomic_write(output_path, _serialize(applied), overwrite)
         result.output_created = True
         result.status = "PASS"
     except (
@@ -426,8 +436,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--canonical-replay", required=True, type=Path)
     parser.add_argument("--batch-json", required=True, type=Path)
-    parser.add_argument("--output-json", required=True, type=Path)
-    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--output-json",
+        required=True,
+        type=Path,
+        help="New applied overlay JSON path outside the Git project",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Atomically replace an existing outside-Git output; this never permits "
+            "an output inside the Git project"
+        ),
+    )
     return parser.parse_args(argv)
 
 
