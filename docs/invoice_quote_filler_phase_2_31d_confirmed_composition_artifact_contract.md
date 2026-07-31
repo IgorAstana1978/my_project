@@ -279,3 +279,78 @@ approved separately by Igor.
 
 Do not create XLSX, CSV, client, generated or temp files from this phase.
 Do not commit or push without separate Igor approval.
+
+## confirmed_composition_artifact.v0.2
+
+Schema v0.1 and its preliminary workflow remain unchanged. Validator
+dispatches by exact `schema_version`; unknown schemas and mixed v0.1/v0.2
+inputs fail closed.
+
+Schema v0.2 is produced only from
+`component_replay_applied_bundle.v0.23` and requires the exact applied source
+again during validation:
+
+```text
+schema_version
+project_id
+confirmation_id
+confirmed_by
+confirmed_at
+approval
+source_lineage
+installed_components
+reserved_meter_spaces
+coverage
+confirmed_composition_created
+pricing_started
+downstream_started
+red_flags
+```
+
+Required constants:
+
+```text
+schema_version = confirmed_composition_artifact.v0.2
+confirmed_by = Igor
+approval.authority = IGOR_DIRECT_HUMAN_APPROVAL
+approval.approved_by = Igor
+approval.approval_phrase = CONFIRM TECHNICAL COMPOSITION
+source_lineage.applied_bundle_schema_version = component_replay_applied_bundle.v0.23
+confirmed_composition_created = true
+pricing_started = false
+downstream_started = false
+red_flags = []
+```
+
+`approval.approval_channel` is a required non-empty audit value. This reuses
+the existing direct Igor approval phrase; it is not a second approval
+mechanism.
+
+`source_lineage` contains:
+
+```text
+applied_bundle_sha256
+applied_bundle_schema_version
+applied_source_lineage
+```
+
+The validator recomputes SHA-256 from exact applied bytes and requires
+`applied_source_lineage` to equal the complete source lineage object.
+
+`installed_components` is derived from v0.22 direct and cabinet-level
+aggregate members. Each record retains exact quantity semantics and uses the
+v0.23 approved signature when a correction or reconfirmation exists.
+Duplicate and unknown COMP identifiers fail closed.
+
+`reserved_meter_spaces` is an exact separate projection of applied reserved
+requirements. Every record must retain `installed_component = false`; its COMP
+must not appear in `installed_components`.
+
+`coverage` copies all applied coverage counts and adds
+`installed_component_count`. Validator recomputes the source projection and
+requires exact equality for installed components, reserved requirements and
+coverage.
+
+Schema v0.2 confirms technical composition only. It does not authorize or
+start pricing, calculator execution, commercial export, КП, procurement,
+production, client send or any other downstream action.

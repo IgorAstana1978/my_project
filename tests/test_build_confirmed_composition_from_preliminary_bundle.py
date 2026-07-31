@@ -328,6 +328,212 @@ def read_outputs(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
     return artifact, decisions, receipt
 
 
+def applied_signature(label: str) -> dict[str, Any]:
+    return {
+        "component_identity": label,
+        "model_type": "SYNTHETIC",
+        "ratings": ["16A"],
+        "poles": 1,
+        "functional_role": "synthetic test component",
+    }
+
+
+def applied_member(component_id: str, label: str, index: int) -> dict[str, Any]:
+    return {
+        "component_evidence_id": component_id,
+        "evidence_position_id": f"POS-{index:03d}",
+        "section": "SYNTHETIC",
+        "source_locator": f"row={index}",
+        "canonical_label": label,
+        "canonical_document_id": "DOC-SYNTHETIC",
+        "canonical_source_status": "identified",
+        "canonical_provenance": {"row_locator": f"row={index}"},
+    }
+
+
+def valid_applied_bundle() -> dict[str, Any]:
+    canonical_records: list[dict[str, Any]] = []
+    direct: list[dict[str, Any]] = []
+    aggregates: list[dict[str, Any]] = []
+    exclusions: list[dict[str, Any]] = []
+    overlays: list[dict[str, Any]] = []
+    reserved: list[dict[str, Any]] = []
+    for index in range(1, 23):
+        component_id = f"COMP-{index:03d}"
+        label = f"Synthetic component {index}"
+        canonical_records.append(
+            {
+                "component_evidence_id": component_id,
+                "document_id": "DOC-SYNTHETIC",
+                "label": label,
+                "position_id": f"POS-{index:03d}",
+                "provenance": {"row_locator": f"row={index}"},
+                "section_id": "SYNTHETIC",
+                "source_status": "identified",
+            }
+        )
+        member = applied_member(component_id, label, index)
+        signature = applied_signature(label)
+        common = {
+            "decision_id": f"DEC-{index:03d}",
+            "decision_code": f"CODE-{index:03d}",
+            "component_signature": signature,
+            "members": [member],
+            "application_status": "APPLIED",
+        }
+        if index <= 17:
+            direct.append(
+                {
+                    **common,
+                    "decision_kind": "DIRECT_COMPONENT_QUANTITY",
+                    "quantity_per_cabinet": index,
+                }
+            )
+        elif index == 18:
+            aggregates.append(
+                {
+                    **common,
+                    "decision_kind": "CABINET_LEVEL_AGGREGATE",
+                    "aggregate_quantity_per_cabinet": 3,
+                    "applies_once_per_cabinet": True,
+                    "multiply_by_member_count": False,
+                }
+            )
+        else:
+            exclusions.append(
+                {
+                    **common,
+                    "decision_kind": "SCOPE_EXCLUSION",
+                    "scope_status": "EXCLUDED_RESERVED_SPACE_ONLY",
+                    "future_inclusion_requires": "SEPARATE_IGOR_APPROVAL",
+                    "prohibited_downstream": ["pricing", "production"],
+                }
+            )
+        if index <= 18:
+            kind = (
+                "COMPONENT_SIGNATURE_CORRECTION"
+                if index <= 12
+                else "COMPONENT_RECONFIRMATION"
+            )
+            overlays.append(
+                {
+                    "item_id": f"ITEM-{index:03d}",
+                    "item_kind": kind,
+                    "cabinet_record_id": f"CAB-{index:03d}",
+                    "cabinet_template": "SYNTHETIC-CABINET",
+                    "component_evidence_id": component_id,
+                    "position_id": f"POS-{index:03d}",
+                    "section": "SYNTHETIC",
+                    "source_locator": f"row={index}",
+                    "original_signature": signature,
+                    "approved_signature": signature,
+                    "quantity_per_cabinet": index,
+                    "provenance": {"source_locator": f"row={index}"},
+                    "correction_reason": "synthetic confirmation",
+                    "canonical_evidence_modified": False,
+                    "application_status": "APPLIED",
+                }
+            )
+        else:
+            reserved.append(
+                {
+                    "item_id": f"ITEM-{index:03d}",
+                    "item_kind": "RESERVED_METER_SPACE",
+                    "cabinet_record_id": f"CAB-{index:03d}",
+                    "cabinet_template": "SYNTHETIC-CABINET",
+                    "component_evidence_id": component_id,
+                    "position_id": f"POS-{index:03d}",
+                    "section": "SYNTHETIC",
+                    "source_locator": f"row={index}",
+                    "requirement_kind": "RESERVED_METER_SPACE",
+                    "meter_connection": "THREE_PHASE_DIRECT",
+                    "reserved_space_per_cabinet": 1,
+                    "installed_component": False,
+                    "original_identity": label,
+                    "provenance": {"source_locator": f"row={index}"},
+                    "future_inclusion_requires": "SEPARATE_IGOR_APPROVAL",
+                    "prohibited_downstream": ["pricing", "production"],
+                    "canonical_evidence_modified": False,
+                    "application_status": "APPLIED",
+                }
+            )
+    coverage = {
+        "canonical_component_count": 22,
+        "prior_direct_component_count": 17,
+        "prior_aggregate_member_count": 1,
+        "prior_exclusion_component_count": 4,
+        "prior_union_component_count": 22,
+        "component_signature_correction_count": 12,
+        "component_reconfirmation_count": 6,
+        "reserved_meter_space_count": 4,
+        "overlay_component_count": 22,
+    }
+    return {
+        "schema_version": "component_replay_applied_bundle.v0.23",
+        "project_id": "CASE-SYNTHETIC-V023",
+        "application_status": "APPLIED",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_order": [
+            "human_decisions_batch.v0.22",
+            "human_decisions_batch.v0.23",
+        ],
+        "source_lineage": {
+            "canonical_replay_sha256": "1" * 64,
+            "canonical_replay_schema_version": (
+                "component_replay_readiness_bundle.v0.2"
+            ),
+            "prior_batch_sha256": "2" * 64,
+            "prior_batch_schema_version": "human_decisions_batch.v0.22",
+            "prior_batch_id": "022",
+            "correction_batch_sha256": "3" * 64,
+            "correction_batch_schema_version": "human_decisions_batch.v0.23",
+            "correction_batch_id": "023",
+            "correction_prior_batch_id": "022",
+        },
+        "canonical_component_evidence_records": canonical_records,
+        "prior_v0_22_application": {
+            "application_status": "APPLIED",
+            "direct_component_quantities": direct,
+            "cabinet_level_aggregates": aggregates,
+            "scope_exclusions": exclusions,
+            "coverage": {
+                "direct_component_count": 17,
+                "aggregate_member_count": 1,
+                "exclusion_component_count": 4,
+                "union_component_count": 22,
+            },
+        },
+        "component_signature_overlays": overlays,
+        "reserved_meter_space_requirements": reserved,
+        "coverage": coverage,
+        "confirmed_composition_created": False,
+        "pricing_started": False,
+        "downstream_started": False,
+    }
+
+
+def write_applied_bundle(
+    tmp_path: Path,
+    data: dict[str, Any] | None = None,
+) -> Path:
+    source_dir = tmp_path / "applied-source"
+    source_dir.mkdir()
+    path = source_dir / "component-replay-applied-bundle-v0.23.json"
+    path.write_bytes(canonical_json_bytes(data or valid_applied_bundle()))
+    return path
+
+
+def read_applied_outputs(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    output_dir = path.parent / builder.OUTPUT_DIR_NAME
+    artifact = json.loads(
+        (output_dir / builder.ARTIFACT_NAME).read_text(encoding="utf-8")
+    )
+    decisions = json.loads(
+        (output_dir / builder.DECISIONS_NAME).read_text(encoding="utf-8")
+    )
+    return artifact, decisions
+
+
 def test_valid_automatic_transfer_classifies_reliable_values(tmp_path: Path) -> None:
     root, _draft = create_bundle(tmp_path)
     paths = builder.resolve_case_paths("CASE-TEST-001", canonical_root=root)
@@ -1605,3 +1811,157 @@ def test_destination_race_preserves_canonical_and_cleans_staging(
 
     assert (paths.output_dir / "sentinel.txt").read_text("utf-8") == "concurrent"
     assert not list(paths.case_dir.glob(".confirmed-staging-*"))
+
+
+def test_applied_v023_builds_confirmed_v02_with_separate_reserved_spaces(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_bundle(tmp_path)
+    applied_sha256 = hashlib.sha256(applied_path.read_bytes()).hexdigest()
+
+    result = builder.run_applied_builder(
+        applied_bundle_json=applied_path,
+        confirmation_id="CONFIRM-SYNTHETIC-V023",
+        approval_channel="synthetic_test",
+        input_fn=answers([builder.APPROVAL_PHRASE]),
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+    )
+
+    assert result.status == "PASS"
+    assert result.output_created is True
+    artifact, decisions = read_applied_outputs(applied_path)
+    assert artifact["schema_version"] == "confirmed_composition_artifact.v0.2"
+    assert artifact["source_lineage"]["applied_bundle_sha256"] == applied_sha256
+    assert (
+        artifact["source_lineage"]["applied_source_lineage"]
+        == valid_applied_bundle()["source_lineage"]
+    )
+    assert len(artifact["installed_components"]) == 18
+    assert len(artifact["reserved_meter_spaces"]) == 4
+    assert all(
+        value["installed_component"] is False
+        for value in artifact["reserved_meter_spaces"]
+    )
+    assert {value["overlay_kind"] for value in artifact["installed_components"]} == {
+        "COMPONENT_SIGNATURE_CORRECTION",
+        "COMPONENT_RECONFIRMATION",
+    }
+    assert artifact["installed_components"][0]["quantity"]["quantity_per_cabinet"] == 1
+    assert artifact["installed_components"][-1]["quantity"] == {
+        "decision_id": "DEC-018",
+        "decision_kind": "CABINET_LEVEL_AGGREGATE",
+        "aggregate_quantity_per_cabinet": 3,
+        "applies_once_per_cabinet": True,
+        "multiply_by_member_count": False,
+    }
+    assert artifact["confirmed_composition_created"] is True
+    assert artifact["pricing_started"] is False
+    assert artifact["downstream_started"] is False
+    assert decisions["final_approval_phrase"] == builder.APPROVAL_PHRASE
+    assert decisions["approvals"]["technical_composition"] is True
+    assert decisions["approvals"]["price"] is False
+
+
+def test_preliminary_path_still_emits_semantically_unchanged_v01(
+    tmp_path: Path,
+) -> None:
+    result = run_success(tmp_path)
+    artifact, _decisions, _receipt = read_outputs(tmp_path)
+
+    assert result.status == "PASS"
+    assert artifact["schema_version"] == "confirmed_composition_artifact.v0.1"
+    assert "installed_components" not in artifact
+    assert artifact["safety"]["price_approved_by_igor"] is False
+
+
+def test_builder_cli_sources_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        builder.parse_args(
+            [
+                "--case-id",
+                "CASE-TEST-001",
+                "--applied-bundle-json",
+                "applied.json",
+                "--confirmation-id",
+                "CONFIRM-001",
+                "--approval-channel",
+                "synthetic_test",
+            ]
+        )
+
+
+def test_applied_path_requires_existing_exact_approval(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_bundle(tmp_path)
+
+    result = builder.run_applied_builder(
+        applied_bundle_json=applied_path,
+        confirmation_id="CONFIRM-SYNTHETIC-V023",
+        approval_channel="synthetic_test",
+        input_fn=answers(["WRONG APPROVAL"]),
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+    )
+
+    assert result.status == "FAIL"
+    assert not (applied_path.parent / builder.OUTPUT_DIR_NAME).exists()
+    assert any(
+        "exact technical composition approval phrase" in value
+        for value in result.red_flags
+    )
+
+
+def test_applied_hash_drift_after_approval_blocks_publication(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_bundle(tmp_path)
+
+    def mutate_source() -> None:
+        applied_path.write_bytes(applied_path.read_bytes() + b" ")
+
+    result = builder.run_applied_builder(
+        applied_bundle_json=applied_path,
+        confirmation_id="CONFIRM-SYNTHETIC-V023",
+        approval_channel="synthetic_test",
+        input_fn=answers([builder.APPROVAL_PHRASE]),
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+        before_drift_check=mutate_source,
+    )
+
+    assert result.status == "FAIL"
+    assert not (applied_path.parent / builder.OUTPUT_DIR_NAME).exists()
+    assert any("hash drift" in value for value in result.red_flags)
+
+
+@pytest.mark.parametrize("fault", ["duplicate", "unknown", "coverage"])
+def test_applied_source_comp_and_coverage_faults_fail_closed(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    data = valid_applied_bundle()
+    if fault == "duplicate":
+        data["component_signature_overlays"][1]["component_evidence_id"] = data[
+            "component_signature_overlays"
+        ][0]["component_evidence_id"]
+    elif fault == "unknown":
+        data["component_signature_overlays"][0][
+            "component_evidence_id"
+        ] = "COMP-UNKNOWN"
+    else:
+        data["coverage"]["overlay_component_count"] = 21
+    applied_path = write_applied_bundle(tmp_path, data)
+
+    result = builder.run_applied_builder(
+        applied_bundle_json=applied_path,
+        confirmation_id="CONFIRM-SYNTHETIC-V023",
+        approval_channel="synthetic_test",
+        input_fn=answers([builder.APPROVAL_PHRASE]),
+        output_fn=lambda _value: None,
+        now_fn=fixed_now,
+    )
+
+    assert result.status == "FAIL"
+    assert not (applied_path.parent / builder.OUTPUT_DIR_NAME).exists()

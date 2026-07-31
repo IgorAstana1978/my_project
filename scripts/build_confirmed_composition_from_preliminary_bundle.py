@@ -30,6 +30,9 @@ ARTIFACT_NAME = "confirmed-composition-artifact.json"
 DECISIONS_NAME = "igor-composition-decisions.json"
 RECEIPT_NAME = "igor-composition-decisions.md"
 APPROVAL_PHRASE = "CONFIRM TECHNICAL COMPOSITION"
+APPLIED_BUNDLE_SCHEMA = "component_replay_applied_bundle.v0.23"
+CONFIRMED_V02_SCHEMA = "confirmed_composition_artifact.v0.2"
+APPROVAL_AUTHORITY = "IGOR_DIRECT_HUMAN_APPROVAL"
 DECISIONS_INPUT_SCHEMA = "igor_composition_decisions_input.v0.1"
 CASE_ID_RE = re.compile(r"CASE-[A-Z0-9]+(?:-[A-Z0-9]+)*\Z")
 MAX_CASE_ID_LENGTH = 128
@@ -80,6 +83,13 @@ class CasePaths:
 
 
 @dataclass(frozen=True)
+class AppliedPaths:
+    case_dir: Path
+    applied_bundle: Path
+    output_dir: Path
+
+
+@dataclass(frozen=True)
 class InputSnapshot:
     paths: CasePaths
     manifest_bytes: bytes
@@ -87,6 +97,17 @@ class InputSnapshot:
     review_bytes: bytes
     hashes: dict[str, str]
     draft: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class AppliedInputSnapshot:
+    paths: AppliedPaths
+    content: bytes
+    sha256: str
+    data: Mapping[str, Any]
+    installed_components: list[dict[str, Any]]
+    reserved_meter_spaces: list[dict[str, Any]]
+    coverage: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -167,11 +188,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Phase 2.32 bundle."
         )
     )
-    parser.add_argument("--case-id", required=True)
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--case-id")
+    source_group.add_argument("--applied-bundle-json", type=Path)
     parser.add_argument("--confirmation-id", required=True)
     parser.add_argument("--approval-channel", required=True)
     parser.add_argument("--decisions-json", type=Path)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.applied_bundle_json is not None and args.decisions_json is not None:
+        parser.error(
+            "--decisions-json is preliminary-only and cannot be mixed with "
+            "--applied-bundle-json"
+        )
+    return args
 
 
 def valid_case_id(value: str) -> bool:
@@ -430,6 +459,53 @@ def assert_snapshot_unchanged(snapshot: InputSnapshot) -> None:
     }
     if current != snapshot.hashes:
         raise WorkflowError("input hash drift detected after Human Approval")
+
+
+def resolve_applied_paths(applied_bundle_json: Path) -> AppliedPaths:
+    applied_path = applied_bundle_json.expanduser().resolve(strict=False)
+    project_root = PROJECT_ROOT.resolve(strict=False)
+    if applied_path.is_relative_to(project_root):
+        raise WorkflowError("applied bundle JSON must be outside the Git project")
+    if not applied_path.is_file():
+        raise WorkflowError("applied bundle JSON does not exist")
+    case_dir = applied_path.parent
+    output_dir = case_dir / OUTPUT_DIR_NAME
+    if output_dir.exists():
+        raise WorkflowError(
+            "confirmed directory already exists; overwrite is forbidden"
+        )
+    return AppliedPaths(
+        case_dir=case_dir,
+        applied_bundle=applied_path,
+        output_dir=output_dir,
+    )
+
+
+def load_applied_snapshot(applied_bundle_json: Path) -> AppliedInputSnapshot:
+    paths = resolve_applied_paths(applied_bundle_json)
+    module = load_module(
+        "confirmed_builder_applied_source_validator",
+        SCRIPTS_DIR / "validate_confirmed_composition_artifact.py",
+    )
+    try:
+        validated = module.load_applied_bundle_snapshot(paths.applied_bundle)
+    except Exception as exc:
+        raise WorkflowError(f"applied bundle validation failed: {exc}") from exc
+    return AppliedInputSnapshot(
+        paths=paths,
+        content=validated.content,
+        sha256=validated.sha256,
+        data=validated.data,
+        installed_components=copy.deepcopy(validated.installed_components),
+        reserved_meter_spaces=copy.deepcopy(validated.reserved_meter_spaces),
+        coverage=dict(validated.coverage),
+    )
+
+
+def assert_applied_snapshot_unchanged(snapshot: AppliedInputSnapshot) -> None:
+    current = sha256_bytes(read_exact_bytes(snapshot.paths.applied_bundle))
+    if current != snapshot.sha256:
+        raise WorkflowError("applied bundle hash drift detected after Human Approval")
 
 
 def as_mapping(value: Any) -> Mapping[str, Any]:
@@ -2116,6 +2192,41 @@ def build_confirmed_artifact(
     }
 
 
+def build_confirmed_artifact_from_applied_bundle(
+    *,
+    confirmation_id: str,
+    approval_channel: str,
+    confirmed_at: str,
+    snapshot: AppliedInputSnapshot,
+    approval_phrase: str = APPROVAL_PHRASE,
+) -> dict[str, Any]:
+    return {
+        "schema_version": CONFIRMED_V02_SCHEMA,
+        "project_id": snapshot.data["project_id"],
+        "confirmation_id": confirmation_id,
+        "confirmed_by": "Igor",
+        "confirmed_at": confirmed_at,
+        "approval": {
+            "authority": APPROVAL_AUTHORITY,
+            "approved_by": "Igor",
+            "approval_phrase": approval_phrase,
+            "approval_channel": approval_channel,
+        },
+        "source_lineage": {
+            "applied_bundle_sha256": snapshot.sha256,
+            "applied_bundle_schema_version": APPLIED_BUNDLE_SCHEMA,
+            "applied_source_lineage": copy.deepcopy(snapshot.data["source_lineage"]),
+        },
+        "installed_components": copy.deepcopy(snapshot.installed_components),
+        "reserved_meter_spaces": copy.deepcopy(snapshot.reserved_meter_spaces),
+        "coverage": dict(snapshot.coverage),
+        "confirmed_composition_created": True,
+        "pricing_started": False,
+        "downstream_started": False,
+        "red_flags": [],
+    }
+
+
 def canonical_json_bytes(value: Mapping[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
@@ -2181,6 +2292,47 @@ def build_decision_record(
         record["decision_mode"] = "batch_json"
         record["batch_decisions"] = state.batch_decisions
     return record
+
+
+def build_applied_decision_record(
+    *,
+    confirmation_id: str,
+    approval_channel: str,
+    confirmed_at: str,
+    snapshot: AppliedInputSnapshot,
+    artifact_sha256: str,
+    final_approval_phrase: str = APPROVAL_PHRASE,
+) -> dict[str, Any]:
+    return {
+        "record_type": "igor_composition_decisions.v0.3",
+        "case_id": snapshot.data["project_id"],
+        "confirmation_id": confirmation_id,
+        "confirmed_by": "Igor",
+        "confirmed_at": confirmed_at,
+        "approval_channel": approval_channel,
+        "inputs": {
+            snapshot.paths.applied_bundle.name: {
+                "relative_path": snapshot.paths.applied_bundle.name,
+                "sha256": snapshot.sha256,
+                "schema_version": APPLIED_BUNDLE_SCHEMA,
+                "source_lineage": copy.deepcopy(snapshot.data["source_lineage"]),
+            }
+        },
+        "final_approval_phrase": final_approval_phrase,
+        "confirmed_artifact": {
+            "relative_path": ARTIFACT_NAME,
+            "sha256": artifact_sha256,
+        },
+        "approvals": {
+            "technical_composition": True,
+            "price": False,
+            "schedule": False,
+            "quote_generation": False,
+            "client_send": False,
+            "procurement": False,
+            "production": False,
+        },
+    }
 
 
 def build_receipt(
@@ -2273,12 +2425,59 @@ def build_receipt(
     return "\n".join(lines)
 
 
-def default_confirmed_validator(path: Path) -> Any:
+def build_applied_receipt(
+    *,
+    record: Mapping[str, Any],
+    decision_json_sha256: str,
+    snapshot: AppliedInputSnapshot,
+) -> str:
+    artifact = as_mapping(record.get("confirmed_artifact"))
+    return "\n".join(
+        [
+            "# Igor technical composition decision receipt",
+            "",
+            f"- Case ID: {record.get('case_id')}",
+            f"- Confirmation ID: {record.get('confirmation_id')}",
+            f"- Confirmed at: {record.get('confirmed_at')}",
+            f"- Confirmed by: {record.get('confirmed_by')}",
+            f"- Approval channel: {record.get('approval_channel')}",
+            f"- Applied bundle SHA-256: {snapshot.sha256}",
+            f"- Confirmed artifact SHA-256: {artifact.get('sha256')}",
+            f"- Decision JSON SHA-256: {decision_json_sha256}",
+            (
+                "- Installed components: "
+                f"{snapshot.coverage['installed_component_count']}"
+            ),
+            (
+                "- Reserved meter spaces: "
+                f"{snapshot.coverage['reserved_meter_space_count']}"
+            ),
+            "",
+            "## Safety boundary",
+            "",
+            (
+                "This receipt confirms technical composition only. It does not "
+                "authorize pricing, schedule, КП, client sending, procurement, "
+                "reservation, prepayment, workshop launch, or production."
+            ),
+            "",
+        ]
+    )
+
+
+def default_confirmed_validator(
+    path: Path,
+    *,
+    applied_bundle_json: Path | None = None,
+) -> Any:
     module = load_module(
         "confirmed_builder_confirmed_validator",
         SCRIPTS_DIR / "validate_confirmed_composition_artifact.py",
     )
-    return module.validate_confirmed_composition_artifact(path)
+    return module.validate_confirmed_composition_artifact(
+        path,
+        applied_bundle_json=applied_bundle_json,
+    )
 
 
 def write_fsynced(path: Path, content: bytes) -> None:
@@ -2290,7 +2489,7 @@ def write_fsynced(path: Path, content: bytes) -> None:
 
 def publish_atomically(
     *,
-    paths: CasePaths,
+    paths: CasePaths | AppliedPaths,
     artifact: Mapping[str, Any],
     record_factory: Callable[[str], Mapping[str, Any]],
     receipt_factory: Callable[[Mapping[str, Any], str], str],
@@ -2441,6 +2640,116 @@ def run_builder(
     return result
 
 
+def render_applied_final_summary(
+    *,
+    confirmation_id: str,
+    snapshot: AppliedInputSnapshot,
+) -> str:
+    return "\n".join(
+        [
+            "Applied v0.23 confirmed-composition review:",
+            f"- Project ID: {snapshot.data['project_id']}",
+            f"- Confirmation ID: {confirmation_id}",
+            f"- Applied bundle SHA-256: {snapshot.sha256}",
+            (
+                "- Installed components: "
+                f"{snapshot.coverage['installed_component_count']}"
+            ),
+            (
+                "- Signature corrections: "
+                f"{snapshot.coverage['component_signature_correction_count']}"
+            ),
+            (
+                "- Signature reconfirmations: "
+                f"{snapshot.coverage['component_reconfirmation_count']}"
+            ),
+            (
+                "- Reserved meter spaces (not installed): "
+                f"{snapshot.coverage['reserved_meter_space_count']}"
+            ),
+            "- Pricing started: false",
+            "- Downstream started: false",
+        ]
+    )
+
+
+def run_applied_builder(
+    *,
+    applied_bundle_json: Path,
+    confirmation_id: str,
+    approval_channel: str,
+    input_fn: InputFunction = input,
+    output_fn: OutputFunction = print,
+    now_fn: NowFunction = timezone_aware_now,
+    before_drift_check: Callable[[], None] | None = None,
+    confirmed_validator: ValidatorFunction | None = None,
+    approval_phrase: str = APPROVAL_PHRASE,
+) -> BuildResult:
+    result = BuildResult(case_id="")
+    try:
+        confirmation_id = require_metadata(confirmation_id, "confirmation_id")
+        approval_channel = require_metadata(approval_channel, "approval_channel")
+        snapshot = load_applied_snapshot(applied_bundle_json)
+        result.case_id = cast(str, snapshot.data["project_id"])
+        result.output_dir = snapshot.paths.output_dir
+        output_fn(
+            render_applied_final_summary(
+                confirmation_id=confirmation_id,
+                snapshot=snapshot,
+            )
+        )
+        phrase = input_fn(f"Type exact approval phrase [{approval_phrase}]: ")
+        if phrase != approval_phrase:
+            raise WorkflowError("exact technical composition approval phrase required")
+        if before_drift_check is not None:
+            before_drift_check()
+        assert_applied_snapshot_unchanged(snapshot)
+        confirmed_at_value = now_fn()
+        if confirmed_at_value.tzinfo is None or confirmed_at_value.utcoffset() is None:
+            raise WorkflowError("confirmed_at must be timezone-aware")
+        confirmed_at = confirmed_at_value.isoformat()
+        artifact = build_confirmed_artifact_from_applied_bundle(
+            confirmation_id=confirmation_id,
+            approval_channel=approval_channel,
+            confirmed_at=confirmed_at,
+            snapshot=snapshot,
+            approval_phrase=approval_phrase,
+        )
+        if confirmed_validator is None:
+
+            def validator(path: Path) -> Any:
+                return default_confirmed_validator(
+                    path,
+                    applied_bundle_json=snapshot.paths.applied_bundle,
+                )
+
+        else:
+            validator = confirmed_validator
+        publish_atomically(
+            paths=snapshot.paths,
+            artifact=artifact,
+            record_factory=lambda artifact_hash: build_applied_decision_record(
+                confirmation_id=confirmation_id,
+                approval_channel=approval_channel,
+                confirmed_at=confirmed_at,
+                snapshot=snapshot,
+                artifact_sha256=artifact_hash,
+                final_approval_phrase=approval_phrase,
+            ),
+            receipt_factory=lambda record, decision_hash: build_applied_receipt(
+                record=record,
+                decision_json_sha256=decision_hash,
+                snapshot=snapshot,
+            ),
+            confirmed_validator=validator,
+        )
+        result.status = "PASS"
+        result.output_created = True
+    except (WorkflowError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        result.red_flags.append(str(exc))
+    return result
+
+
 def format_report(result: BuildResult) -> str:
     return "\n".join(
         [
@@ -2471,12 +2780,19 @@ def format_report(result: BuildResult) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    result = run_builder(
-        case_id=args.case_id,
-        confirmation_id=args.confirmation_id,
-        approval_channel=args.approval_channel,
-        decisions_json=args.decisions_json,
-    )
+    if args.applied_bundle_json is not None:
+        result = run_applied_builder(
+            applied_bundle_json=args.applied_bundle_json,
+            confirmation_id=args.confirmation_id,
+            approval_channel=args.approval_channel,
+        )
+    else:
+        result = run_builder(
+            case_id=args.case_id,
+            confirmation_id=args.confirmation_id,
+            approval_channel=args.approval_channel,
+            decisions_json=args.decisions_json,
+        )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1
 

@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 import sys
@@ -63,6 +64,220 @@ def first_item(data: dict[str, Any]) -> dict[str, Any]:
 
 def first_component(data: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], first_item(data)["components"][0])
+
+
+def compact_applied_bundle() -> dict[str, Any]:
+    def signature(label: str) -> dict[str, Any]:
+        return {
+            "component_identity": label,
+            "model_type": "SYNTHETIC",
+            "ratings": ["16A"],
+            "poles": 1,
+            "functional_role": "synthetic",
+        }
+
+    canonical = []
+    direct = []
+    exclusions = []
+    overlays = []
+    reserved = []
+    for index in range(1, 4):
+        component_id = f"COMP-{index:03d}"
+        label = f"Synthetic {index}"
+        canonical.append(
+            {
+                "component_evidence_id": component_id,
+                "document_id": "DOC-SYNTHETIC",
+                "label": label,
+                "position_id": f"POS-{index:03d}",
+                "provenance": {"row_locator": f"row={index}"},
+                "section_id": "SYNTHETIC",
+                "source_status": "identified",
+            }
+        )
+        member = {
+            "component_evidence_id": component_id,
+            "evidence_position_id": f"POS-{index:03d}",
+            "section": "SYNTHETIC",
+            "source_locator": f"row={index}",
+            "canonical_label": label,
+            "canonical_document_id": "DOC-SYNTHETIC",
+            "canonical_source_status": "identified",
+            "canonical_provenance": {"row_locator": f"row={index}"},
+        }
+        common = {
+            "decision_id": f"DEC-{index:03d}",
+            "decision_code": f"CODE-{index:03d}",
+            "component_signature": signature(label),
+            "members": [member],
+            "application_status": "APPLIED",
+        }
+        if index <= 2:
+            direct.append(
+                {
+                    **common,
+                    "decision_kind": "DIRECT_COMPONENT_QUANTITY",
+                    "quantity_per_cabinet": index,
+                }
+            )
+            overlays.append(
+                {
+                    "item_id": f"ITEM-{index:03d}",
+                    "item_kind": (
+                        "COMPONENT_SIGNATURE_CORRECTION"
+                        if index == 1
+                        else "COMPONENT_RECONFIRMATION"
+                    ),
+                    "cabinet_record_id": f"CAB-{index:03d}",
+                    "cabinet_template": "SYNTHETIC-CABINET",
+                    "component_evidence_id": component_id,
+                    "position_id": f"POS-{index:03d}",
+                    "section": "SYNTHETIC",
+                    "source_locator": f"row={index}",
+                    "original_signature": signature(label),
+                    "approved_signature": signature(label),
+                    "quantity_per_cabinet": index,
+                    "provenance": {"source_locator": f"row={index}"},
+                    "correction_reason": "synthetic",
+                    "canonical_evidence_modified": False,
+                    "application_status": "APPLIED",
+                }
+            )
+        else:
+            exclusions.append(
+                {
+                    **common,
+                    "decision_kind": "SCOPE_EXCLUSION",
+                    "scope_status": "EXCLUDED_RESERVED_SPACE_ONLY",
+                    "future_inclusion_requires": "SEPARATE_IGOR_APPROVAL",
+                    "prohibited_downstream": ["pricing"],
+                }
+            )
+            reserved.append(
+                {
+                    "item_id": "ITEM-003",
+                    "item_kind": "RESERVED_METER_SPACE",
+                    "cabinet_record_id": "CAB-003",
+                    "cabinet_template": "SYNTHETIC-CABINET",
+                    "component_evidence_id": component_id,
+                    "position_id": "POS-003",
+                    "section": "SYNTHETIC",
+                    "source_locator": "row=3",
+                    "requirement_kind": "RESERVED_METER_SPACE",
+                    "meter_connection": "THREE_PHASE_DIRECT",
+                    "reserved_space_per_cabinet": 1,
+                    "installed_component": False,
+                    "original_identity": label,
+                    "provenance": {"source_locator": "row=3"},
+                    "future_inclusion_requires": "SEPARATE_IGOR_APPROVAL",
+                    "prohibited_downstream": ["pricing"],
+                    "canonical_evidence_modified": False,
+                    "application_status": "APPLIED",
+                }
+            )
+    return {
+        "schema_version": "component_replay_applied_bundle.v0.23",
+        "project_id": "CASE-SYNTHETIC-V023",
+        "application_status": "APPLIED",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_order": [
+            "human_decisions_batch.v0.22",
+            "human_decisions_batch.v0.23",
+        ],
+        "source_lineage": {
+            "canonical_replay_sha256": "1" * 64,
+            "canonical_replay_schema_version": (
+                "component_replay_readiness_bundle.v0.2"
+            ),
+            "prior_batch_sha256": "2" * 64,
+            "prior_batch_schema_version": "human_decisions_batch.v0.22",
+            "prior_batch_id": "022",
+            "correction_batch_sha256": "3" * 64,
+            "correction_batch_schema_version": "human_decisions_batch.v0.23",
+            "correction_batch_id": "023",
+            "correction_prior_batch_id": "022",
+        },
+        "canonical_component_evidence_records": canonical,
+        "prior_v0_22_application": {
+            "application_status": "APPLIED",
+            "direct_component_quantities": direct,
+            "cabinet_level_aggregates": [],
+            "scope_exclusions": exclusions,
+            "coverage": {
+                "direct_component_count": 2,
+                "aggregate_member_count": 0,
+                "exclusion_component_count": 1,
+                "union_component_count": 3,
+            },
+        },
+        "component_signature_overlays": overlays,
+        "reserved_meter_space_requirements": reserved,
+        "coverage": {
+            "canonical_component_count": 3,
+            "prior_direct_component_count": 2,
+            "prior_aggregate_member_count": 0,
+            "prior_exclusion_component_count": 1,
+            "prior_union_component_count": 3,
+            "component_signature_correction_count": 1,
+            "component_reconfirmation_count": 1,
+            "reserved_meter_space_count": 1,
+            "overlay_component_count": 3,
+        },
+        "confirmed_composition_created": False,
+        "pricing_started": False,
+        "downstream_started": False,
+    }
+
+
+def write_applied_source(tmp_path: Path) -> Path:
+    path = tmp_path / "applied-v0.23.json"
+    path.write_text(
+        json.dumps(compact_applied_bundle(), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def valid_v02_data(applied_path: Path) -> dict[str, Any]:
+    snapshot = validator.load_applied_bundle_snapshot(applied_path)
+    return {
+        "schema_version": "confirmed_composition_artifact.v0.2",
+        "project_id": snapshot.data["project_id"],
+        "confirmation_id": "CONFIRM-SYNTHETIC-V023",
+        "confirmed_by": "Igor",
+        "confirmed_at": "2099-01-01T12:30:00+05:00",
+        "approval": {
+            "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+            "approved_by": "Igor",
+            "approval_phrase": "CONFIRM TECHNICAL COMPOSITION",
+            "approval_channel": "synthetic_test",
+        },
+        "source_lineage": {
+            "applied_bundle_sha256": hashlib.sha256(
+                applied_path.read_bytes()
+            ).hexdigest(),
+            "applied_bundle_schema_version": "component_replay_applied_bundle.v0.23",
+            "applied_source_lineage": snapshot.data["source_lineage"],
+        },
+        "installed_components": snapshot.installed_components,
+        "reserved_meter_spaces": snapshot.reserved_meter_spaces,
+        "coverage": snapshot.coverage,
+        "confirmed_composition_created": True,
+        "pricing_started": False,
+        "downstream_started": False,
+        "red_flags": [],
+    }
+
+
+def run_v02_validation(
+    data: dict[str, Any],
+    tmp_path: Path,
+    applied_path: Path,
+) -> Any:
+    return validator.validate_confirmed_composition_artifact(
+        write_json(tmp_path, data),
+        applied_bundle_json=applied_path,
+    )
 
 
 def assert_fails_with(
@@ -302,3 +517,150 @@ def test_old_workflows_do_not_reference_this_validator() -> None:
     for path in OLD_WORKFLOWS:
         assert path.is_file(), path
         assert validator_name not in path.read_text(encoding="utf-8"), path
+
+
+def test_valid_confirmed_v02_passes_with_exact_applied_binding(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+    data = valid_v02_data(applied_path)
+
+    result = run_v02_validation(data, tmp_path, applied_path)
+
+    assert result.status == "PASS"
+    assert result.red_flags == []
+    assert all(status == "pass" for status in result.checks.values())
+
+
+def test_confirmed_v02_requires_exact_existing_igor_approval(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+    data = valid_v02_data(applied_path)
+    cast(dict[str, Any], data["approval"])["approval_phrase"] = "SECOND MECHANISM"
+
+    result = run_v02_validation(data, tmp_path, applied_path)
+
+    assert result.status == "FAIL"
+    assert any("exact Igor approval mismatch" in value for value in result.red_flags)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "replacement", "expected"),
+    [
+        ("applied_bundle_sha256", "0" * 64, "SHA-256 binding mismatch"),
+        ("applied_source_lineage", {}, "applied source lineage mismatch"),
+    ],
+)
+def test_confirmed_v02_sha_and_lineage_tampering_fails_closed(
+    tmp_path: Path,
+    field_name: str,
+    replacement: Any,
+    expected: str,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+    data = valid_v02_data(applied_path)
+    cast(dict[str, Any], data["source_lineage"])[field_name] = replacement
+
+    result = run_v02_validation(data, tmp_path, applied_path)
+
+    assert result.status == "FAIL"
+    assert any(expected in value for value in result.red_flags)
+
+
+def test_confirmed_v02_rejects_reserved_space_leakage(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+    data = valid_v02_data(applied_path)
+    leaked = dict(data["reserved_meter_spaces"][0])
+    leaked.update(
+        {
+            "canonical_label": leaked["original_identity"],
+            "approved_signature": {
+                "component_identity": leaked["original_identity"],
+                "model_type": "SYNTHETIC",
+                "ratings": [],
+                "poles": None,
+                "functional_role": "reserved",
+            },
+            "quantity": {
+                "decision_id": "DEC-003",
+                "decision_kind": "DIRECT_COMPONENT_QUANTITY",
+                "quantity_per_cabinet": 1,
+            },
+            "signature_source": "V0_22_PRIOR",
+            "overlay_kind": None,
+        }
+    )
+    for key in list(leaked):
+        if key not in validator.V02_INSTALLED_COMPONENT_FIELDS:
+            del leaked[key]
+    cast(list[Any], data["installed_components"]).append(leaked)
+
+    result = run_v02_validation(data, tmp_path, applied_path)
+
+    assert result.status == "FAIL"
+    assert any("reserved space leaked" in value for value in result.red_flags)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "replacement", "expected"),
+    [
+        ("coverage", {}, "coverage mismatch"),
+        ("pricing_started", True, "pricing_started must be false"),
+        ("downstream_started", True, "downstream_started must be false"),
+    ],
+)
+def test_confirmed_v02_coverage_and_downstream_tampering_fails_closed(
+    tmp_path: Path,
+    field_name: str,
+    replacement: Any,
+    expected: str,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+    data = valid_v02_data(applied_path)
+    data[field_name] = replacement
+
+    result = run_v02_validation(data, tmp_path, applied_path)
+
+    assert result.status == "FAIL"
+    assert any(expected in value for value in result.red_flags)
+
+
+def test_validator_rejects_mixed_v01_and_applied_inputs(
+    tmp_path: Path,
+) -> None:
+    applied_path = write_applied_source(tmp_path)
+
+    result = validator.validate_confirmed_composition_artifact(
+        write_json(tmp_path, valid_data()),
+        applied_bundle_json=applied_path,
+    )
+
+    assert result.status == "FAIL"
+    assert any("forbidden for confirmed v0.1" in value for value in result.red_flags)
+
+
+@pytest.mark.parametrize("fault", ["duplicate", "unknown"])
+def test_applied_source_duplicate_and_unknown_comp_fail_closed(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    data = compact_applied_bundle()
+    if fault == "duplicate":
+        data["component_signature_overlays"][1]["component_evidence_id"] = data[
+            "component_signature_overlays"
+        ][0]["component_evidence_id"]
+    else:
+        data["component_signature_overlays"][0][
+            "component_evidence_id"
+        ] = "COMP-UNKNOWN"
+    applied_path = tmp_path / "bad-applied.json"
+    applied_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(validator.AppliedBundleValidationError):
+        validator.load_applied_bundle_snapshot(applied_path)

@@ -343,3 +343,61 @@ Envelope export, consumer validation и calculator-input draft не являют
 - отправку клиенту;
 - закупку, резерв или предоплату;
 - запуск цеха или производство.
+
+## Generic applied bundle v0.23 mode
+
+Builder поддерживает второй, взаимоисключающий source mode:
+
+```powershell
+.\.venv\Scripts\python.exe `
+  .\scripts\build_confirmed_composition_from_preliminary_bundle.py `
+  --applied-bundle-json "C:\approved-inputs\component-replay-applied-bundle-v0.23.json" `
+  --confirmation-id "CONFIRM-COMPOSITION-2026-001" `
+  --approval-channel "igor_local_terminal"
+```
+
+`--case-id` выбирает прежний Phase 2.32 preliminary workflow.
+`--applied-bundle-json` выбирает только
+`component_replay_applied_bundle.v0.23`. Эти аргументы нельзя передать
+одновременно; `--decisions-json` также является только preliminary-mode
+input.
+
+Applied input и создаваемый `confirmed` directory должны находиться вне Git
+project. Output публикуется рядом с applied bundle тем же atomic staging
+механизмом и без overwrite. Applied source повторно хешируется после Human
+Approval; drift блокирует публикацию.
+
+Applied mode использует существующий direct approval contract и единственную
+exact phrase:
+
+```text
+CONFIRM TECHNICAL COMPOSITION
+```
+
+Второго approval-механизма нет. До ввода phrase оператору показываются project
+ID, exact applied SHA-256, installed count, correction/reconfirmation counts и
+reserved-space count.
+
+Output имеет schema `confirmed_composition_artifact.v0.2`. Он:
+
+- сохраняет exact applied SHA-256 и полную `source_lineage`;
+- переносит v0.22 direct и cabinet-level aggregate quantity semantics;
+- применяет correction/reconfirmation signatures к installed components;
+- сохраняет reserved meter spaces отдельным массивом с
+  `installed_component = false`;
+- устанавливает `confirmed_composition_created = true`;
+- оставляет `pricing_started = false` и `downstream_started = false`.
+
+Validator для v0.2 требует одновременно confirmed artifact и exact applied
+source:
+
+```powershell
+.\.venv\Scripts\python.exe `
+  .\scripts\validate_confirmed_composition_artifact.py `
+  --input-json "C:\approved-inputs\confirmed\confirmed-composition-artifact.json" `
+  --applied-bundle-json "C:\approved-inputs\component-replay-applied-bundle-v0.23.json"
+```
+
+Передача applied source при v0.1 или отсутствие applied source при v0.2
+отклоняются fail-closed. Успешный v0.2 не запускает pricing, downstream,
+закупку, производство или client send.
