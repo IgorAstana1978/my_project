@@ -230,12 +230,14 @@ APPLIED_MEMBER_FIELDS = {
     "canonical_provenance",
 }
 APPLIED_SIGNATURE_FIELDS = {
+    "cabinet_template",
     "component_identity",
     "model_type",
     "ratings",
     "poles",
     "functional_role",
 }
+APPLIED_OVERLAY_SIGNATURE_FIELDS = APPLIED_SIGNATURE_FIELDS - {"cabinet_template"}
 APPLIED_OVERLAY_FIELDS = {
     "item_id",
     "item_kind",
@@ -519,7 +521,13 @@ def _applied_positive_int(value: Any, path: str) -> int:
 
 
 def _validated_signature(value: Any, path: str) -> Mapping[str, Any]:
-    return _applied_exact(value, path, APPLIED_SIGNATURE_FIELDS)
+    signature = _applied_exact(value, path, APPLIED_SIGNATURE_FIELDS)
+    _applied_string(signature["cabinet_template"], f"{path}.cabinet_template")
+    return signature
+
+
+def _validated_overlay_signature(value: Any, path: str) -> Mapping[str, Any]:
+    return _applied_exact(value, path, APPLIED_OVERLAY_SIGNATURE_FIELDS)
 
 
 def _validated_applied_lineage(value: Any) -> Mapping[str, Any]:
@@ -777,7 +785,7 @@ def load_applied_bundle_snapshot(path: Path) -> AppliedBundleSnapshot:
             reconfirmation_count += 1
         else:
             raise AppliedBundleValidationError("unknown overlay kind")
-        approved_signature = _validated_signature(
+        approved_signature = _validated_overlay_signature(
             overlay["approved_signature"],
             "overlay approved_signature",
         )

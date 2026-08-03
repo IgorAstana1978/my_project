@@ -26,6 +26,16 @@ OLD_WORKFLOWS = (
     PROJECT_ROOT / "scripts" / "verify_preliminary_composition_source_bundle.py",
     PROJECT_ROOT / "scripts" / "build_preliminary_composition_review_card.py",
 )
+REAL_CASE_APPLIED_INPUT = (
+    Path.home()
+    / "Documents"
+    / "production_ai_cases"
+    / "CASE-QF-PROJECT-2024-086-HUMAN-DECISIONS-20260731-023"
+    / "component-replay-applied-bundle-v0.23.json"
+)
+REAL_CASE_APPLIED_SHA256 = (
+    "6433e862c7281ac699a12b81e30a02e7f45702ddab22441efd2c79d36589dd6f"
+)
 
 
 def load_validator_module() -> ModuleType:
@@ -69,12 +79,18 @@ def first_component(data: dict[str, Any]) -> dict[str, Any]:
 def compact_applied_bundle() -> dict[str, Any]:
     def signature(label: str) -> dict[str, Any]:
         return {
+            "cabinet_template": "SYNTHETIC-CABINET",
             "component_identity": label,
             "model_type": "SYNTHETIC",
             "ratings": ["16A"],
             "poles": 1,
             "functional_role": "synthetic",
         }
+
+    def overlay_signature(label: str) -> dict[str, Any]:
+        value = signature(label)
+        del value["cabinet_template"]
+        return value
 
     canonical = []
     direct = []
@@ -134,8 +150,8 @@ def compact_applied_bundle() -> dict[str, Any]:
                     "position_id": f"POS-{index:03d}",
                     "section": "SYNTHETIC",
                     "source_locator": f"row={index}",
-                    "original_signature": signature(label),
-                    "approved_signature": signature(label),
+                    "original_signature": overlay_signature(label),
+                    "approved_signature": overlay_signature(label),
                     "quantity_per_cabinet": index,
                     "provenance": {"source_locator": f"row={index}"},
                     "correction_reason": "synthetic",
@@ -229,10 +245,18 @@ def compact_applied_bundle() -> dict[str, Any]:
     }
 
 
-def write_applied_source(tmp_path: Path) -> Path:
+def write_applied_source(
+    tmp_path: Path,
+    data: dict[str, Any] | None = None,
+) -> Path:
     path = tmp_path / "applied-v0.23.json"
     path.write_text(
-        json.dumps(compact_applied_bundle(), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            data if data is not None else compact_applied_bundle(),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
     return path
@@ -664,3 +688,76 @@ def test_applied_source_duplicate_and_unknown_comp_fail_closed(
 
     with pytest.raises(validator.AppliedBundleValidationError):
         validator.load_applied_bundle_snapshot(applied_path)
+
+
+def test_applied_source_exact_six_field_signature_passes(tmp_path: Path) -> None:
+    data = compact_applied_bundle()
+    signature = data["prior_v0_22_application"]["direct_component_quantities"][0][
+        "component_signature"
+    ]
+
+    assert set(signature) == {
+        "cabinet_template",
+        "component_identity",
+        "model_type",
+        "ratings",
+        "poles",
+        "functional_role",
+    }
+    assert signature["cabinet_template"] == "SYNTHETIC-CABINET"
+
+    snapshot = validator.load_applied_bundle_snapshot(
+        write_applied_source(tmp_path, data)
+    )
+
+    assert snapshot.data["schema_version"] == "component_replay_applied_bundle.v0.23"
+
+
+def test_applied_source_signature_without_cabinet_template_fails_closed(
+    tmp_path: Path,
+) -> None:
+    data = compact_applied_bundle()
+    del data["prior_v0_22_application"]["direct_component_quantities"][0][
+        "component_signature"
+    ]["cabinet_template"]
+
+    with pytest.raises(
+        validator.AppliedBundleValidationError,
+        match="component_signature fields mismatch",
+    ):
+        validator.load_applied_bundle_snapshot(write_applied_source(tmp_path, data))
+
+
+def test_applied_source_signature_with_unknown_field_fails_closed(
+    tmp_path: Path,
+) -> None:
+    data = compact_applied_bundle()
+    data["prior_v0_22_application"]["direct_component_quantities"][0][
+        "component_signature"
+    ]["unknown_field"] = "forbidden"
+
+    with pytest.raises(
+        validator.AppliedBundleValidationError,
+        match="component_signature fields mismatch",
+    ):
+        validator.load_applied_bundle_snapshot(write_applied_source(tmp_path, data))
+
+
+@pytest.mark.skipif(
+    not REAL_CASE_APPLIED_INPUT.is_file(),
+    reason="local real-case applied bundle is unavailable",
+)
+def test_real_case_applied_bundle_passes_source_validation_read_only() -> None:
+    before_bytes = REAL_CASE_APPLIED_INPUT.read_bytes()
+    before_entries = sorted(
+        path.name for path in REAL_CASE_APPLIED_INPUT.parent.iterdir()
+    )
+
+    snapshot = validator.load_applied_bundle_snapshot(REAL_CASE_APPLIED_INPUT)
+
+    assert snapshot.sha256 == REAL_CASE_APPLIED_SHA256
+    assert REAL_CASE_APPLIED_INPUT.read_bytes() == before_bytes
+    assert (
+        sorted(path.name for path in REAL_CASE_APPLIED_INPUT.parent.iterdir())
+        == before_entries
+    )

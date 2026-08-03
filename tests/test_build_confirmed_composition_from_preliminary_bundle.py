@@ -330,12 +330,19 @@ def read_outputs(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
 
 def applied_signature(label: str) -> dict[str, Any]:
     return {
+        "cabinet_template": "SYNTHETIC-CABINET",
         "component_identity": label,
         "model_type": "SYNTHETIC",
         "ratings": ["16A"],
         "poles": 1,
         "functional_role": "synthetic test component",
     }
+
+
+def applied_overlay_signature(label: str) -> dict[str, Any]:
+    value = applied_signature(label)
+    del value["cabinet_template"]
+    return value
 
 
 def applied_member(component_id: str, label: str, index: int) -> dict[str, Any]:
@@ -425,8 +432,8 @@ def valid_applied_bundle() -> dict[str, Any]:
                     "position_id": f"POS-{index:03d}",
                     "section": "SYNTHETIC",
                     "source_locator": f"row={index}",
-                    "original_signature": signature,
-                    "approved_signature": signature,
+                    "original_signature": applied_overlay_signature(label),
+                    "approved_signature": applied_overlay_signature(label),
                     "quantity_per_cabinet": index,
                     "provenance": {"source_locator": f"row={index}"},
                     "correction_reason": "synthetic confirmation",
