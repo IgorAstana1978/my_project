@@ -43,9 +43,29 @@ COMPONENT_DEFINITIONS = {
         workbook_label="ВА47 1 полюсный",
         install_type="modular_1p",
     ),
+    "EKF-VA47-29-2P": ComponentDefinition(
+        workbook_label="ВА47 2 полюсный",
+        install_type="modular_2p",
+    ),
     "EKF-VA47-29-3P": ComponentDefinition(
         workbook_label="ВА47 3 полюсный до 63А",
         install_type="modular_3p",
+    ),
+    "EKF-VN-32-1P": ComponentDefinition(
+        workbook_label="ВН-32 1Р 16-25-40-63А",
+        install_type="load_switch_1p",
+    ),
+    "EKF-VN-32-2P": ComponentDefinition(
+        workbook_label="ВН-32 2Р 16-25-40-63А",
+        install_type="load_switch_2p",
+    ),
+    "EKF-VN-32-3P": ComponentDefinition(
+        workbook_label="ВН-32 3Р 16-25-40-63-80-100А",
+        install_type="load_switch_3p",
+    ),
+    "EKF-AD32-1P-N": ComponentDefinition(
+        workbook_label="УЗО АД-32 1Р+N до 63А EKF",
+        install_type="diff_1p_n",
     ),
     "EKF-RN-47": ComponentDefinition(
         workbook_label="независимый расцепитель для ВА47 РН47",
@@ -53,7 +73,26 @@ COMPONENT_DEFINITIONS = {
     ),
 }
 CABINET_DEFINITIONS = {
+    "CAB-KURN-038-24": "Корпус КУРН-0,38-24 540х490х170",
+    "CAB-KRN-18": "Корпус КРН-18 265х440х100",
+    "CAB-KRN-12": "Корпус КРН-12 265х330х100",
     "CAB-KRN-24": "Корпус КРН-24 395х330х100",
+}
+CABINET_SOURCE_TEMPLATE_CODES = {
+    "ПР": "CAB-KURN-038-24",
+    "Щоф": "CAB-KRN-18",
+    "ШУ-Т2": "CAB-KRN-12",
+    "ЩАО-1Ж": "CAB-KRN-12",
+    "ЩАО-2Ж": "CAB-KRN-12",
+    "ЩАО-3Ж": "CAB-KRN-12",
+    "ЩО-1Ж": "CAB-KRN-12",
+    "ЩО-2Ж": "CAB-KRN-12",
+    "ЩО-3Ж": "CAB-KRN-12",
+    "ЩС": "CAB-KRN-24",
+}
+UNRESOLVED_COMPONENT_MAPPING_REQUESTS = {
+    "COMPONENT-MAPPING-005": "UNRESOLVED_EXACT_RCBO_OR_EQUIVALENT_REQUIRED",
+    "COMPONENT-MAPPING-012": "UNRESOLVED_BREAKING_CAPACITY_NOT_APPROVED",
 }
 
 

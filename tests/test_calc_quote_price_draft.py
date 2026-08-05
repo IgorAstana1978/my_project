@@ -523,3 +523,57 @@ def test_existing_workflows_remain_isolated_from_calculator() -> None:
     assert "make_quote_capacity100_commercial_checked.ps1" not in calculator_text
     assert "calc_quote_price_draft.py" not in technical_text
     assert "calc_quote_price_draft.py" not in commercial_text
+
+
+def test_approved_component_definitions_are_exact() -> None:
+    expected = {
+        "EKF-VA47-29-2P": ("ВА47 2 полюсный", "modular_2p"),
+        "EKF-VN-32-1P": ("ВН-32 1Р 16-25-40-63А", "load_switch_1p"),
+        "EKF-VN-32-2P": ("ВН-32 2Р 16-25-40-63А", "load_switch_2p"),
+        "EKF-VN-32-3P": (
+            "ВН-32 3Р 16-25-40-63-80-100А",
+            "load_switch_3p",
+        ),
+        "EKF-AD32-1P-N": ("УЗО АД-32 1Р+N до 63А EKF", "diff_1p_n"),
+    }
+
+    assert {
+        code: (definition.workbook_label, definition.install_type)
+        for code, definition in calculator.COMPONENT_DEFINITIONS.items()
+        if code in expected
+    } == expected
+
+
+def test_approved_regular_cabinet_definitions_are_exact() -> None:
+    assert calculator.CABINET_DEFINITIONS["CAB-KURN-038-24"] == (
+        "Корпус КУРН-0,38-24 540х490х170"
+    )
+    assert calculator.CABINET_DEFINITIONS["CAB-KRN-18"] == ("Корпус КРН-18 265х440х100")
+    assert calculator.CABINET_DEFINITIONS["CAB-KRN-12"] == ("Корпус КРН-12 265х330х100")
+    assert calculator.CABINET_DEFINITIONS["CAB-KRN-24"] == ("Корпус КРН-24 395х330х100")
+    assert "CAB-SCHE-BI-900X900X120-M12" not in calculator.CABINET_DEFINITIONS
+
+
+def test_seven_approved_templates_share_one_krn_12_code() -> None:
+    templates = (
+        "ШУ-Т2",
+        "ЩАО-1Ж",
+        "ЩАО-2Ж",
+        "ЩАО-3Ж",
+        "ЩО-1Ж",
+        "ЩО-2Ж",
+        "ЩО-3Ж",
+    )
+
+    assert {
+        template: calculator.CABINET_SOURCE_TEMPLATE_CODES[template]
+        for template in templates
+    } == {template: "CAB-KRN-12" for template in templates}
+
+
+def test_unresolved_component_requests_remain_blocked() -> None:
+    assert calculator.UNRESOLVED_COMPONENT_MAPPING_REQUESTS == {
+        "COMPONENT-MAPPING-005": "UNRESOLVED_EXACT_RCBO_OR_EQUIVALENT_REQUIRED",
+        "COMPONENT-MAPPING-012": "UNRESOLVED_BREAKING_CAPACITY_NOT_APPROVED",
+    }
+    assert calculator.COMPONENT_DEFINITIONS["EKF-AD32-1P-N"].install_type == "diff_1p_n"
