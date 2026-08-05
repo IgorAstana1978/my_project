@@ -3,6 +3,7 @@ import importlib.util
 import json
 import sys
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -111,18 +112,18 @@ def test_checked_synthetic_workbook_resolves_without_modification(
         "internal_cabinet_code": "CAB-SCHE-BI-900X900X120-M12",
         "source_cabinet_label": "ЩЭ 5кв 900х900х120",
         "installation": "built_in",
-        "dimensions_mm": {"width": "900", "height": "900", "depth": "120"},
+        "dimensions_mm": {"height": "900", "width": "900", "depth": "120"},
         "metal_thickness_mm": "1.2",
         "shared_source_templates": ["ЩЭ-3кв", "ЩЭ-4кв", "ЩЭ-5кв", "ЩЭ-6кв"],
     }
     assert result["computed_formula_roles"] == {
-        "H82_width_m": "0.9",
-        "I82_height_m": "0.9",
+        "H82_height_m": "0.9",
+        "I82_width_m": "0.9",
         "J82_depth_m": "0.12",
         "K82_sheet_area_m2": "1.646156",
         "L82_metal_mass_kg": "16.632760224",
         "M82_metal_cost": "1663.276022400",
-        "N82_labor_cost": "218.9387480000",
+        "N82_paint_cost": "218.9387480000",
         "D82_base_cost": "9577",
     }
     assert result["base_cost"] == {
@@ -131,8 +132,49 @@ def test_checked_synthetic_workbook_resolves_without_modification(
         "rounding": "ROUNDUP_TO_INTEGER",
         "excluded_output_roles": ["B82", "C82"],
     }
+    assert result["source_provenance"]["source_cells"]["dimensions"] == {
+        "height": "E82",
+        "width": "F82",
+        "depth": "G82",
+    }
+    assert result["source_provenance"]["source_cells"]["unit_prices"] == {
+        "metal": "B2",
+        "paint": "B3",
+    }
+    assert result["checked_unit_prices"] == {
+        "B2_metal_unit_price": "100",
+        "B3_paint_unit_price": "200",
+    }
     assert result["source_provenance"]["excel_recalculation_executed"] is False
     assert sha256(workbook_path) == before
+
+
+def test_calculate_roles_preserves_asymmetric_height_width_semantics() -> None:
+    roles = resolver._calculate_roles(
+        height_mm=Decimal("800"),
+        width_mm=Decimal("600"),
+        depth_mm=Decimal("120"),
+        thickness=Decimal("1.2"),
+        metal_unit_price=Decimal("100"),
+        paint_unit_price=Decimal("200"),
+    )
+    expected_area = (Decimal("0.8") + Decimal("0.066")) * (
+        Decimal("0.6") + Decimal("0.066")
+    ) + Decimal("0.1") * (
+        (Decimal("0.8") - Decimal("0.01")) * Decimal("4")
+        + Decimal("0.6") * Decimal("2")
+        + Decimal("0.6")
+        - Decimal("0.09")
+        + Decimal("0.12") * Decimal("8")
+    )
+
+    assert roles["H82_height_m"] == Decimal("0.8")
+    assert roles["I82_width_m"] == Decimal("0.6")
+    assert roles["J82_depth_m"] == Decimal("0.12")
+    assert roles["K82_sheet_area_m2"] == expected_area
+    assert "H82_width_m" not in roles
+    assert "I82_height_m" not in roles
+    assert "N82_labor_cost" not in roles
 
 
 @pytest.mark.parametrize(

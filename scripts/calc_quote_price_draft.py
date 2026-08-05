@@ -104,6 +104,7 @@ class TechnicalSignature:
     residual_current_ma: int | None
     trip_curve: str | None
     install_type: str
+    breaking_capacity_ka: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,17 @@ def parse_positive_decimal(value: str) -> Decimal | None:
     return parsed
 
 
+def parse_breaking_capacity_ka(component_label: str) -> Decimal | None:
+    normalized = normalize_workbook_label(component_label)
+    if normalized is None:
+        return None
+    match = re.search(
+        r"\b(\d+(?:[.,]\d+)?)\s*[kк]\s*[aа]\b",
+        normalized.casefold(),
+    )
+    return Decimal(match.group(1).replace(",", ".")) if match is not None else None
+
+
 def parse_component_signature(
     component_label: str,
     install_type: str,
@@ -275,6 +287,7 @@ def parse_component_signature(
     if poles_match is None:
         return None
     poles = int(poles_match.group(1))
+    breaking_capacity = parse_breaking_capacity_ka(normalized)
 
     if install_type == "mccb_up_to_100a" and "автоматический выключатель" in folded:
         category = "mccb"
@@ -306,6 +319,7 @@ def parse_component_signature(
         residual_current_ma=residual_current,
         trip_curve=curve,
         install_type=install_type,
+        breaking_capacity_ka=breaking_capacity,
     )
 
 
@@ -448,7 +462,9 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
             if component_mapping is None:
                 legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
                 if (
-                    legacy_definition is None
+                    component_code == "EKF-AD32-1P-N"
+                    or parse_breaking_capacity_ka(component_label) is not None
+                    or legacy_definition is None
                     or legacy_definition.install_type != row["install_type"]
                     or cabinet_code not in CABINET_DEFINITIONS
                 ):
@@ -808,7 +824,7 @@ def calculate_price_draft(
                 rows[0].cabinet_code,
                 result,
             )
-    except OSError, ValueError:
+    except (OSError, ValueError):  # fmt: skip
         add_red_flag(result, "price workbook could not be opened safely")
         return result
     finally:

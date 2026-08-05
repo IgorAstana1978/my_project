@@ -1,8 +1,10 @@
 import csv
 import hashlib
 import importlib.util
+import py_compile
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -154,7 +156,7 @@ def technical_row(
     ]
 
 
-def test_approved_component_mappings_use_technical_signatures(tmp_path: Path) -> None:
+def test_approved_requests_003_009_016_remain_pass(tmp_path: Path) -> None:
     workbook_path = tmp_path / "approved.xlsx"
     write_approved_workbook(workbook_path)
     cases = (
@@ -206,6 +208,159 @@ def test_approved_component_mappings_use_technical_signatures(tmp_path: Path) ->
         assert result.status == "PASS"
         assert result.component_material_total == material
         assert result.work_total == work
+
+
+def test_breaking_capacity_variants_are_parsed_exactly() -> None:
+    for suffix in ("6кА", "6 кА", "6kA", "6 kA"):
+        signature = calculator.parse_component_signature(
+            f"CHINT, АВДТ 2P C16/30мА {suffix}",
+            "diff_1p_n",
+        )
+
+        assert signature is not None
+        assert signature.breaking_capacity_ka == Decimal("6")
+        assert calculator.resolve_component_mapping(signature) is None
+
+
+def test_explicit_6ka_without_approved_signature_fails_closed(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    monkeypatch.setitem(
+        calculator.COMPONENT_DEFINITIONS,
+        "TEST-RCBO",
+        calculator.ComponentDefinition(
+            workbook_label="УЗО АД-32 1Р+N до 63А EKF",
+            install_type="diff_1p_n",
+        ),
+    )
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="CAB-KRN-24",
+                component_code="TEST-RCBO",
+                install_type="diff_1p_n",
+                component_label="АВДТ 2P C16/30мА 6кА",
+                cabinet_label="КРН-24, 395×330×100 мм, металл",
+            )
+        ],
+    )
+
+    result = calculate(workbook_path, csv_path)
+
+    assert result.status == "FAIL"
+    assert result.total_preliminary_price is None
+    assert any(
+        "unknown or ambiguous technical component mapping" in flag
+        for flag in result.red_flags
+    )
+
+
+def test_explicit_6ka_blocks_fallback_when_full_signature_is_unparsed(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    monkeypatch.setitem(
+        calculator.COMPONENT_DEFINITIONS,
+        "TEST-RCBO",
+        calculator.ComponentDefinition(
+            workbook_label="УЗО АД-32 1Р+N до 63А EKF",
+            install_type="diff_1p_n",
+        ),
+    )
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="CAB-KRN-24",
+                component_code="TEST-RCBO",
+                install_type="diff_1p_n",
+                component_label="неразобранный аппарат 6 kA",
+                cabinet_label="КРН-24, 395×330×100 мм, металл",
+            )
+        ],
+    )
+
+    result = calculate(workbook_path, csv_path)
+
+    assert (
+        calculator.parse_component_signature(
+            "неразобранный аппарат 6 kA",
+            "diff_1p_n",
+        )
+        is None
+    )
+    assert result.status == "FAIL"
+    assert result.total_preliminary_price is None
+    assert any(
+        "unknown or ambiguous technical component mapping" in flag
+        for flag in result.red_flags
+    )
+
+
+def test_component_mapping_005_like_ad32_fallback_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="CAB-KRN-24",
+                component_code="EKF-AD32-1P-N",
+                install_type="diff_1p_n",
+                component_label="АВДТ 4P C16/100мА",
+                cabinet_label="КРН-24, 395×330×100 мм, металл",
+            )
+        ],
+    )
+
+    result = calculate(workbook_path, csv_path)
+
+    assert result.status == "FAIL"
+    assert result.total_preliminary_price is None
+    assert any(
+        "unknown or ambiguous technical component mapping" in flag
+        for flag in result.red_flags
+    )
+
+
+def test_component_mapping_012_like_ad32_fallback_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "approved.xlsx"
+    write_approved_workbook(workbook_path)
+    csv_path = tmp_path / "composition.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="CAB-KRN-24",
+                component_code="EKF-AD32-1P-N",
+                install_type="diff_1p_n",
+                component_label="АВДТ 2P C16/30мА 6кА",
+                cabinet_label="КРН-24, 395×330×100 мм, металл",
+            )
+        ],
+    )
+
+    result = calculate(workbook_path, csv_path)
+
+    assert result.status == "FAIL"
+    assert result.total_preliminary_price is None
+    assert any(
+        "unknown or ambiguous technical component mapping" in flag
+        for flag in result.red_flags
+    )
 
 
 def test_approved_cabinet_mappings_are_exact(tmp_path: Path) -> None:
@@ -523,6 +678,20 @@ def test_existing_workflows_remain_isolated_from_calculator() -> None:
     assert "make_quote_capacity100_commercial_checked.ps1" not in calculator_text
     assert "calc_quote_price_draft.py" not in technical_text
     assert "calc_quote_price_draft.py" not in commercial_text
+
+
+def test_calculator_has_portable_exception_syntax_and_compiles(
+    tmp_path: Path,
+) -> None:
+    py_compile.compile(
+        str(SCRIPT),
+        cfile=str(tmp_path / "calc_quote_price_draft.pyc"),
+        doraise=True,
+    )
+    calculator_text = SCRIPT.read_text(encoding="utf-8")
+
+    assert "except (OSError, ValueError):" in calculator_text
+    assert "except OSError, ValueError:" not in calculator_text
 
 
 def test_approved_component_definitions_are_exact() -> None:

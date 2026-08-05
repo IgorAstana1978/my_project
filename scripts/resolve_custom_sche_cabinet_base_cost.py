@@ -156,44 +156,46 @@ def _assert_decimal(sheet: Any, cell: str, expected: Decimal) -> Decimal:
 
 def _calculate_roles(
     *,
-    width_mm: Decimal,
     height_mm: Decimal,
+    width_mm: Decimal,
     depth_mm: Decimal,
     thickness: Decimal,
-    paint_rate: Decimal,
-    labor_rate: Decimal,
+    metal_unit_price: Decimal,
+    paint_unit_price: Decimal,
 ) -> dict[str, Decimal]:
-    width_m = width_mm / Decimal("1000")
     height_m = height_mm / Decimal("1000")
+    width_m = width_mm / Decimal("1000")
     depth_m = depth_mm / Decimal("1000")
-    area = (width_m + Decimal("0.066")) * (height_m + Decimal("0.066")) + (
+    area = (height_m + Decimal("0.066")) * (width_m + Decimal("0.066")) + (
         Decimal("0.1")
         * (
-            (width_m - Decimal("0.01")) * Decimal("4")
-            + height_m * Decimal("2")
-            + height_m
+            (height_m - Decimal("0.01")) * Decimal("4")
+            + width_m * Decimal("2")
+            + width_m
             - Decimal("0.09")
             + depth_m * Decimal("8")
         )
     )
     metal_mass = area * thickness * Decimal("8.42")
-    metal_cost = metal_mass * paint_rate
-    labor_cost = area * Decimal("2") * Decimal("0.25") * labor_rate * Decimal("1.33")
+    metal_cost = metal_mass * metal_unit_price
+    paint_cost = (
+        area * Decimal("2") * Decimal("0.25") * paint_unit_price * Decimal("1.33")
+    )
     base_cost = (
-        (metal_cost + labor_cost) * EXPECTED_MANUAL_INPUTS["R82"]
+        (metal_cost + paint_cost) * EXPECTED_MANUAL_INPUTS["R82"]
         + EXPECTED_MANUAL_INPUTS["O82"]
         + EXPECTED_MANUAL_INPUTS["P82"]
         + EXPECTED_MANUAL_INPUTS["S82"]
         + EXPECTED_Q82_VALUE
     ).quantize(Decimal("1"), rounding=ROUND_UP)
     return {
-        "H82_width_m": width_m,
-        "I82_height_m": height_m,
+        "H82_height_m": height_m,
+        "I82_width_m": width_m,
         "J82_depth_m": depth_m,
         "K82_sheet_area_m2": area,
         "L82_metal_mass_kg": metal_mass,
         "M82_metal_cost": metal_cost,
-        "N82_labor_cost": labor_cost,
+        "N82_paint_cost": paint_cost,
         "D82_base_cost": base_cost,
     }
 
@@ -230,18 +232,18 @@ def _resolve_checked_workbook(
             _assert_decimal(sheet, cell, expected)
         _assert_formula(sheet, "Q82", EXPECTED_Q82_FORMULA)
 
-        paint_rate = _decimal_from_numeric(sheet["B2"].value, cell="B2")
-        labor_rate = _decimal_from_numeric(sheet["B3"].value, cell="B3")
-        if paint_rate <= 0 or labor_rate <= 0:
+        metal_unit_price = _decimal_from_numeric(sheet["B2"].value, cell="B2")
+        paint_unit_price = _decimal_from_numeric(sheet["B3"].value, cell="B3")
+        if metal_unit_price <= 0 or paint_unit_price <= 0:
             raise ResolutionError("B2 and B3 must contain positive numeric values")
 
         roles = _calculate_roles(
-            width_mm=dimensions[0],
-            height_mm=dimensions[1],
+            height_mm=dimensions[0],
+            width_mm=dimensions[1],
             depth_mm=dimensions[2],
             thickness=thickness,
-            paint_rate=paint_rate,
-            labor_rate=labor_rate,
+            metal_unit_price=metal_unit_price,
+            paint_unit_price=paint_unit_price,
         )
         return {
             "schema_version": SCHEMA_VERSION,
@@ -252,8 +254,8 @@ def _resolve_checked_workbook(
                 "source_cabinet_label": APPROVED_SOURCE_LABEL,
                 "installation": "built_in",
                 "dimensions_mm": {
-                    "width": _decimal_text(dimensions[0]),
-                    "height": _decimal_text(dimensions[1]),
+                    "height": _decimal_text(dimensions[0]),
+                    "width": _decimal_text(dimensions[1]),
                     "depth": _decimal_text(dimensions[2]),
                 },
                 "metal_thickness_mm": _decimal_text(thickness),
@@ -266,8 +268,15 @@ def _resolve_checked_workbook(
                 "row": APPROVED_ROW,
                 "source_cells": {
                     "label": "A82",
-                    "dimensions": ["E82", "F82", "G82"],
-                    "global_rates": ["B2", "B3"],
+                    "dimensions": {
+                        "height": "E82",
+                        "width": "F82",
+                        "depth": "G82",
+                    },
+                    "unit_prices": {
+                        "metal": "B2",
+                        "paint": "B3",
+                    },
                     "formulas": list(EXPECTED_FORMULAS),
                     "manual_inputs": ["O82", "P82", "Q82", "R82", "S82"],
                 },
@@ -284,9 +293,9 @@ def _resolve_checked_workbook(
                     "resolved_constant": _decimal_text(EXPECTED_Q82_VALUE),
                 },
             },
-            "checked_global_rates": {
-                "B2": _decimal_text(paint_rate),
-                "B3": _decimal_text(labor_rate),
+            "checked_unit_prices": {
+                "B2_metal_unit_price": _decimal_text(metal_unit_price),
+                "B3_paint_unit_price": _decimal_text(paint_unit_price),
             },
             "computed_formula_roles": {
                 cell_role: _decimal_text(value) for cell_role, value in roles.items()
