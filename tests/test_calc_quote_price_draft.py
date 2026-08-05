@@ -119,6 +119,12 @@ def write_approved_workbook(path: Path) -> None:
     krn["A14"] = "ВН-32 3Р 16-25-40-63-80-100А"
     krn["B14"] = 2750
     krn["C14"] = 540
+    krn["A28"] = "УЗО АД-32 1Р+N до 63А 100мА-300мА EKF "
+    krn["B28"] = 8000
+    krn["C28"] = 432
+    krn["A29"] = "УЗО АД-32 3Р+N до 63А 100мА-300мА EKF"
+    krn["B29"] = 10000
+    krn["C29"] = 540
 
     shr = workbook.create_sheet("ЩР")
     shr["A8"] = "ВА55/57/59, АМ1  3 полюсные от 16 до 63А"
@@ -154,6 +160,40 @@ def technical_row(
         component_label,
         cabinet_label,
     ]
+
+
+def calculate_mapping_case(
+    tmp_path: Path,
+    *,
+    case_name: str,
+    component_code: str,
+    install_type: str,
+    component_label: str,
+    workbook_changes: dict[str, Any] | None = None,
+) -> Any:
+    workbook_path = tmp_path / f"{case_name}.xlsx"
+    write_approved_workbook(workbook_path)
+    if workbook_changes:
+        workbook = load_workbook(workbook_path)
+        worksheet = workbook["КРН"]
+        for coordinate, value in workbook_changes.items():
+            worksheet[coordinate] = value
+        workbook.save(workbook_path)
+        workbook.close()
+    csv_path = tmp_path / f"{case_name}.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                cabinet_code="КРН-36",
+                component_code=component_code,
+                install_type=install_type,
+                component_label=component_label,
+                cabinet_label="КРН-36, 540×330×100 мм, металл",
+            )
+        ],
+    )
+    return calculate(workbook_path, csv_path)
 
 
 def test_approved_requests_003_009_016_remain_pass(tmp_path: Path) -> None:
@@ -334,33 +374,175 @@ def test_component_mapping_005_like_ad32_fallback_fails_closed(
     )
 
 
-def test_component_mapping_012_like_ad32_fallback_fails_closed(
+def test_component_mapping_012_passes_for_approved_code_and_6ka_variants(
     tmp_path: Path,
 ) -> None:
-    workbook_path = tmp_path / "approved.xlsx"
-    write_approved_workbook(workbook_path)
-    csv_path = tmp_path / "composition.csv"
-    write_technical_csv(
-        csv_path,
-        [
-            technical_row(
-                cabinet_code="CAB-KRN-24",
-                component_code="EKF-AD32-1P-N",
-                install_type="diff_1p_n",
-                component_label="АВДТ 2P C16/30мА 6кА",
-                cabinet_label="КРН-24, 395×330×100 мм, металл",
-            )
-        ],
+    labels = (
+        "АД12, 2P, C16, 30мА, 6кА",
+        "АВДТ 2P C16/30мА 6 кА",
+        "АВДТ 2P C16/30мА 6kA",
+        "АВДТ 2P C16/30мА 6 kA",
+    )
+    for index, label in enumerate(labels):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"mapping-012-pass-{index}",
+            component_code="EKF-AD32-1P-N",
+            install_type="diff_1p_n",
+            component_label=label,
+        )
+
+        assert result.status == "PASS"
+        assert result.component_material_total == 4100
+        assert result.work_total == 432
+
+
+def test_component_mapping_012_rejects_wrong_code_or_signature(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        ("WRONG-CODE", "АВДТ 2P C16/30мА 6кА"),
+        ("EKF-AD32-1P-N", "АВДТ 2P C16/30мА 10кА"),
+        ("EKF-AD32-1P-N", "АВДТ 2P C16/100мА 6кА"),
+        ("EKF-AD32-1P-N", "АВДТ 2P C20/30мА 6кА"),
+        ("EKF-AD32-1P-N", "АВДТ 4P C16/30мА 6кА"),
+    )
+    for index, (code, label) in enumerate(cases):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"mapping-012-fail-signature-{index}",
+            component_code=code,
+            install_type="diff_1p_n",
+            component_label=label,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("unknown or ambiguous" in flag for flag in result.red_flags)
+
+
+def test_component_mapping_012_rejects_workbook_drift(tmp_path: Path) -> None:
+    changes: tuple[dict[str, Any], ...] = (
+        {"A5": "УЗО АД-32 1Р+N до 63А EKF "},
+        {"B5": 4101},
+        {"C5": 433},
+    )
+    for index, workbook_changes in enumerate(changes):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"mapping-012-fail-workbook-{index}",
+            component_code="EKF-AD32-1P-N",
+            install_type="diff_1p_n",
+            component_label="АД12, 2P, C16, 30мА, 6кА",
+            workbook_changes=workbook_changes,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("approved component mapping" in flag for flag in result.red_flags)
+
+
+def test_component_mapping_005_passes_only_exact_approved_path(
+    tmp_path: Path,
+) -> None:
+    signature = calculator.parse_component_signature(
+        "АВДТ-34, 4P, C16, 100мА",
+        "diff_3p_4p",
+    )
+    assert signature is not None
+    mapping = calculator.resolve_component_mapping(
+        signature,
+        "EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+    )
+    assert mapping is not None
+    assert (mapping.sheet_name, mapping.row) == ("КРН", 28)
+
+    result = calculate_mapping_case(
+        tmp_path,
+        case_name="mapping-005-pass",
+        component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+        install_type="diff_3p_4p",
+        component_label="АВДТ-34, 4P, C16, 100мА",
     )
 
-    result = calculate(workbook_path, csv_path)
+    assert result.status == "PASS"
+    assert result.component_material_total == 8000
+    assert result.work_total == 432
+
+
+def test_component_mapping_005_rejects_wrong_code_or_signature(
+    tmp_path: Path,
+) -> None:
+    approved_code = "EKF-AVDT63N-3P-N-C16-100MA-6KA-S"
+    cases = (
+        ("WRONG-CODE", "diff_3p_4p", "АВДТ-34, 4P, C16, 100мА"),
+        (approved_code, "diff_3p_4p", "АВДТ-34, 4P, C20, 100мА"),
+        (approved_code, "diff_3p_4p", "АВДТ-34, 4P, C16, 30мА"),
+        (approved_code, "diff_3p_4p", "АВДТ-34, 2P, C16, 100мА"),
+        (approved_code, "diff_1p_n", "АВДТ-34, 4P, C16, 100мА"),
+    )
+    for index, (code, install_type, label) in enumerate(cases):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"mapping-005-fail-signature-{index}",
+            component_code=code,
+            install_type=install_type,
+            component_label=label,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("unknown or ambiguous" in flag for flag in result.red_flags)
+
+
+def test_component_mapping_005_rejects_row_28_drift_or_absence(
+    tmp_path: Path,
+) -> None:
+    changes: tuple[dict[str, Any], ...] = (
+        {"A28": "УЗО АД-32 1Р+N до 63А 100мА-300мА EKF"},
+        {"B28": 8001},
+        {"C28": 433},
+        {"A28": None, "B28": None, "C28": None},
+    )
+    for index, workbook_changes in enumerate(changes):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"mapping-005-fail-workbook-{index}",
+            component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+            install_type="diff_3p_4p",
+            component_label="АВДТ-34, 4P, C16, 100мА",
+            workbook_changes=workbook_changes,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("approved component mapping" in flag for flag in result.red_flags)
+
+
+def test_component_mapping_005_cannot_use_row_29_or_legacy_fallback(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setitem(
+        calculator.COMPONENT_DEFINITIONS,
+        "LEGACY-AVDT",
+        calculator.ComponentDefinition(
+            workbook_label="УЗО АД-32 3Р+N до 63А 100мА-300мА EKF",
+            install_type="diff_3p_4p",
+        ),
+    )
+    result = calculate_mapping_case(
+        tmp_path,
+        case_name="mapping-005-row-29-and-legacy",
+        component_code="LEGACY-AVDT",
+        install_type="diff_3p_4p",
+        component_label="АВДТ-34, 4P, C16, 100мА",
+        workbook_changes={"A28": None, "B28": None, "C28": None},
+    )
 
     assert result.status == "FAIL"
     assert result.total_preliminary_price is None
-    assert any(
-        "unknown or ambiguous technical component mapping" in flag
-        for flag in result.red_flags
-    )
+    assert any("unknown or ambiguous" in flag for flag in result.red_flags)
 
 
 def test_approved_cabinet_mappings_are_exact(tmp_path: Path) -> None:
@@ -740,9 +922,26 @@ def test_seven_approved_templates_share_one_krn_12_code() -> None:
     } == {template: "CAB-KRN-12" for template in templates}
 
 
-def test_unresolved_component_requests_remain_blocked() -> None:
-    assert calculator.UNRESOLVED_COMPONENT_MAPPING_REQUESTS == {
-        "COMPONENT-MAPPING-005": "UNRESOLVED_EXACT_RCBO_OR_EQUIVALENT_REQUIRED",
-        "COMPONENT-MAPPING-012": "UNRESOLVED_BREAKING_CAPACITY_NOT_APPROVED",
+def test_resolved_component_requests_have_exact_provenance() -> None:
+    assert calculator.UNRESOLVED_COMPONENT_MAPPING_REQUESTS == {}
+    assert calculator.PRICING_DECISION_ARTIFACT_SHA256 == (
+        "777faed80c8ef92782378dd2a788160af8ad2252d8cb4f539560f15657a1d96e"
+    )
+    assert calculator.RESOLVED_COMPONENT_MAPPING_PROVENANCE == {
+        "COMPONENT-MAPPING-005": {
+            "article": "D63N46ES16C100",
+            "component_code": "EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+            "pricing_decision_artifact_sha256": (
+                calculator.PRICING_DECISION_ARTIFACT_SHA256
+            ),
+        },
+        "COMPONENT-MAPPING-012": {
+            "article": "DA32-6-16-30-ac-pro",
+            "component_code": "EKF-AD32-1P-N",
+            "pricing_decision_artifact_sha256": (
+                calculator.PRICING_DECISION_ARTIFACT_SHA256
+            ),
+        },
     }
     assert calculator.COMPONENT_DEFINITIONS["EKF-AD32-1P-N"].install_type == "diff_1p_n"
+    assert "EKF-AVDT63N-3P-N-C16-100MA-6KA-S" not in calculator.COMPONENT_DEFINITIONS

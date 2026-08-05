@@ -90,10 +90,23 @@ CABINET_SOURCE_TEMPLATE_CODES = {
     "ЩО-3Ж": "CAB-KRN-12",
     "ЩС": "CAB-KRN-24",
 }
-UNRESOLVED_COMPONENT_MAPPING_REQUESTS = {
-    "COMPONENT-MAPPING-005": "UNRESOLVED_EXACT_RCBO_OR_EQUIVALENT_REQUIRED",
-    "COMPONENT-MAPPING-012": "UNRESOLVED_BREAKING_CAPACITY_NOT_APPROVED",
+UNRESOLVED_COMPONENT_MAPPING_REQUESTS: dict[str, str] = {}
+PRICING_DECISION_ARTIFACT_SHA256 = (
+    "777faed80c8ef92782378dd2a788160af8ad2252d8cb4f539560f15657a1d96e"
+)
+RESOLVED_COMPONENT_MAPPING_PROVENANCE = {
+    "COMPONENT-MAPPING-005": {
+        "article": "D63N46ES16C100",
+        "component_code": "EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+        "pricing_decision_artifact_sha256": PRICING_DECISION_ARTIFACT_SHA256,
+    },
+    "COMPONENT-MAPPING-012": {
+        "article": "DA32-6-16-30-ac-pro",
+        "component_code": "EKF-AD32-1P-N",
+        "pricing_decision_artifact_sha256": PRICING_DECISION_ARTIFACT_SHA256,
+    },
 }
+APPROVED_MAPPING_005_SOURCE_LABELS = ("АВДТ-34, 4P, C16, 100мА",)
 
 
 @dataclass(frozen=True)
@@ -115,6 +128,8 @@ class ApprovedComponentPriceMapping:
     expected_label: str
     expected_material_price: int
     expected_work_price: int
+    component_code: str | None = None
+    strict_raw_label: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +182,34 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         "ВН-32 3Р 16-25-40-63-80-100А",
         2750,
         540,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature(
+            "rcbo",
+            2,
+            16,
+            30,
+            "C",
+            "diff_1p_n",
+            Decimal("6"),
+        ),
+        "КРН",
+        5,
+        "УЗО АД-32 1Р+N до 63А EKF",
+        4100,
+        432,
+        component_code="EKF-AD32-1P-N",
+        strict_raw_label=True,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature("rcbo", 4, 16, 100, "C", "diff_3p_4p"),
+        "КРН",
+        28,
+        "УЗО АД-32 1Р+N до 63А 100мА-300мА EKF ",
+        8000,
+        432,
+        component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+        strict_raw_label=True,
     ),
 )
 
@@ -294,10 +337,20 @@ def parse_component_signature(
         rating_match = re.search(r"\b(\d+)\s*а\b", folded)
         curve = None
         residual_current = None
-    elif install_type == "diff_1p_n" and "авдт" in folded:
+    elif install_type == "diff_1p_n" and ("авдт" in folded or "ад12" in folded):
         category = "rcbo"
         rating_match = re.search(r"\bc\s*(\d+)\b", folded)
-        residual_match = re.search(r"/\s*(\d+)\s*ма\b", folded)
+        residual_match = re.search(r"(?:/|,)\s*(\d+)\s*ма\b", folded)
+        if residual_match is None:
+            return None
+        curve = "C"
+        residual_current = int(residual_match.group(1))
+    elif install_type == "diff_3p_4p" and normalized in (
+        APPROVED_MAPPING_005_SOURCE_LABELS
+    ):
+        category = "rcbo"
+        rating_match = re.search(r"\bc\s*(\d+)\b", folded)
+        residual_match = re.search(r",\s*(\d+)\s*ма\b", folded)
         if residual_match is None:
             return None
         curve = "C"
@@ -347,13 +400,22 @@ def parse_cabinet_signature(
 
 def resolve_component_mapping(
     signature: TechnicalSignature,
+    component_code: str | None = None,
 ) -> ApprovedComponentPriceMapping | None:
     matches = [
         mapping
         for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
         if mapping.signature == signature
+        and (mapping.component_code is None or mapping.component_code == component_code)
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def signature_requires_component_code(signature: TechnicalSignature) -> bool:
+    return any(
+        mapping.signature == signature and mapping.component_code is not None
+        for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
+    )
 
 
 def resolve_cabinet_mapping(
@@ -455,7 +517,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 row["install_type"],
             )
             component_mapping = (
-                resolve_component_mapping(component_signature)
+                resolve_component_mapping(component_signature, component_code)
                 if component_signature is not None
                 else None
             )
@@ -463,6 +525,10 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
                 if (
                     component_code == "EKF-AD32-1P-N"
+                    or (
+                        component_signature is not None
+                        and signature_requires_component_code(component_signature)
+                    )
                     or parse_breaking_capacity_ka(component_label) is not None
                     or legacy_definition is None
                     or legacy_definition.install_type != row["install_type"]
@@ -599,8 +665,15 @@ def read_approved_component_price(
     worksheet = mapping_worksheet(workbook, mapping.sheet_name, result)
     if worksheet is None:
         return None
-    actual_label = normalize_workbook_label(worksheet.cell(mapping.row, 1).value)
-    expected_label = normalize_workbook_label(mapping.expected_label)
+    raw_label = worksheet.cell(mapping.row, 1).value
+    actual_label = (
+        raw_label if mapping.strict_raw_label else normalize_workbook_label(raw_label)
+    )
+    expected_label = (
+        mapping.expected_label
+        if mapping.strict_raw_label
+        else normalize_workbook_label(mapping.expected_label)
+    )
     if actual_label != expected_label:
         add_red_flag(
             result,
