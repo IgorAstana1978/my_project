@@ -902,7 +902,9 @@ def test_approved_regular_cabinet_definitions_are_exact() -> None:
     assert calculator.CABINET_DEFINITIONS["CAB-KRN-18"] == ("Корпус КРН-18 265х440х100")
     assert calculator.CABINET_DEFINITIONS["CAB-KRN-12"] == ("Корпус КРН-12 265х330х100")
     assert calculator.CABINET_DEFINITIONS["CAB-KRN-24"] == ("Корпус КРН-24 395х330х100")
-    assert "CAB-SCHE-BI-900X900X120-M12" not in calculator.CABINET_DEFINITIONS
+    assert calculator.CABINET_DEFINITIONS["CAB-SCHE-BI-900X900X120-M12"] == (
+        "Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"
+    )
 
 
 def test_seven_approved_templates_share_one_krn_12_code() -> None:
@@ -942,6 +944,142 @@ def test_resolved_component_requests_have_exact_provenance() -> None:
                 calculator.PRICING_DECISION_ARTIFACT_SHA256
             ),
         },
+        "COMPONENT-MAPPING-009": {
+            "article": "DA12-16-30-bas",
+            "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "human_decision_artifact_sha256": (
+                "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
+            ),
+        },
+        "COMPONENT-MAPPING-016": {
+            "article": "DA12-16-30-bas",
+            "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "human_decision_artifact_sha256": (
+                "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
+            ),
+        },
     }
     assert calculator.COMPONENT_DEFINITIONS["EKF-AD32-1P-N"].install_type == "diff_1p_n"
+    assert (
+        calculator.COMPONENT_DEFINITIONS["EKF-AD12-1P-N-C16-30MA-4P5KA"].install_type
+        == "diff_1p_n"
+    )
+    assert (
+        calculator.COMPONENT_DEFINITIONS["EKF-AD12-1P-N-C16-30MA-4P5KA"].workbook_label
+        is None
+    )
     assert "EKF-AVDT63N-3P-N-C16-100MA-6KA-S" not in calculator.COMPONENT_DEFINITIONS
+
+
+def test_modular_technical_labels_with_breaking_capacity_parse_explicitly() -> None:
+    cases = (
+        (
+            "Автоматический выключатель ВА47 1Р 20А — 2шт., C, 6кА",
+            "modular_1p",
+            "EKF-VA47-29-1P",
+            1,
+            20,
+        ),
+        (
+            "Выключатель автоматический ВА47-63(C) 2Р 63/10A; 1шт, 6кА",
+            "modular_2p",
+            "EKF-VA47-29-2P",
+            2,
+            10,
+        ),
+        (
+            "Автоматический выключатель ВА47 3Р 16А — 3шт., C, 6кА",
+            "modular_3p",
+            "EKF-VA47-29-3P",
+            3,
+            16,
+        ),
+    )
+
+    for label, install_type, code, poles, rating in cases:
+        signature = calculator.parse_component_signature(label, install_type)
+        assert signature == calculator.TechnicalSignature(
+            "mcb",
+            poles,
+            rating,
+            None,
+            "C",
+            install_type,
+            Decimal("6"),
+        )
+        assert calculator.technical_component_definition_matches(
+            signature,
+            code,
+            install_type,
+        )
+
+
+def test_ad12_45ka_mapping_is_distinct_and_exact() -> None:
+    label = "Дифференциальный автомат АД12 2Р 16А, 30мА — 1шт., C, 4,5кА"
+    signature = calculator.parse_component_signature(label, "diff_1p_n")
+
+    assert signature == calculator.TechnicalSignature(
+        "rcbo",
+        2,
+        16,
+        30,
+        "C",
+        "diff_1p_n",
+        Decimal("4.5"),
+    )
+    assert calculator.technical_component_definition_matches(
+        signature,
+        "EKF-AD12-1P-N-C16-30MA-4P5KA",
+        "diff_1p_n",
+    )
+    assert not calculator.technical_component_definition_matches(
+        signature,
+        "EKF-AD32-1P-N",
+        "diff_1p_n",
+    )
+
+
+def test_five_approved_cabinet_technical_labels_are_exact() -> None:
+    assert calculator.CABINET_TECHNICAL_LABELS == {
+        "CAB-KURN-038-24": "Корпус КУРН-0,38-24 540×490×170 мм, металл",
+        "CAB-KRN-18": "Корпус КРН-18 265×440×100 мм, металл",
+        "CAB-KRN-12": "Корпус КРН-12 265×330×100 мм, металл",
+        "CAB-KRN-24": "Корпус КРН-24 395×330×100 мм, металл",
+        "CAB-SCHE-BI-900X900X120-M12": ("Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"),
+    }
+    assert all(
+        calculator.technical_cabinet_definition_matches(code, label)
+        for code, label in calculator.CABINET_TECHNICAL_LABELS.items()
+    )
+
+
+def test_custom_sche_uses_checked_base_cost_without_price_row(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "prices.xlsx"
+    write_workbook(workbook_path)
+    csv_path = tmp_path / "sche.csv"
+    write_technical_csv(
+        csv_path,
+        [
+            technical_row(
+                product_name="ЩЭ-3кв",
+                cabinet_code="CAB-SCHE-BI-900X900X120-M12",
+                component_code="EKF-VA47-29-1P",
+                install_type="modular_1p",
+                component_label=(
+                    "Автоматический выключатель ВА47 1Р 20А — 1шт., C, 6кА"
+                ),
+                cabinet_label=("Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"),
+            )
+        ],
+    )
+
+    result = calculator.calculate_price_draft(
+        workbook_path,
+        csv_path,
+        custom_cabinet_base_cost=10000,
+    )
+
+    assert result.status == "PASS"
+    assert result.cabinet_price == 10000

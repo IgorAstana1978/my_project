@@ -21,6 +21,9 @@ VALIDATOR_PATH = Path(__file__).with_name(
     "validate_completed_price_calculator_input_draft.py"
 )
 CALCULATOR_PATH = Path(__file__).with_name("calc_quote_price_draft.py")
+CUSTOM_SCHE_RESOLVER_PATH = Path(__file__).with_name(
+    "resolve_custom_sche_cabinet_base_cost.py"
+)
 
 REPORT_START = "CHECKED_PRICE_CALCULATOR_RUN_REPORT_START"
 REPORT_END = "CHECKED_PRICE_CALCULATOR_RUN_REPORT_END"
@@ -45,6 +48,10 @@ TECHNICAL_CALCULATOR_COLUMNS = CALCULATOR_COLUMNS + (
     "component_label",
     "cabinet_label",
 )
+V02_SCHEMA_VERSION = "price_calculator_input_draft.v0.2"
+CUSTOM_SCHE_CABINET_CODE = "CAB-SCHE-BI-900X900X120-M12"
+CUSTOM_SCHE_PRODUCT_NAMES = ("ЩЭ-3кв", "ЩЭ-4кв", "ЩЭ-5кв", "ЩЭ-6кв")
+CUSTOM_SCHE_CABINET_LABEL = "Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"
 CALCULATOR_SUMMARY_KEYS = (
     "Status",
     "Mode",
@@ -98,6 +105,7 @@ class CheckedRunResult:
         default_factory=lambda: {
             "completed input validation": "fail",
             "CSV bridge": "fail",
+            "custom ЩЭ resolver": "pass",
             "calculator execution": "fail",
             "temp cleanup": "pass",
             "safety boundary": "fail",
@@ -124,6 +132,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--completed-input-json", required=True, type=Path)
     parser.add_argument("--price-workbook", required=True, type=Path)
+    parser.add_argument("--custom-sche-metal-workbook", type=Path)
     return parser.parse_args(argv)
 
 
@@ -318,6 +327,111 @@ def split_item_inputs(
     return item_inputs
 
 
+def split_v02_item_inputs(
+    data: Mapping[str, Any],
+    result: CheckedRunResult,
+) -> list[ItemCalculatorInput]:
+    calculator_format = data.get("calculator_input_format")
+    cabinet_groups = data.get("cabinet_groups")
+    if not isinstance(calculator_format, Mapping) or not isinstance(
+        cabinet_groups, list
+    ):
+        add_red_flag(result, "v0.2 calculator/cabinet groups are invalid")
+        return []
+    if calculator_format.get("columns") != list(CALCULATOR_COLUMNS):
+        add_red_flag(result, "calculator columns do not match calculator contract")
+        return []
+    row_drafts = calculator_format.get("row_drafts")
+    if not isinstance(row_drafts, list) or not row_drafts:
+        add_red_flag(result, "v0.2 row_drafts must be a non-empty list")
+        return []
+
+    row_index: dict[str, Mapping[str, Any]] = {}
+    for raw_row in row_drafts:
+        if not isinstance(raw_row, Mapping):
+            add_red_flag(result, "v0.2 row draft must be an object")
+            return []
+        row_id = raw_row.get("row_id")
+        if not isinstance(row_id, str) or row_id in row_index:
+            add_red_flag(result, "v0.2 row draft IDs must be unique strings")
+            return []
+        row_index[row_id] = cast(Mapping[str, Any], raw_row)
+
+    item_inputs: list[ItemCalculatorInput] = []
+    used_rows: set[str] = set()
+    group_ids: set[str] = set()
+    for raw_group in cabinet_groups:
+        if not isinstance(raw_group, Mapping):
+            add_red_flag(result, "v0.2 cabinet group must be an object")
+            return []
+        group_id = raw_group.get("cabinet_group_id")
+        product_name = raw_group.get("product_name")
+        cabinet_code = raw_group.get("cabinet_code")
+        cabinet_label = raw_group.get("cabinet_label")
+        row_ids = raw_group.get("row_draft_ids")
+        if (
+            not isinstance(group_id, str)
+            or group_id in group_ids
+            or not isinstance(product_name, str)
+            or not isinstance(cabinet_code, str)
+            or not isinstance(cabinet_label, str)
+            or not isinstance(row_ids, list)
+            or not row_ids
+        ):
+            add_red_flag(result, "v0.2 cabinet group identity is invalid")
+            return []
+        group_ids.add(group_id)
+        if cabinet_code == CUSTOM_SCHE_CABINET_CODE and (
+            product_name not in CUSTOM_SCHE_PRODUCT_NAMES
+            or cabinet_label != CUSTOM_SCHE_CABINET_LABEL
+            or raw_group.get("consumables_factor") != 1.2
+        ):
+            add_red_flag(result, f"custom ЩЭ identity mismatch for {group_id}")
+            return []
+
+        enhanced_rows: list[dict[str, Any]] = []
+        for raw_row_id in row_ids:
+            if not isinstance(raw_row_id, str) or raw_row_id in used_rows:
+                add_red_flag(result, f"v0.2 duplicate row membership for {group_id}")
+                return []
+            row = row_index.get(raw_row_id)
+            if row is None or row.get("cabinet_group_id") != group_id:
+                add_red_flag(result, f"v0.2 row routing mismatch for {raw_row_id}")
+                return []
+            values = row.get("calculator_values")
+            component_label = row.get("component_label")
+            if not isinstance(values, Mapping) or not isinstance(component_label, str):
+                add_red_flag(result, f"v0.2 row completion mismatch for {raw_row_id}")
+                return []
+            try:
+                enhanced = {column: values[column] for column in CALCULATOR_COLUMNS}
+            except KeyError as exc:
+                add_red_flag(result, f"v0.2 row is missing column: {exc.args[0]}")
+                return []
+            if (
+                enhanced["product_name"] != product_name
+                or enhanced["cabinet_code"] != cabinet_code
+                or enhanced["consumables_factor"] != raw_group.get("consumables_factor")
+            ):
+                add_red_flag(result, f"v0.2 row/group audit mismatch for {raw_row_id}")
+                return []
+            enhanced["component_label"] = component_label
+            enhanced["cabinet_label"] = cabinet_label
+            enhanced_rows.append(enhanced)
+            used_rows.add(raw_row_id)
+        item_inputs.append(
+            ItemCalculatorInput(
+                product_name=product_name,
+                cabinet_code=cabinet_code,
+                rows=enhanced_rows,
+            )
+        )
+    if used_rows != set(row_index):
+        add_red_flag(result, "v0.2 rows are not assigned to exactly one cabinet group")
+        return []
+    return item_inputs
+
+
 def create_csv_bridge(
     item_input: ItemCalculatorInput,
     result: CheckedRunResult,
@@ -365,22 +479,60 @@ def create_csv_bridge(
     return temp_path
 
 
+def load_custom_sche_resolver_module() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "resolve_custom_sche_cabinet_base_cost_for_checked_runner",
+        CUSTOM_SCHE_RESOLVER_PATH,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("custom ЩЭ resolver could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def resolve_custom_sche_base_cost(metal_workbook: Path) -> int:
+    resolver = load_custom_sche_resolver_module()
+    resolution = resolver.resolve_custom_sche_cabinet_base_cost(
+        metal_workbook_path=resolved(metal_workbook),
+        expected_workbook_sha256=resolver.APPROVED_WORKBOOK_SHA256,
+        internal_cabinet_code=resolver.APPROVED_INTERNAL_CABINET_CODE,
+        metal_thickness=str(resolver.APPROVED_METAL_THICKNESS),
+        expected_sheet=resolver.APPROVED_SHEET,
+        expected_row=resolver.APPROVED_ROW,
+    )
+    if resolution.get("status") != "CUSTOM_SCHE_BASE_COST_RESOLUTION_VALIDATED":
+        raise RuntimeError("custom ЩЭ resolver failed closed")
+    base_cost = resolution.get("base_cost")
+    if not isinstance(base_cost, Mapping):
+        raise RuntimeError("custom ЩЭ resolver base_cost is missing")
+    value = base_cost.get("value")
+    if not isinstance(value, str) or not value.isdigit() or int(value) <= 0:
+        raise RuntimeError("custom ЩЭ resolver base_cost is invalid")
+    return int(value)
+
+
 def run_calculator_cli(
     price_workbook: Path,
     input_csv: Path,
+    custom_cabinet_base_cost: int | None = None,
 ) -> CalculatorProcessResult:
     child_env = os.environ.copy()
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
+    command = [
+        sys.executable,
+        str(CALCULATOR_PATH),
+        "--price-workbook",
+        str(price_workbook),
+        "--input-csv",
+        str(input_csv),
+    ]
+    if custom_cabinet_base_cost is not None:
+        command.extend(["--custom-cabinet-base-cost", str(custom_cabinet_base_cost)])
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(CALCULATOR_PATH),
-            "--price-workbook",
-            str(price_workbook),
-            "--input-csv",
-            str(input_csv),
-        ],
+        command,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -430,9 +582,18 @@ def execute_calculator(
     result: CheckedRunResult,
     item_input: ItemCalculatorInput,
     input_csv: Path,
+    custom_cabinet_base_cost: int | None = None,
 ) -> bool:
     try:
-        process_result = run_calculator_cli(result.price_workbook, input_csv)
+        process_result = (
+            run_calculator_cli(result.price_workbook, input_csv)
+            if custom_cabinet_base_cost is None
+            else run_calculator_cli(
+                result.price_workbook,
+                input_csv,
+                custom_cabinet_base_cost=custom_cabinet_base_cost,
+            )
+        )
     except OSError:
         add_red_flag(result, "calculator invocation failed")
         return False
@@ -512,6 +673,7 @@ def cleanup_temp_csv(result: CheckedRunResult) -> None:
 def run_checked_price_calculator_from_completed_draft(
     completed_input_json: Path,
     price_workbook: Path,
+    custom_sche_metal_workbook: Path | None = None,
 ) -> CheckedRunResult:
     result = CheckedRunResult(
         completed_input_json=resolved(completed_input_json),
@@ -525,9 +687,27 @@ def run_checked_price_calculator_from_completed_draft(
         data = load_completed_input_json(result)
         if data is None:
             return result
-        item_inputs = split_item_inputs(data, result)
+        item_inputs = (
+            split_v02_item_inputs(data, result)
+            if data.get("schema_version") == V02_SCHEMA_VERSION
+            else split_item_inputs(data, result)
+        )
         if not item_inputs:
             return result
+        custom_base_cost: int | None = None
+        if any(item.cabinet_code == CUSTOM_SCHE_CABINET_CODE for item in item_inputs):
+            if custom_sche_metal_workbook is None:
+                result.checks["custom ЩЭ resolver"] = "fail"
+                add_red_flag(result, "custom ЩЭ metal workbook is required")
+                return result
+            try:
+                custom_base_cost = resolve_custom_sche_base_cost(
+                    custom_sche_metal_workbook
+                )
+            except (OSError, RuntimeError):  # fmt: skip
+                result.checks["custom ЩЭ resolver"] = "fail"
+                add_red_flag(result, "custom ЩЭ resolver failed closed")
+                return result
         all_bridges_created = True
         all_calculators_passed = True
         for item_input in item_inputs:
@@ -536,7 +716,17 @@ def run_checked_price_calculator_from_completed_draft(
                 all_bridges_created = False
                 all_calculators_passed = False
                 break
-            if not execute_calculator(result, item_input, temp_csv):
+            item_custom_base_cost = (
+                custom_base_cost
+                if item_input.cabinet_code == CUSTOM_SCHE_CABINET_CODE
+                else None
+            )
+            if not execute_calculator(
+                result,
+                item_input,
+                temp_csv,
+                custom_cabinet_base_cost=item_custom_base_cost,
+            ):
                 all_calculators_passed = False
                 break
         if all_bridges_created and len(result.temp_csv_paths) == len(item_inputs):
@@ -672,6 +862,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = run_checked_price_calculator_from_completed_draft(
         args.completed_input_json,
         args.price_workbook,
+        custom_sche_metal_workbook=args.custom_sche_metal_workbook,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

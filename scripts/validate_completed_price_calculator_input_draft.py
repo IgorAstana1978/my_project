@@ -22,6 +22,7 @@ HUMAN_APPROVAL = (
 )
 
 SCHEMA_VERSION = "price_calculator_input_draft.v0.1"
+SCHEMA_VERSION_V02 = "price_calculator_input_draft.v0.2"
 DRAFT_TYPE = "price_calculator_input_draft"
 CALCULATOR_KIND = "confirmed_composition_csv_rows"
 CALCULATOR_DELIMITER = ";"
@@ -82,6 +83,11 @@ INSTALL_TYPES = {
     "mccb_125_250a",
     "mccb_400a_plus",
 }
+V02_COMPLETED_MAPPING_STATUS = "APPROVED_HUMAN_DECISIONS_APPLIED"
+V02_COMPLETION_STATUS = "V02_TECHNICAL_COMPLETION_APPLIED_NOT_PRICED"
+V02_EXPECTED_COMPONENT_GROUPS = 31
+V02_EXPECTED_ROWS = 109
+V02_EXPECTED_CABINET_GROUPS = 14
 FORBIDDEN_KEYS = {
     "price_confirmed_by_igor",
     "price_includes_vat",
@@ -522,6 +528,187 @@ def validate_rows(
     result.checks["rows"] = "pass" if valid else "fail"
 
 
+def validate_v02_completed_payload(
+    data: Mapping[str, Any],
+    result: ValidationResult,
+) -> None:
+    root_fields = {
+        "schema_version",
+        "draft_type",
+        "source",
+        "cabinet_groups",
+        "calculator_input_format",
+        "coverage",
+        "safety",
+        "next_required_human_actions",
+        "completion",
+    }
+    valid_schema = set(data) == root_fields
+    if not valid_schema:
+        add_red_flag(result, "v0.2 completed root fields mismatch")
+    if data.get("draft_type") != DRAFT_TYPE:
+        valid_schema = False
+        add_red_flag(result, "draft_type must be price_calculator_input_draft")
+    source = data.get("source")
+    if not isinstance(source, Mapping):
+        valid_schema = False
+        add_red_flag(result, "source must be an object")
+    completion = data.get("completion")
+    if not isinstance(completion, Mapping):
+        valid_schema = False
+        add_red_flag(result, "completion must be an object for v0.2")
+    elif (
+        completion.get("status") != V02_COMPLETION_STATUS
+        or completion.get("authorization_claim_is_not_human_approval") is not True
+    ):
+        valid_schema = False
+        add_red_flag(result, "v0.2 completion contract mismatch")
+    result.checks["schema constants"] = "pass" if valid_schema else "fail"
+
+    safety = data.get("safety")
+    safety_valid = isinstance(safety, Mapping) and bool(safety)
+    if isinstance(safety, Mapping):
+        for field_name, value in safety.items():
+            if value is not False:
+                safety_valid = False
+                add_red_flag(result, f"v0.2 safety.{field_name} must be false")
+    else:
+        add_red_flag(result, "v0.2 safety must be an object")
+    result.checks["safety boundary"] = "pass" if safety_valid else "fail"
+    result.checks["operator completion"] = "pass"
+
+    calculator_format = data.get("calculator_input_format")
+    format_valid = isinstance(calculator_format, Mapping)
+    rows: list[Any] | None = None
+    if not isinstance(calculator_format, Mapping):
+        add_red_flag(result, "v0.2 calculator_input_format must be an object")
+    else:
+        if (
+            calculator_format.get("kind") != "confirmed_composition_csv_row_drafts"
+            or calculator_format.get("delimiter") != CALCULATOR_DELIMITER
+            or calculator_format.get("columns") != list(CALCULATOR_COLUMNS)
+        ):
+            format_valid = False
+            add_red_flag(result, "v0.2 calculator format constants mismatch")
+        rows_value = calculator_format.get("row_drafts")
+        if not isinstance(rows_value, list):
+            format_valid = False
+            add_red_flag(result, "v0.2 row_drafts must be a list")
+        else:
+            rows = rows_value
+    result.checks["calculator format"] = "pass" if format_valid else "fail"
+
+    cabinet_groups = data.get("cabinet_groups")
+    rows_valid = (
+        isinstance(cabinet_groups, list)
+        and len(cabinet_groups) == V02_EXPECTED_CABINET_GROUPS
+        and rows is not None
+        and len(rows) == V02_EXPECTED_ROWS
+    )
+    group_rows: dict[str, set[str]] = {}
+    row_ids: set[str] = set()
+    if not isinstance(cabinet_groups, list):
+        add_red_flag(result, "v0.2 cabinet_groups must be a list")
+    else:
+        for index, raw_group in enumerate(cabinet_groups):
+            path = f"cabinet_groups[{index}]"
+            if not isinstance(raw_group, Mapping):
+                rows_valid = False
+                add_red_flag(result, f"{path} must be an object")
+                continue
+            group_id = raw_group.get("cabinet_group_id")
+            row_draft_ids = raw_group.get("row_draft_ids")
+            if (
+                not is_non_empty_string(group_id)
+                or not isinstance(row_draft_ids, list)
+                or not row_draft_ids
+                or raw_group.get("mapping_status") != V02_COMPLETED_MAPPING_STATUS
+            ):
+                rows_valid = False
+                add_red_flag(result, f"{path} completion fields mismatch")
+                continue
+            for field_name in (
+                "source_cabinet_template",
+                "product_name",
+                "cabinet_code",
+                "cabinet_label",
+            ):
+                if not is_non_empty_string(raw_group.get(field_name)):
+                    rows_valid = False
+                    add_red_flag(result, f"{path}.{field_name} must be non-empty")
+            if not is_positive_number(raw_group.get("consumables_factor")):
+                rows_valid = False
+                add_red_flag(result, f"{path}.consumables_factor must be positive")
+            group_id_text = cast(str, group_id)
+            if group_id_text in group_rows:
+                rows_valid = False
+                add_red_flag(result, f"duplicate cabinet_group_id: {group_id_text}")
+            elif any(not is_non_empty_string(value) for value in row_draft_ids):
+                rows_valid = False
+                add_red_flag(result, f"{path}.row_draft_ids is invalid")
+            else:
+                group_rows[group_id_text] = set(cast(list[str], row_draft_ids))
+
+    if rows is not None:
+        for index, raw_row in enumerate(rows):
+            path = f"calculator_input_format.row_drafts[{index}]"
+            if not isinstance(raw_row, Mapping):
+                rows_valid = False
+                add_red_flag(result, f"{path} must be an object")
+                continue
+            row_id = raw_row.get("row_id")
+            group_id = raw_row.get("cabinet_group_id")
+            values = raw_row.get("calculator_values")
+            if (
+                not is_non_empty_string(row_id)
+                or not is_non_empty_string(group_id)
+                or not is_non_empty_string(raw_row.get("component_label"))
+                or raw_row.get("mapping_status") != V02_COMPLETED_MAPPING_STATUS
+                or not isinstance(values, Mapping)
+            ):
+                rows_valid = False
+                add_red_flag(result, f"{path} completion fields mismatch")
+                continue
+            row_id_text = cast(str, row_id)
+            group_id_text = cast(str, group_id)
+            if row_id_text in row_ids:
+                rows_valid = False
+                add_red_flag(result, f"duplicate row_id: {row_id_text}")
+            row_ids.add(row_id_text)
+            if row_id_text not in group_rows.get(group_id_text, set()):
+                rows_valid = False
+                add_red_flag(result, f"{path} cabinet membership mismatch")
+            if tuple(values.keys()) != CALCULATOR_COLUMNS:
+                rows_valid = False
+                add_red_flag(result, f"{path}.calculator_values fields mismatch")
+                continue
+            for field_name in ("product_name", "cabinet_code", "component_code"):
+                if not is_non_empty_string(values.get(field_name)):
+                    rows_valid = False
+                    add_red_flag(result, f"{path}.{field_name} must be non-empty")
+            if not is_positive_number(values.get("consumables_factor")):
+                rows_valid = False
+                add_red_flag(result, f"{path}.consumables_factor must be positive")
+            if not is_positive_number(values.get("component_qty")):
+                rows_valid = False
+                add_red_flag(result, f"{path}.component_qty must be positive")
+            if values.get("install_type") not in INSTALL_TYPES:
+                rows_valid = False
+                add_red_flag(result, f"{path}.install_type is not allowed")
+
+    if set().union(*group_rows.values()) != row_ids if group_rows else True:
+        rows_valid = False
+        add_red_flag(result, "v0.2 row/cabinet coverage mismatch")
+    coverage = data.get("coverage")
+    if not isinstance(coverage, Mapping) or (
+        coverage.get("pricing_row_draft_count") != V02_EXPECTED_ROWS
+        or coverage.get("cabinet_group_count") != V02_EXPECTED_CABINET_GROUPS
+    ):
+        rows_valid = False
+        add_red_flag(result, "v0.2 coverage fields mismatch")
+    result.checks["rows"] = "pass" if rows_valid else "fail"
+
+
 def validate_completed_price_calculator_input_draft(
     input_json: Path,
 ) -> ValidationResult:
@@ -532,6 +719,11 @@ def validate_completed_price_calculator_input_draft(
 
     forbidden_ok = find_forbidden_keys(data, "", result)
     result.checks["forbidden keys"] = "pass" if forbidden_ok else "fail"
+    if data.get("schema_version") == SCHEMA_VERSION_V02:
+        validate_v02_completed_payload(data, result)
+        all_checks_pass = all(status == "pass" for status in result.checks.values())
+        result.status = "PASS" if all_checks_pass and not result.red_flags else "FAIL"
+        return result
     validate_schema_constants(data, result)
     calculator_format = validate_calculator_format(
         data.get("calculator_input_format"),

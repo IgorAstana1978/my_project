@@ -34,7 +34,7 @@ FINAL_MULTIPLIER = Decimal("1.15")
 
 @dataclass(frozen=True)
 class ComponentDefinition:
-    workbook_label: str
+    workbook_label: str | None
     install_type: str
 
 
@@ -67,6 +67,10 @@ COMPONENT_DEFINITIONS = {
         workbook_label="УЗО АД-32 1Р+N до 63А EKF",
         install_type="diff_1p_n",
     ),
+    "EKF-AD12-1P-N-C16-30MA-4P5KA": ComponentDefinition(
+        workbook_label=None,
+        install_type="diff_1p_n",
+    ),
     "EKF-RN-47": ComponentDefinition(
         workbook_label="независимый расцепитель для ВА47 РН47",
         install_type="modular_1p",
@@ -77,6 +81,14 @@ CABINET_DEFINITIONS = {
     "CAB-KRN-18": "Корпус КРН-18 265х440х100",
     "CAB-KRN-12": "Корпус КРН-12 265х330х100",
     "CAB-KRN-24": "Корпус КРН-24 395х330х100",
+    "CAB-SCHE-BI-900X900X120-M12": ("Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"),
+}
+CABINET_TECHNICAL_LABELS = {
+    "CAB-KURN-038-24": "Корпус КУРН-0,38-24 540×490×170 мм, металл",
+    "CAB-KRN-18": "Корпус КРН-18 265×440×100 мм, металл",
+    "CAB-KRN-12": "Корпус КРН-12 265×330×100 мм, металл",
+    "CAB-KRN-24": "Корпус КРН-24 395×330×100 мм, металл",
+    "CAB-SCHE-BI-900X900X120-M12": ("Встроенный ЩЭ, 900×900×120 мм, металл 1.2 мм"),
 }
 CABINET_SOURCE_TEMPLATE_CODES = {
     "ПР": "CAB-KURN-038-24",
@@ -104,6 +116,20 @@ RESOLVED_COMPONENT_MAPPING_PROVENANCE = {
         "article": "DA32-6-16-30-ac-pro",
         "component_code": "EKF-AD32-1P-N",
         "pricing_decision_artifact_sha256": PRICING_DECISION_ARTIFACT_SHA256,
+    },
+    "COMPONENT-MAPPING-009": {
+        "article": "DA12-16-30-bas",
+        "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+        "human_decision_artifact_sha256": (
+            "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
+        ),
+    },
+    "COMPONENT-MAPPING-016": {
+        "article": "DA12-16-30-bas",
+        "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+        "human_decision_artifact_sha256": (
+            "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
+        ),
     },
 }
 APPROVED_MAPPING_005_SOURCE_LABELS = ("АВДТ-34, 4P, C16, 100мА",)
@@ -211,6 +237,24 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
         strict_raw_label=True,
     ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature(
+            "rcbo",
+            4,
+            16,
+            100,
+            "C",
+            "diff_3p_4p",
+            Decimal("6"),
+        ),
+        "КРН",
+        28,
+        "УЗО АД-32 1Р+N до 63А 100мА-300мА EKF ",
+        8000,
+        432,
+        component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
+        strict_raw_label=True,
+    ),
 )
 
 APPROVED_CABINET_PRICE_MAPPINGS = (
@@ -243,6 +287,7 @@ class CompositionRow:
     cabinet_label: str | None = None
     component_mapping: ApprovedComponentPriceMapping | None = None
     cabinet_mapping: ApprovedCabinetPriceMapping | None = None
+    technical_mapping_validated: bool = False
 
 
 @dataclass
@@ -283,6 +328,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Path to confirmed semicolon-delimited composition CSV",
     )
+    parser.add_argument(
+        "--custom-cabinet-base-cost",
+        type=int,
+        help=("Checked positive integer base cost for " "CAB-SCHE-BI-900X900X120-M12"),
+    )
     return parser.parse_args(argv)
 
 
@@ -318,6 +368,21 @@ def parse_breaking_capacity_ka(component_label: str) -> Decimal | None:
     return Decimal(match.group(1).replace(",", ".")) if match is not None else None
 
 
+def parse_nominal_current_a(component_label: str) -> int | None:
+    folded = component_label.casefold()
+    patterns = (
+        r"\b(?:i|и)[рpн]\s*=\s*(\d+)\s*[aа]\b",
+        r"\b\d+\s*/\s*(\d+)\s*[aа]\b",
+        r"\bc\s*(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, folded)
+        if match is not None:
+            return int(match.group(1))
+    matches = re.findall(r"\b(\d+)\s*[aа]\b", folded)
+    return int(matches[-1]) if matches else None
+
+
 def parse_component_signature(
     component_label: str,
     install_type: str,
@@ -332,21 +397,38 @@ def parse_component_signature(
     poles = int(poles_match.group(1))
     breaking_capacity = parse_breaking_capacity_ka(normalized)
 
-    if install_type == "mccb_up_to_100a" and "автоматический выключатель" in folded:
+    if install_type in {"modular_1p", "modular_2p", "modular_3p"} and (
+        "автоматический выключатель" in folded or "выключатель автоматический" in folded
+    ):
+        expected_poles = int(install_type.removeprefix("modular_").removesuffix("p"))
+        if poles != expected_poles or breaking_capacity is None:
+            return None
+        category = "mcb"
+        rating = parse_nominal_current_a(normalized)
+        rating_match = re.match(r"(\d+)", str(rating)) if rating is not None else None
+        curve = "C" if re.search(r"(?:\(|\b)(?:c|с)(?=\d|\)|\b)", folded) else None
+        if curve is None:
+            return None
+        residual_current = None
+    elif install_type == "mccb_up_to_100a" and "автоматический выключатель" in folded:
         category = "mccb"
         rating_match = re.search(r"\b(\d+)\s*а\b", folded)
         curve = None
         residual_current = None
     elif install_type == "diff_1p_n" and ("авдт" in folded or "ад12" in folded):
         category = "rcbo"
-        rating_match = re.search(r"\bc\s*(\d+)\b", folded)
+        rating = parse_nominal_current_a(normalized)
+        rating_match = re.match(r"(\d+)", str(rating)) if rating is not None else None
         residual_match = re.search(r"(?:/|,)\s*(\d+)\s*ма\b", folded)
-        if residual_match is None:
+        if (
+            residual_match is None
+            or re.search(r"(?:\b|\()(?:c|с)(?=\d|\)|\b)", folded) is None
+        ):
             return None
         curve = "C"
         residual_current = int(residual_match.group(1))
-    elif install_type == "diff_3p_4p" and normalized in (
-        APPROVED_MAPPING_005_SOURCE_LABELS
+    elif install_type == "diff_3p_4p" and any(
+        normalized.startswith(label) for label in APPROVED_MAPPING_005_SOURCE_LABELS
     ):
         category = "rcbo"
         rating_match = re.search(r"\bc\s*(\d+)\b", folded)
@@ -373,6 +455,57 @@ def parse_component_signature(
         trip_curve=curve,
         install_type=install_type,
         breaking_capacity_ka=breaking_capacity,
+    )
+
+
+def technical_component_definition_matches(
+    signature: TechnicalSignature | None,
+    component_code: str,
+    install_type: str,
+) -> bool:
+    definition = COMPONENT_DEFINITIONS.get(component_code)
+    if (
+        signature is None
+        or definition is None
+        or definition.install_type != install_type
+        or signature.install_type != install_type
+    ):
+        return False
+    if install_type.startswith("modular_"):
+        expected_poles = {
+            "EKF-VA47-29-1P": 1,
+            "EKF-VA47-29-2P": 2,
+            "EKF-VA47-29-3P": 3,
+        }.get(component_code)
+        return (
+            signature.apparatus_category == "mcb"
+            and signature.poles == expected_poles
+            and signature.trip_curve == "C"
+            and signature.breaking_capacity_ka is not None
+        )
+    if component_code == "EKF-AD12-1P-N-C16-30MA-4P5KA":
+        return signature == TechnicalSignature(
+            "rcbo",
+            2,
+            16,
+            30,
+            "C",
+            "diff_1p_n",
+            Decimal("4.5"),
+        )
+    return False
+
+
+def technical_cabinet_definition_matches(
+    cabinet_code: str,
+    cabinet_label: str,
+) -> bool:
+    expected = CABINET_TECHNICAL_LABELS.get(cabinet_code)
+    if expected is None:
+        return False
+    return (
+        normalize_workbook_label(cabinet_label) == normalize_workbook_label(expected)
+        and parse_cabinet_signature(cabinet_code, cabinet_label) is not None
     )
 
 
@@ -508,6 +641,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
         cabinet_label: str | None = None
         component_mapping: ApprovedComponentPriceMapping | None = None
         cabinet_mapping: ApprovedCabinetPriceMapping | None = None
+        technical_mapping_validated = False
 
         if header_tuple == TECHNICAL_COLUMNS:
             component_label = row["component_label"]
@@ -523,41 +657,52 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
             )
             if component_mapping is None:
                 legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
-                if (
-                    component_code == "EKF-AD32-1P-N"
-                    or (
+                explicitly_validated = technical_component_definition_matches(
+                    component_signature,
+                    component_code,
+                    row["install_type"],
+                )
+                legacy_compatible = (
+                    parse_breaking_capacity_ka(component_label) is None
+                    and legacy_definition is not None
+                    and legacy_definition.install_type == row["install_type"]
+                    and component_code != "EKF-AD32-1P-N"
+                    and not (
                         component_signature is not None
                         and signature_requires_component_code(component_signature)
                     )
-                    or parse_breaking_capacity_ka(component_label) is not None
-                    or legacy_definition is None
-                    or legacy_definition.install_type != row["install_type"]
-                    or cabinet_code not in CABINET_DEFINITIONS
-                ):
+                )
+                if not explicitly_validated and not legacy_compatible:
                     add_red_flag(
                         result,
                         f"row {row_number}: unknown or ambiguous technical "
                         f"component mapping for {component_label}; ask Igor",
                     )
                     continue
+                technical_mapping_validated = explicitly_validated or legacy_compatible
             else:
-                cabinet_signature = parse_cabinet_signature(
-                    cabinet_code,
-                    cabinet_label,
+                technical_mapping_validated = True
+
+            cabinet_signature = parse_cabinet_signature(
+                cabinet_code,
+                cabinet_label,
+            )
+            cabinet_mapping = (
+                resolve_cabinet_mapping(cabinet_signature)
+                if cabinet_signature is not None
+                else None
+            )
+            if cabinet_mapping is None and not technical_cabinet_definition_matches(
+                cabinet_code,
+                cabinet_label,
+            ):
+                add_red_flag(
+                    result,
+                    f"row {row_number}: unknown or ambiguous technical "
+                    f"cabinet mapping for {cabinet_code} / {cabinet_label}; "
+                    "ask Igor",
                 )
-                cabinet_mapping = (
-                    resolve_cabinet_mapping(cabinet_signature)
-                    if cabinet_signature is not None
-                    else None
-                )
-                if cabinet_mapping is None:
-                    add_red_flag(
-                        result,
-                        f"row {row_number}: unknown or ambiguous technical "
-                        f"cabinet mapping for {cabinet_code} / {cabinet_label}; "
-                        "ask Igor",
-                    )
-                    continue
+                continue
         else:
             component_definition = COMPONENT_DEFINITIONS.get(component_code)
             if component_definition is None:
@@ -594,6 +739,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 cabinet_label=cabinet_label,
                 component_mapping=component_mapping,
                 cabinet_mapping=cabinet_mapping,
+                technical_mapping_validated=technical_mapping_validated,
             )
         )
 
@@ -734,7 +880,7 @@ def read_component_prices(
     label_to_code = {
         normalize_workbook_label(definition.workbook_label): code
         for code, definition in COMPONENT_DEFINITIONS.items()
-        if code in required_codes
+        if code in required_codes and definition.workbook_label is not None
     }
     found: dict[str, tuple[int, int]] = {}
 
@@ -827,6 +973,7 @@ def read_cabinet_price(
 def calculate_price_draft(
     price_workbook: Path,
     input_csv: Path,
+    custom_cabinet_base_cost: int | None = None,
 ) -> PriceCalculationResult:
     result = PriceCalculationResult(
         price_workbook=resolved(price_workbook),
@@ -852,46 +999,50 @@ def calculate_price_draft(
             data_only=False,
             keep_links=False,
         )
-        if rows[0].component_mapping is not None:
-            approved_component_prices: dict[
-                ApprovedComponentPriceMapping, tuple[int, int]
-            ] = {}
-            for row in rows:
-                mapping = row.component_mapping
-                if mapping is None:
-                    add_red_flag(
-                        result, "mixed legacy and technical rows are forbidden"
-                    )
-                    continue
-                if mapping not in approved_component_prices:
-                    price = read_approved_component_price(workbook, mapping, result)
-                    if price is not None:
-                        approved_component_prices[mapping] = price
-            cabinet_mapping = rows[0].cabinet_mapping
-            if cabinet_mapping is None or any(
-                row.cabinet_mapping != cabinet_mapping for row in rows
-            ):
-                add_red_flag(
-                    result, "technical cabinet mapping is inconsistent; ask Igor"
-                )
-                cabinet_price = None
-            else:
-                cabinet_price = read_approved_cabinet_price(
-                    workbook,
-                    cabinet_mapping,
-                    result,
-                )
-            component_prices: dict[str, tuple[int, int]] = {}
-        else:
-            worksheet = mapping_worksheet(workbook, KRN_SHEET_NAME, result)
-            if worksheet is None:
-                return result
-            required_codes = {row.component_code for row in rows}
+        approved_component_prices: dict[
+            ApprovedComponentPriceMapping, tuple[int, int]
+        ] = {}
+        for row in rows:
+            mapping = row.component_mapping
+            if mapping is not None and mapping not in approved_component_prices:
+                price = read_approved_component_price(workbook, mapping, result)
+                if price is not None:
+                    approved_component_prices[mapping] = price
+
+        worksheet = mapping_worksheet(workbook, KRN_SHEET_NAME, result)
+        if worksheet is None:
+            return result
+        required_codes = {
+            row.component_code for row in rows if row.component_mapping is None
+        }
+        component_prices: dict[str, tuple[int, int]] = {}
+        if required_codes:
             component_prices = read_component_prices(
                 worksheet,
                 required_codes,
                 result,
             )
+
+        cabinet_mapping = rows[0].cabinet_mapping
+        if any(row.cabinet_mapping != cabinet_mapping for row in rows):
+            add_red_flag(result, "technical cabinet mapping is inconsistent; ask Igor")
+            cabinet_price = None
+        elif rows[0].cabinet_code == "CAB-SCHE-BI-900X900X120-M12":
+            if custom_cabinet_base_cost is None or custom_cabinet_base_cost <= 0:
+                add_red_flag(
+                    result,
+                    "checked custom ЩЭ cabinet base cost is required; ask Igor",
+                )
+                cabinet_price = None
+            else:
+                cabinet_price = custom_cabinet_base_cost
+        elif cabinet_mapping is not None:
+            cabinet_price = read_approved_cabinet_price(
+                workbook,
+                cabinet_mapping,
+                result,
+            )
+        else:
             cabinet_price = read_cabinet_price(
                 worksheet,
                 rows[0].cabinet_code,
@@ -907,24 +1058,24 @@ def calculate_price_draft(
     if result.red_flags or cabinet_price is None:
         return result
 
-    if rows[0].component_mapping is not None:
-        material_total = sum(
-            approved_component_prices[row.component_mapping][0] * row.component_qty
-            for row in rows
+    material_total = sum(
+        (
+            approved_component_prices[row.component_mapping][0]
             if row.component_mapping is not None
+            else component_prices[row.component_code][0]
         )
-        work_total = sum(
-            approved_component_prices[row.component_mapping][1] * row.component_qty
-            for row in rows
+        * row.component_qty
+        for row in rows
+    )
+    work_total = sum(
+        (
+            approved_component_prices[row.component_mapping][1]
             if row.component_mapping is not None
+            else component_prices[row.component_code][1]
         )
-    else:
-        material_total = sum(
-            component_prices[row.component_code][0] * row.component_qty for row in rows
-        )
-        work_total = sum(
-            component_prices[row.component_code][1] * row.component_qty for row in rows
-        )
+        * row.component_qty
+        for row in rows
+    )
     factor = rows[0].consumables_factor
     additional_materials = Decimal(material_total) * (factor - Decimal("1"))
     base = (
@@ -1047,7 +1198,11 @@ def format_report(result: PriceCalculationResult) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    result = calculate_price_draft(args.price_workbook, args.input_csv)
+    result = calculate_price_draft(
+        args.price_workbook,
+        args.input_csv,
+        custom_cabinet_base_cost=args.custom_cabinet_base_cost,
+    )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1
 
