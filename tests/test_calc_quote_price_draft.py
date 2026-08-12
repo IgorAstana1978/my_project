@@ -442,6 +442,153 @@ def test_component_mapping_012_rejects_workbook_drift(tmp_path: Path) -> None:
         assert any("approved component mapping" in flag for flag in result.red_flags)
 
 
+def test_ad12_price_mapping_passes_only_exact_approved_identity(
+    tmp_path: Path,
+) -> None:
+    label = "Дифференциальный автомат АД12 2Р 16А, 30мА — 1шт., C, 4,5кА"
+    signature = calculator.parse_component_signature(label, "diff_1p_n")
+
+    assert signature is not None
+    mapping = calculator.resolve_component_mapping(
+        signature,
+        "EKF-AD12-1P-N-C16-30MA-4P5KA",
+    )
+    assert mapping is not None
+    assert (mapping.sheet_name, mapping.row) == ("КРН", 5)
+    assert mapping.component_code == "EKF-AD12-1P-N-C16-30MA-4P5KA"
+    assert mapping.strict_raw_label is True
+
+    result = calculate_mapping_case(
+        tmp_path,
+        case_name="ad12-price-mapping-pass",
+        component_code="EKF-AD12-1P-N-C16-30MA-4P5KA",
+        install_type="diff_1p_n",
+        component_label=label,
+    )
+
+    assert result.status == "PASS"
+    assert result.component_material_total == 4100
+    assert result.work_total == 432
+
+
+def test_ad12_price_mapping_rejects_wrong_code_install_type_or_identity(
+    tmp_path: Path,
+) -> None:
+    approved_code = "EKF-AD12-1P-N-C16-30MA-4P5KA"
+    cases = (
+        (
+            "WRONG-CODE",
+            "diff_1p_n",
+            "Дифференциальный автомат АД12 2Р 16А, 30мА, C, 4,5кА",
+        ),
+        (
+            approved_code,
+            "diff_3p_4p",
+            "Дифференциальный автомат АД12 2Р 16А, 30мА, C, 4,5кА",
+        ),
+        (
+            approved_code,
+            "diff_1p_n",
+            "Дифференциальный автомат АД12 2Р 20А, 30мА, C, 4,5кА",
+        ),
+        (
+            approved_code,
+            "diff_1p_n",
+            "Дифференциальный автомат АД12 2Р 16А, 100мА, C, 4,5кА",
+        ),
+        (
+            approved_code,
+            "diff_1p_n",
+            "Дифференциальный автомат АД12 4Р 16А, 30мА, C, 4,5кА",
+        ),
+    )
+    for index, (code, install_type, label) in enumerate(cases):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"ad12-price-mapping-fail-identity-{index}",
+            component_code=code,
+            install_type=install_type,
+            component_label=label,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("unknown or ambiguous" in flag for flag in result.red_flags)
+
+
+def test_ad12_price_mapping_rejects_breaking_capacity_or_family_fallback(
+    tmp_path: Path,
+) -> None:
+    code = "EKF-AD12-1P-N-C16-30MA-4P5KA"
+    labels = (
+        "Дифференциальный автомат АД12 2Р 16А, 30мА, C, 6кА",
+        "Дифференциальный автомат АД12 2Р 16А, 30мА, C, 10кА",
+        "Дифференциальный автомат АД12 2Р 16А, 30мА, C",
+    )
+    for index, label in enumerate(labels):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"ad12-price-mapping-no-fallback-{index}",
+            component_code=code,
+            install_type="diff_1p_n",
+            component_label=label,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("unknown or ambiguous" in flag for flag in result.red_flags)
+
+
+def test_ad12_price_mapping_rejects_workbook_drift_or_formulas(
+    tmp_path: Path,
+) -> None:
+    changes: tuple[dict[str, Any], ...] = (
+        {"A5": "УЗО АД-32 1Р+N до 63А EKF "},
+        {"B5": 4101},
+        {"C5": 433},
+        {"B5": "=4100"},
+        {"C5": "=432"},
+    )
+    for index, workbook_changes in enumerate(changes):
+        result = calculate_mapping_case(
+            tmp_path,
+            case_name=f"ad12-price-mapping-fail-workbook-{index}",
+            component_code="EKF-AD12-1P-N-C16-30MA-4P5KA",
+            install_type="diff_1p_n",
+            component_label=("Дифференциальный автомат АД12 2Р 16А, 30мА, C, 4,5кА"),
+            workbook_changes=workbook_changes,
+        )
+
+        assert result.status == "FAIL"
+        assert result.total_preliminary_price is None
+        assert any("approved component mapping" in flag for flag in result.red_flags)
+
+
+def test_existing_ad32_mapping_012_remains_exact_and_unchanged(
+    tmp_path: Path,
+) -> None:
+    result = calculate_mapping_case(
+        tmp_path,
+        case_name="mapping-012-preserved",
+        component_code="EKF-AD32-1P-N",
+        install_type="diff_1p_n",
+        component_label="АД12, 2P, C16, 30мА, 6кА",
+    )
+
+    assert result.status == "PASS"
+    assert result.component_material_total == 4100
+    assert result.work_total == 432
+    assert calculator.RESOLVED_COMPONENT_MAPPING_PROVENANCE[
+        "COMPONENT-MAPPING-012"
+    ] == {
+        "article": "DA32-6-16-30-ac-pro",
+        "component_code": "EKF-AD32-1P-N",
+        "pricing_decision_artifact_sha256": (
+            calculator.PRICING_DECISION_ARTIFACT_SHA256
+        ),
+    }
+
+
 def test_component_mapping_005_passes_only_exact_approved_path(
     tmp_path: Path,
 ) -> None:
@@ -929,6 +1076,18 @@ def test_resolved_component_requests_have_exact_provenance() -> None:
     assert calculator.PRICING_DECISION_ARTIFACT_SHA256 == (
         "777faed80c8ef92782378dd2a788160af8ad2252d8cb4f539560f15657a1d96e"
     )
+    assert calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256 == (
+        "f67c0d79ec404a739ad5bdc3650a6259b9dc496a6f23ebffb7f29e7a9a24a17a"
+    )
+    assert calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA == (
+        "technical_ad12_price_mapping_human_decisions.v0.1"
+    )
+    assert calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS == (
+        "IGOR_AD12_SHARED_PRICE_MAPPING_APPROVED_NOT_APPLIED"
+    )
+    assert calculator.AD12_PRICE_MAPPING_DECISION_ID == (
+        "IGOR-AD12-SHARED-PRICE-MAPPING-2024-086-001"
+    )
     assert calculator.RESOLVED_COMPONENT_MAPPING_PROVENANCE == {
         "COMPONENT-MAPPING-005": {
             "article": "D63N46ES16C100",
@@ -947,18 +1106,79 @@ def test_resolved_component_requests_have_exact_provenance() -> None:
         "COMPONENT-MAPPING-009": {
             "article": "DA12-16-30-bas",
             "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "row_draft_ids": (
+                "ROW-DRAFT-0024",
+                "ROW-DRAFT-0025",
+                "ROW-DRAFT-0026",
+                "ROW-DRAFT-0027",
+            ),
             "human_decision_artifact_sha256": (
                 "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
             ),
+            "pricing_decision_artifact_sha256": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256
+            ),
+            "pricing_decision_artifact_schema": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA
+            ),
+            "pricing_decision_artifact_status": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS
+            ),
+            "pricing_decision_id": calculator.AD12_PRICE_MAPPING_DECISION_ID,
+            "direct_human_shared_price_decision": True,
+            "ad32_fallback_used_for_ad12": False,
+            "scope_expansion": False,
         },
         "COMPONENT-MAPPING-016": {
             "article": "DA12-16-30-bas",
             "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "row_draft_ids": (
+                "ROW-DRAFT-0074",
+                "ROW-DRAFT-0075",
+            ),
             "human_decision_artifact_sha256": (
                 "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
             ),
+            "pricing_decision_artifact_sha256": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256
+            ),
+            "pricing_decision_artifact_schema": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA
+            ),
+            "pricing_decision_artifact_status": (
+                calculator.AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS
+            ),
+            "pricing_decision_id": calculator.AD12_PRICE_MAPPING_DECISION_ID,
+            "direct_human_shared_price_decision": True,
+            "ad32_fallback_used_for_ad12": False,
+            "scope_expansion": False,
         },
     }
+    ad12_provenance = {
+        request_id: calculator.RESOLVED_COMPONENT_MAPPING_PROVENANCE[request_id]
+        for request_id in ("COMPONENT-MAPPING-009", "COMPONENT-MAPPING-016")
+    }
+    assert tuple(ad12_provenance) == (
+        "COMPONENT-MAPPING-009",
+        "COMPONENT-MAPPING-016",
+    )
+    assert tuple(
+        row_id
+        for provenance in ad12_provenance.values()
+        for row_id in provenance["row_draft_ids"]
+    ) == (
+        "ROW-DRAFT-0024",
+        "ROW-DRAFT-0025",
+        "ROW-DRAFT-0026",
+        "ROW-DRAFT-0027",
+        "ROW-DRAFT-0074",
+        "ROW-DRAFT-0075",
+    )
+    assert all(
+        provenance["scope_expansion"] is False
+        and provenance["ad32_fallback_used_for_ad12"] is False
+        for provenance in ad12_provenance.values()
+    )
     assert calculator.COMPONENT_DEFINITIONS["EKF-AD32-1P-N"].install_type == "diff_1p_n"
     assert (
         calculator.COMPONENT_DEFINITIONS["EKF-AD12-1P-N-C16-30MA-4P5KA"].install_type

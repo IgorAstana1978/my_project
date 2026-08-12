@@ -106,6 +106,16 @@ UNRESOLVED_COMPONENT_MAPPING_REQUESTS: dict[str, str] = {}
 PRICING_DECISION_ARTIFACT_SHA256 = (
     "777faed80c8ef92782378dd2a788160af8ad2252d8cb4f539560f15657a1d96e"
 )
+AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256 = (
+    "f67c0d79ec404a739ad5bdc3650a6259b9dc496a6f23ebffb7f29e7a9a24a17a"
+)
+AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA = (
+    "technical_ad12_price_mapping_human_decisions.v0.1"
+)
+AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS = (
+    "IGOR_AD12_SHARED_PRICE_MAPPING_APPROVED_NOT_APPLIED"
+)
+AD12_PRICE_MAPPING_DECISION_ID = "IGOR-AD12-SHARED-PRICE-MAPPING-2024-086-001"
 RESOLVED_COMPONENT_MAPPING_PROVENANCE = {
     "COMPONENT-MAPPING-005": {
         "article": "D63N46ES16C100",
@@ -120,16 +130,52 @@ RESOLVED_COMPONENT_MAPPING_PROVENANCE = {
     "COMPONENT-MAPPING-009": {
         "article": "DA12-16-30-bas",
         "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+        "row_draft_ids": (
+            "ROW-DRAFT-0024",
+            "ROW-DRAFT-0025",
+            "ROW-DRAFT-0026",
+            "ROW-DRAFT-0027",
+        ),
         "human_decision_artifact_sha256": (
             "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
         ),
+        "pricing_decision_artifact_sha256": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256
+        ),
+        "pricing_decision_artifact_schema": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA
+        ),
+        "pricing_decision_artifact_status": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS
+        ),
+        "pricing_decision_id": AD12_PRICE_MAPPING_DECISION_ID,
+        "direct_human_shared_price_decision": True,
+        "ad32_fallback_used_for_ad12": False,
+        "scope_expansion": False,
     },
     "COMPONENT-MAPPING-016": {
         "article": "DA12-16-30-bas",
         "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+        "row_draft_ids": (
+            "ROW-DRAFT-0074",
+            "ROW-DRAFT-0075",
+        ),
         "human_decision_artifact_sha256": (
             "5d6e0de7af052c959abff015f41081c8bddc10e834fe4f971e8a7d2e60f19c46"
         ),
+        "pricing_decision_artifact_sha256": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_SHA256
+        ),
+        "pricing_decision_artifact_schema": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_SCHEMA
+        ),
+        "pricing_decision_artifact_status": (
+            AD12_PRICE_MAPPING_DECISION_ARTIFACT_STATUS
+        ),
+        "pricing_decision_id": AD12_PRICE_MAPPING_DECISION_ID,
+        "direct_human_shared_price_decision": True,
+        "ad32_fallback_used_for_ad12": False,
+        "scope_expansion": False,
     },
 }
 APPROVED_MAPPING_005_SOURCE_LABELS = ("АВДТ-34, 4P, C16, 100мА",)
@@ -225,6 +271,24 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         4100,
         432,
         component_code="EKF-AD32-1P-N",
+        strict_raw_label=True,
+    ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature(
+            "rcbo",
+            2,
+            16,
+            30,
+            "C",
+            "diff_1p_n",
+            Decimal("4.5"),
+        ),
+        "КРН",
+        5,
+        "УЗО АД-32 1Р+N до 63А EKF",
+        4100,
+        432,
+        component_code="EKF-AD12-1P-N-C16-30MA-4P5KA",
         strict_raw_label=True,
     ),
     ApprovedComponentPriceMapping(
@@ -496,6 +560,14 @@ def technical_component_definition_matches(
     return False
 
 
+def exact_component_price_mapping_required(component_code: str | None) -> bool:
+    return any(
+        mapping.component_code == component_code
+        for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
+        if mapping.component_code is not None
+    )
+
+
 def technical_cabinet_definition_matches(
     cabinet_code: str,
     cabinet_label: str,
@@ -535,11 +607,17 @@ def resolve_component_mapping(
     signature: TechnicalSignature,
     component_code: str | None = None,
 ) -> ApprovedComponentPriceMapping | None:
+    exact_mapping_required = exact_component_price_mapping_required(component_code)
     matches = [
         mapping
         for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
         if mapping.signature == signature
-        and (mapping.component_code is None or mapping.component_code == component_code)
+        and (
+            mapping.component_code == component_code
+            if exact_mapping_required
+            else mapping.component_code is None
+            or mapping.component_code == component_code
+        )
     ]
     return matches[0] if len(matches) == 1 else None
 
@@ -667,6 +745,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                     and legacy_definition is not None
                     and legacy_definition.install_type == row["install_type"]
                     and component_code != "EKF-AD32-1P-N"
+                    and not exact_component_price_mapping_required(component_code)
                     and not (
                         component_signature is not None
                         and signature_requires_component_code(component_signature)
