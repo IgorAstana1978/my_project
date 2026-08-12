@@ -56,8 +56,9 @@ failure. An existing output is never overwritten.
 
 Readiness requires the successor draft plus the existing application inputs:
 the effective packet, standard product-name decisions, ЩЭ product-name
-decisions, and AD12 breaking-capacity decisions, all with their exact SHA-256
-values. It does not require application authorization and forbids both an output path and
+decisions, AD12 breaking-capacity decisions, and the mapping018 Human Decision,
+all with their exact SHA-256 values. It does not require application
+authorization and forbids both an output path and
 `--application-authorized-by-igor`:
 
 ```powershell
@@ -74,6 +75,10 @@ python scripts/apply_price_calculator_input_draft_v02.py `
     889e56687b32948f1a86363069afb7b6ca89b69d4454ee942b6642acce18eafc `
   --ad12-breaking-capacity-decisions-json <EXACT_AD12_DECISIONS_JSON> `
   --expected-ad12-breaking-capacity-decisions-sha256 <EXACT_AD12_SHA256> `
+  --mapping-018-decisions-json `
+    'C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-MAPPING-018-HUMAN-DECISION-20260807T050634Z\technical-csv-mapping-018-human-decisions-v0.1.json' `
+  --expected-mapping-018-decisions-sha256 `
+    659e85b8cbb6bf6cf2761176f0603d65a01649d186942af46d90287332a83e06 `
   --readiness-only
 ```
 
@@ -86,6 +91,26 @@ Groups 010–013 remain exclusively controlled by the separate ЩЭ decision
 artifact. The two decision sets must cover all 14 cabinet groups without an
 overlap or omission. Source templates, workbook descriptions, and invoice
 evidence are never substituted for approved `product_name` values.
+
+The mapping018 input is also hard-bound to its exact external path and SHA. It
+must remain an immutable, not-applied direct Human Decision covering exactly
+`COMPONENT-MAPPING-018`, review groups 024–029, 16 unique row IDs, and cabinet
+groups 010–013. Its row membership, cabinet templates, source evidence, parent
+packet lineage, effective-packet coverage, and four approved technical states
+are checked exactly. Reordered, missing, extra, duplicate, overlapping, or
+inconsistent scope fails readiness.
+
+For those exact 16 rows the application overlay may set only the approved
+technical identity: `component_code = EKF-VN-32-2P`,
+`install_type = load_switch_2p`, and the authoritative component label selected
+by cabinet template. `exact_article` remains `null`; characteristic C and
+breaking capacity remain `NOT_APPLICABLE`. The same resolver is used by
+readiness and application. No pricing lookup is performed, and neither price,
+Invoice №519, nor a workbook label may be used to infer technical identity.
+
+The mapping018 file participates in both initial SHA validation and the final
+TOCTOU recheck before exclusive no-overwrite publication. A changed or
+unreadable input fails closed, leaves no output, and removes staging.
 
 `PASS` reports contract readiness only. It is not Human Approval and does not
 authorize application, calculation, pricing, generated commercial artifacts,

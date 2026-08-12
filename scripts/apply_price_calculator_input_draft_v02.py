@@ -119,6 +119,186 @@ AD12_DECISION_SCHEMA = "technical_ad12_breaking_capacity_human_decisions.v0.1"
 AD12_COMPONENT_CODE = "EKF-AD12-1P-N-C16-30MA-4P5KA"
 AD12_INSTALL_TYPE = "diff_1p_n"
 AD12_MAPPING_IDS = {"COMPONENT-MAPPING-009", "COMPONENT-MAPPING-016"}
+MAPPING_018_DECISION_SCHEMA = "technical_csv_mapping_018_human_decisions.v0.1"
+MAPPING_018_DECISION_STATUS = "IGOR_MAPPING_018_FULL_APPROVAL_NOT_APPLIED"
+MAPPING_018_DECISION_PATH = Path(
+    r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-"
+    r"MAPPING-018-HUMAN-DECISION-20260807T050634Z\technical-csv-mapping-018-"
+    r"human-decisions-v0.1.json"
+).resolve(strict=False)
+MAPPING_018_DECISION_SHA256 = (
+    "659e85b8cbb6bf6cf2761176f0603d65a01649d186942af46d90287332a83e06"
+)
+MAPPING_018_ID = "COMPONENT-MAPPING-018"
+MAPPING_018_QUESTION_ID = "TECHNICAL-CONFLICT-MAPPING-018-CONSOLIDATED-Q-001"
+MAPPING_018_COMPONENT_CODE = "EKF-VN-32-2P"
+MAPPING_018_INSTALL_TYPE = "load_switch_2p"
+MAPPING_018_GROUP_SCOPES = (
+    (
+        "COMPONENT-LABEL-REVIEW-024",
+        "CABINET-GROUP-010",
+        "ЩЭ-3кв",
+        "Выключатель нагрузки 1Р Iр=63А - 3шт",
+        "Выключатель нагрузки ВН 2Р 63А — 3шт.",
+        3,
+        (("ROW-DRAFT-0077", 11, "COMP-078", "Лист1!A54:G54"),),
+    ),
+    (
+        "COMPONENT-LABEL-REVIEW-025",
+        "CABINET-GROUP-011",
+        "ЩЭ-4кв",
+        "Выключатель нагрузки 2Р Iр=63А - 4шт",
+        "Выключатель нагрузки ВН 2Р 63А — 4шт.",
+        4,
+        (("ROW-DRAFT-0086", 9, "COMP-023", "Лист1!A28:G28"),),
+    ),
+    (
+        "COMPONENT-LABEL-REVIEW-026",
+        "CABINET-GROUP-011",
+        "ЩЭ-4кв",
+        "Выключатель нагрузки 1Р Iр=63А - 4шт",
+        "Выключатель нагрузки ВН 2Р 63А — 4шт.",
+        4,
+        (
+            ("ROW-DRAFT-0087", 10, "COMP-045", "Лист1!A36:G36"),
+            ("ROW-DRAFT-0088", 11, "COMP-081", "Лист1!A55:G55"),
+            ("ROW-DRAFT-0089", 12, "COMP-096", "Лист1!A61:G61"),
+            ("ROW-DRAFT-0090", 13, "COMP-123", "Лист1!A76:G76"),
+            ("ROW-DRAFT-0091", 14, "COMP-142", "Лист1!A83:G83"),
+            ("ROW-DRAFT-0092", 15, "COMP-176", "Лист1!A101:G101"),
+            ("ROW-DRAFT-0093", 16, "COMP-192", "Лист1!A107:G107"),
+        ),
+    ),
+    (
+        "COMPONENT-LABEL-REVIEW-027",
+        "CABINET-GROUP-012",
+        "ЩЭ-5кв",
+        "Выключатель нагрузки 2Р Iр=63А - 5шт",
+        "Выключатель нагрузки ВН 2Р 63А — 5шт.",
+        5,
+        (("ROW-DRAFT-0100", 9, "COMP-026", "Лист1!A29:G29"),),
+    ),
+    (
+        "COMPONENT-LABEL-REVIEW-028",
+        "CABINET-GROUP-012",
+        "ЩЭ-5кв",
+        "Выключатель нагрузки 1Р Iр=63А - 5шт",
+        "Выключатель нагрузки ВН 2Р 63А — 5шт.",
+        5,
+        (
+            ("ROW-DRAFT-0101", 10, "COMP-048", "Лист1!A37:G37"),
+            ("ROW-DRAFT-0102", 12, "COMP-099", "Лист1!A62:G62"),
+            ("ROW-DRAFT-0103", 13, "COMP-126", "Лист1!A77:G77"),
+            ("ROW-DRAFT-0104", 14, "COMP-145", "Лист1!A84:G84"),
+            ("ROW-DRAFT-0105", 16, "COMP-195", "Лист1!A108:G108"),
+        ),
+    ),
+    (
+        "COMPONENT-LABEL-REVIEW-029",
+        "CABINET-GROUP-013",
+        "ЩЭ-6кв",
+        "Выключатель нагрузки 2Р Iр=63А - 6шт",
+        "Выключатель нагрузки ВН 2Р 63А — 6шт.",
+        6,
+        (("ROW-DRAFT-0107", 9, "COMP-029", "Лист1!A30:G30"),),
+    ),
+)
+MAPPING_018_REVIEW_GROUP_IDS = tuple(scope[0] for scope in MAPPING_018_GROUP_SCOPES)
+MAPPING_018_ROW_IDS = tuple(
+    row[0] for scope in MAPPING_018_GROUP_SCOPES for row in scope[6]
+)
+MAPPING_018_APPROVED_TECHNICAL_STATES = tuple(
+    {
+        "cabinet_template": template,
+        "apparatus": "выключатель нагрузки ВН",
+        "poles": "2P",
+        "nominal_current": "63А",
+        "quantity_per_individual_cabinet": quantity,
+        "component_code": MAPPING_018_COMPONENT_CODE,
+        "install_type": MAPPING_018_INSTALL_TYPE,
+        "authoritative_label": label,
+        "characteristic_C": "NOT_APPLICABLE",
+        "breaking_capacity": "NOT_APPLICABLE",
+        "exact_article": None,
+    }
+    for template, quantity, label in (
+        ("ЩЭ-3кв", 3, "Выключатель нагрузки ВН 2Р 63А — 3шт."),
+        ("ЩЭ-4кв", 4, "Выключатель нагрузки ВН 2Р 63А — 4шт."),
+        ("ЩЭ-5кв", 5, "Выключатель нагрузки ВН 2Р 63А — 5шт."),
+        ("ЩЭ-6кв", 6, "Выключатель нагрузки ВН 2Р 63А — 6шт."),
+    )
+)
+MAPPING_018_SAFETY = {
+    "mapping_applied": False,
+    "repository_modified": False,
+    "workbook_modified": False,
+    "workbook_content_read": False,
+    "pricing_input_modified": False,
+    "packet_v0_4_1_modified": False,
+    "card_v0_4_1_modified": False,
+    "mapping_audit_modified": False,
+    "revalidation_artifact_modified": False,
+    "old_human_decision_artifacts_modified": False,
+    "packet_rebuilt": False,
+    "completed_input_created": False,
+    "calculator_started": False,
+    "custom_sche_resolver_started": False,
+    "downstream_started": False,
+    "repository_tests_run": False,
+    "commercial_csv_xlsx_pdf_quote_created": False,
+    "commit_performed": False,
+    "push_performed": False,
+}
+MAPPING_018_SOURCE_LINEAGE = {
+    "canonical_invoice_hash_revalidation": {
+        "path": (
+            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+            r"2024-086-INVOICE-519-HASH-REVALIDATION-20260807T033627Z\canonical-"
+            r"invoice-519-hash-drift-revalidation-v0.1.json"
+        ),
+        "sha256": "88bdd50a39ad3df320cb497f3da4f08cfb76f4a7909698d03acb746bc521deef",
+        "schema_version": "canonical_invoice_519_hash_drift_revalidation.v0.1",
+        "immutable": True,
+    },
+    "human_review_packet_v0_4_1": {
+        "path": (
+            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+            r"2024-086-INVOICE-519-HASH-REVALIDATION-20260807T033627Z\technical-"
+            r"csv-label-human-review-packet-v0.4.1.json"
+        ),
+        "sha256": "159491f610b86ccd6d34a27c8cfb4b48d508b16c1c6229254eef0112620b084f",
+        "schema_version": "technical_csv_label_human_review_packet.v0.4.1",
+        "immutable": True,
+    },
+    "human_review_card_v0_4_1": {
+        "path": (
+            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+            r"2024-086-INVOICE-519-HASH-REVALIDATION-20260807T033627Z\technical-"
+            r"csv-label-human-review-card-v0.4.1.md"
+        ),
+        "sha256": "712ee8e162e6ba8192b6d978403787742e295821f839f6d67ca88b71596944d6",
+        "immutable": True,
+    },
+    "mapping_018_audit": {
+        "path": (
+            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+            r"2024-086-MAPPING-018-VN63-AUDIT-20260806T123606Z\technical-csv-"
+            r"mapping-018-vn63-audit-v0.1.json"
+        ),
+        "sha256": "0994fdee218484e9745d3de780ee7c2fb11ff3829cc74a5c707a15e63bafc70a",
+        "schema_version": "technical_csv_mapping_018_vn63_audit.v0.1",
+        "immutable": True,
+    },
+    "canonical_workbook": {
+        "path": (
+            r"C:\Users\IgorN\Downloads\2026.06.22_519_ТОО «Sensata " r"Industrial».xlsx"
+        ),
+        "sha256": "17e31d0312f728800d31fd4f125d285edb1114880500d4833261239b87ab58b5",
+        "hash_verified_before_capture": True,
+        "workbook_content_read_for_this_capture": False,
+        "workbook_modified": False,
+    },
+}
 COMPLETED_MAPPING_STATUS = "APPROVED_HUMAN_DECISIONS_APPLIED"
 COMPLETION_STATUS = "V02_TECHNICAL_COMPLETION_APPLIED_NOT_PRICED"
 CALCULATOR_COLUMNS = (
@@ -162,6 +342,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--expected-ad12-breaking-capacity-decisions-sha256", required=True
     )
+    parser.add_argument("--mapping-018-decisions-json", required=True, type=Path)
+    parser.add_argument("--expected-mapping-018-decisions-sha256", required=True)
     parser.add_argument("--output-json", type=Path)
     parser.add_argument(
         "--readiness-only",
@@ -399,6 +581,325 @@ def validate_ad12_decisions(
         result[mapping_id] = decision
     if set(result) != AD12_MAPPING_IDS:
         raise CompletionError("AD12 scoped decision coverage mismatch")
+    return result
+
+
+def mapping_018_expected_row_membership() -> list[dict[str, Any]]:
+    return [
+        {
+            "row_draft_id": row_id,
+            "section": section,
+            "review_group_id": review_group_id,
+            "cabinet_template": template,
+            "component_evidence_id": evidence_id,
+            "canonical_invoice_range": invoice_range,
+            "quantity_per_individual_cabinet": quantity,
+        }
+        for (
+            review_group_id,
+            _cabinet_group_id,
+            template,
+            _source_label,
+            _authoritative_label,
+            quantity,
+            rows,
+        ) in MAPPING_018_GROUP_SCOPES
+        for row_id, section, evidence_id, invoice_range in rows
+    ]
+
+
+def validate_mapping_018_decisions(
+    artifact: Mapping[str, Any],
+    effective: Mapping[str, Any],
+    parent: Mapping[str, Any],
+    component_groups: Sequence[Mapping[str, Any]],
+    cabinet_groups: Sequence[Mapping[str, Any]],
+    *,
+    parent_path: Path,
+    parent_sha256: str,
+) -> dict[str, Mapping[str, Any]]:
+    if (
+        artifact.get("schema_version") != MAPPING_018_DECISION_SCHEMA
+        or artifact.get("artifact_type") != "immutable_human_decision_capture"
+        or artifact.get("project_id") != "2024/086"
+        or artifact.get("status") != MAPPING_018_DECISION_STATUS
+        or artifact.get("application_status") != "NOT_APPLIED"
+    ):
+        raise CompletionError("mapping018 Human Decision contract mismatch")
+
+    authority = require_mapping(artifact.get("authority"), "mapping018.authority")
+    approved_question = require_mapping(
+        authority.get("approved_question"), "mapping018.authority.approved_question"
+    )
+    if (
+        authority.get("authority_holder") != "Игорь"
+        or authority.get("authority_type") != "DIRECT_HUMAN_DECISION"
+        or authority.get("decision_text_verbatim") != "ПОДТВЕРЖДАЮ ПОЛНОСТЬЮ"
+        or authority.get("authority_scope_expansion") is not False
+        or approved_question.get("question_id") != MAPPING_018_QUESTION_ID
+        or approved_question.get("selected_answer_verbatim") != "ПОДТВЕРЖДАЮ ПОЛНОСТЬЮ"
+        or approved_question.get("selected_answer_was_offered") is not True
+        or approved_question.get("decision_status") != "APPROVED_BY_IGOR_NOT_APPLIED"
+    ):
+        raise CompletionError("mapping018 Human Decision authority mismatch")
+
+    exact_scope = require_mapping(
+        artifact.get("exact_approved_scope"), "mapping018.exact_approved_scope"
+    )
+    if (
+        exact_scope.get("mapping_request_id") != MAPPING_018_ID
+        or exact_scope.get("review_group_ids") != list(MAPPING_018_REVIEW_GROUP_IDS)
+        or exact_scope.get("row_draft_ids") != list(MAPPING_018_ROW_IDS)
+        or exact_scope.get("row_membership") != mapping_018_expected_row_membership()
+        or exact_scope.get("coverage")
+        != {"review_groups": "6/6", "rows": "16/16", "duplicate_membership": 0}
+    ):
+        raise CompletionError("mapping018 exact approved scope mismatch")
+    if artifact.get("approved_technical_state") != list(
+        MAPPING_018_APPROVED_TECHNICAL_STATES
+    ):
+        raise CompletionError("mapping018 approved technical state mismatch")
+    if artifact.get("quantity_semantics") != {
+        "value": "PER_INDIVIDUAL_CABINET",
+        "statement": (
+            "Quantities 3/4/5/6 apply to each separate "
+            "ЩЭ-3кв/ЩЭ-4кв/ЩЭ-5кв/ЩЭ-6кв cabinet, not to a section total "
+            "or project total."
+        ),
+    }:
+        raise CompletionError("mapping018 quantity semantics mismatch")
+    if artifact.get("apparatus_isolation") != {
+        "approved_scope_apparatus": "ВН 2Р 63А",
+        "must_not_be_merged_with": "ВА47 2Р 63А",
+        "separate_mapping_request_id": "COMPONENT-MAPPING-017",
+        "isolation_required": True,
+    }:
+        raise CompletionError("mapping018 apparatus isolation mismatch")
+    question_resolution = require_mapping(
+        artifact.get("question_resolution"), "mapping018.question_resolution"
+    )
+    if (
+        question_resolution.get("consolidated")
+        != {
+            "question_id": MAPPING_018_QUESTION_ID,
+            "status": "APPROVED_BY_IGOR_NOT_APPLIED",
+        }
+        or question_resolution.get("new_breaking_capacity_questions_created") != 0
+    ):
+        raise CompletionError("mapping018 question resolution mismatch")
+    if artifact.get("technical_non_applicability") != {
+        "characteristic_C": "NOT_APPLICABLE",
+        "breaking_capacity": "NOT_APPLICABLE",
+        "exact_article": None,
+    }:
+        raise CompletionError("mapping018 non-applicability semantics mismatch")
+
+    immutable_state = require_mapping(
+        artifact.get("immutable_state"), "mapping018.immutable_state"
+    )
+    if (
+        immutable_state.get("immutable") is not True
+        or immutable_state.get("no_overwrite") is not True
+        or immutable_state.get("output_folder_created_for_this_capture")
+        != str(MAPPING_018_DECISION_PATH.parent)
+        or immutable_state.get("existing_packet_or_card_modified") is not False
+    ):
+        raise CompletionError("mapping018 immutable/no-overwrite state mismatch")
+    if artifact.get("safety_state") != MAPPING_018_SAFETY:
+        raise CompletionError("mapping018 safety state mismatch")
+
+    source_lineage = require_mapping(
+        artifact.get("source_lineage"), "mapping018.source_lineage"
+    )
+    if dict(source_lineage) != MAPPING_018_SOURCE_LINEAGE:
+        raise CompletionError("mapping018 exact source lineage mismatch")
+
+    expected_parent = STANDARD_AUTHORITATIVE_INPUTS[2]
+    expected_parent_path = Path(
+        require_string(expected_parent.get("path"), "expected mapping018 parent path")
+    ).resolve(strict=False)
+    if (
+        parent_path != expected_parent_path
+        or parent_sha256 != expected_parent.get("sha256")
+        or parent.get("schema_version") != expected_parent.get("schema")
+        or parent.get("project_id") != "2024/086"
+    ):
+        raise CompletionError("mapping018 parent packet binding mismatch")
+    parent_lineage = require_mapping(
+        parent.get("source_lineage"), "parent.source_lineage"
+    )
+    if parent_lineage.get("mapping_018_full_approval_human_decision") != {
+        "path": str(MAPPING_018_DECISION_PATH),
+        "sha256": MAPPING_018_DECISION_SHA256,
+        "schema_version": MAPPING_018_DECISION_SCHEMA,
+        "status": MAPPING_018_DECISION_STATUS,
+        "immutable": True,
+        "application_status": "NOT_APPLIED",
+    }:
+        raise CompletionError("mapping018 parent decision lineage mismatch")
+
+    invariants = require_mapping(effective.get("invariants"), "effective.invariants")
+    source_coverage = require_mapping(
+        invariants.get("source_component_coverage"),
+        "effective.invariants.source_component_coverage",
+    )
+    workflow_safety = require_mapping(
+        effective.get("workflow_safety_state"), "effective.workflow_safety_state"
+    )
+    if (
+        source_coverage.get("mapping_018_rows") != "16/16"
+        or source_coverage.get("mapping_018_groups") != "6/6"
+        or source_coverage.get("duplicate_mapping_018_membership") != 0
+        or effective.get("application_authorized") is not False
+        or effective.get("application_status") != "NOT_APPLIED"
+        or workflow_safety.get("human_decisions_applied") is not False
+        or workflow_safety.get("application_authorized") is not False
+        or workflow_safety.get("application_status") != "NOT_APPLIED"
+        or workflow_safety.get("completed_input_created") is not False
+        or workflow_safety.get("calculator_started") is not False
+        or workflow_safety.get("custom_sche_resolver_started") is not False
+        or workflow_safety.get("downstream_started") is not False
+        or workflow_safety.get("prices_read") is not False
+    ):
+        raise CompletionError("mapping018 effective packet binding mismatch")
+
+    actual_mapping_groups = [
+        group
+        for group in component_groups
+        if group.get("mapping_request_id") == MAPPING_018_ID
+    ]
+    if list(component_groups[23:29]) != actual_mapping_groups or [
+        group.get("review_group_id") for group in actual_mapping_groups
+    ] != list(MAPPING_018_REVIEW_GROUP_IDS):
+        raise CompletionError("mapping018 parent group scope/order mismatch")
+    cabinet_membership = exact_row_membership(
+        cabinet_groups, "affected_row_draft_ids", "mapping018 cabinet groups"
+    )
+    state_by_template = {
+        require_string(
+            state.get("cabinet_template"), "mapping018 cabinet_template"
+        ): state
+        for state in (
+            require_mapping(value, "mapping018 approved technical state")
+            for value in require_list(
+                artifact.get("approved_technical_state"),
+                "mapping018.approved_technical_state",
+            )
+        )
+    }
+    result: dict[str, Mapping[str, Any]] = {}
+    expected_group_lineage = {
+        "path": str(MAPPING_018_DECISION_PATH),
+        "sha256": MAPPING_018_DECISION_SHA256,
+        "status": MAPPING_018_DECISION_STATUS,
+        "application_status": "NOT_APPLIED",
+    }
+    expected_signature = {
+        "component_identity": "ВЫКЛЮЧАТЕЛЬ НАГРУЗКИ",
+        "model_type": "ВН",
+        "ratings": ["63А"],
+        "poles": 2,
+        "functional_role": "LOAD_SWITCHING_ROLE_NOT_FURTHER_RESOLVED",
+    }
+    expected_mapping_decision = {
+        "path": (
+            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+            r"2024-086-HUMAN-DECISIONS-20260731-023\pricing-mapping-human-"
+            r"decisions-v0.1.json"
+        ),
+        "sha256": "7c778f3d35fe4cdc05e8592dae6d2a7be368ad751439897ceecb6c6fc488d23d",
+        "json_path": "$.component_decisions[17]",
+        "request_id": MAPPING_018_ID,
+    }
+    evidence_path = (
+        r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-"
+        r"2024-086-TECHNICAL-FIELD-EVIDENCE-20260723-001\component-apparatus-"
+        r"evidence.json"
+    )
+    evidence_sha = "7d9e3fca43981f0f38083e2d41c9be8f188fa5dad30aa8b0837cdceffd2fafc6"
+    for position, scope in enumerate(MAPPING_018_GROUP_SCOPES):
+        (
+            review_group_id,
+            cabinet_group_id,
+            template,
+            source_label,
+            authoritative_label,
+            quantity,
+            rows,
+        ) = scope
+        group = actual_mapping_groups[position]
+        row_ids = [row[0] for row in rows]
+        evidence_ids = [row[2] for row in rows]
+        quantity_map = {row_id: quantity for row_id in row_ids}
+        if (
+            group.get("status") != MAPPING_018_DECISION_STATUS
+            or group.get("row_draft_ids") != row_ids
+            or group.get("cabinet_group_ids") != [cabinet_group_id]
+            or group.get("cabinet_templates") != [template]
+            or group.get("component_evidence_ids") != evidence_ids
+            or group.get("source_technical_positions") != [source_label]
+            or group.get("mapping_decision") != expected_mapping_decision
+            or group.get("proposed_authoritative_component_label")
+            != authoritative_label
+            or group.get("approved_internal_component_code") is not None
+            or group.get("approved_article") is not None
+            or group.get("install_type") is not None
+            or group.get("technical_signature") != expected_signature
+            or group.get("breaking_capacity_policy_applies") is not False
+            or group.get("breaking_capacity_human_approval") is not None
+            or group.get("row_component_qty_per_individual_cabinet") != quantity_map
+            or group.get("current_mapping_candidate")
+            != {
+                "component_code": MAPPING_018_COMPONENT_CODE,
+                "approved_article": None,
+                "install_type": MAPPING_018_INSTALL_TYPE,
+            }
+            or group.get("exact_code_article_status") != "NOT_APPLICABLE_TO_LOAD_SWITCH"
+            or group.get("proposed_mapping_candidate")
+            != {
+                "component_code": MAPPING_018_COMPONENT_CODE,
+                "install_type": MAPPING_018_INSTALL_TYPE,
+                "exact_article": None,
+            }
+            or group.get("resolved_human_question_ids") != [MAPPING_018_QUESTION_ID]
+            or group.get("authoritative_mapping_018_human_decision")
+            != expected_group_lineage
+        ):
+            raise CompletionError(
+                f"mapping018 parent group contract mismatch: {review_group_id}"
+            )
+        provenance = require_list(
+            group.get("source_notation_provenance"),
+            f"{review_group_id}.source_notation_provenance",
+        )
+        expected_provenance = [
+            {
+                "path": evidence_path,
+                "sha256": evidence_sha,
+                "json_path": (
+                    f"$.component_evidence[{int(evidence_id[-3:]) - 1}].raw_description"
+                ),
+                "component_evidence_id": evidence_id,
+                "evidence_status": "PROJECT_EVIDENCE_UNAPPROVED",
+            }
+            for evidence_id in evidence_ids
+        ]
+        if provenance != expected_provenance:
+            raise CompletionError(
+                f"mapping018 parent evidence provenance mismatch: {review_group_id}"
+            )
+        for row_id in row_ids:
+            cabinet_group = cabinet_membership.get(row_id)
+            if cabinet_group is None:
+                raise CompletionError(
+                    f"mapping018 cabinet membership missing: {row_id}"
+                )
+            if (
+                cabinet_group.get("cabinet_group_id") != cabinet_group_id
+                or cabinet_group.get("source_cabinet_template") != template
+            ):
+                raise CompletionError(f"mapping018 cabinet binding mismatch: {row_id}")
+        result[review_group_id] = state_by_template[template]
     return result
 
 
@@ -718,6 +1219,81 @@ def final_component_label(base_label: str, breaking_capacity: str | None) -> str
     return f"{label}, {breaking_capacity}"
 
 
+def resolve_component_state(
+    component_group: Mapping[str, Any],
+    *,
+    bc_by_group: Mapping[str, str],
+    ad12_by_mapping: Mapping[str, Mapping[str, Any]],
+    mapping_018_by_group: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, str, str]:
+    review_group_id = require_string(
+        component_group.get("review_group_id"), "component review_group_id"
+    )
+    mapping_id = require_string(
+        component_group.get("mapping_request_id"),
+        f"{review_group_id}.mapping_request_id",
+    )
+    component_code = component_group.get("approved_internal_component_code")
+    install_type = component_group.get("install_type")
+    breaking_capacity = bc_by_group.get(review_group_id)
+    if (
+        breaking_capacity is None
+        and component_group.get("breaking_capacity_policy_applies") is True
+    ):
+        approved_capacity = component_group.get("breaking_capacity_human_approval")
+        if approved_capacity is not None and not isinstance(approved_capacity, str):
+            raise CompletionError(
+                f"invalid breaking-capacity approval: {review_group_id}"
+            )
+        if isinstance(approved_capacity, str) and approved_capacity:
+            breaking_capacity = approved_capacity
+
+    base_label = (
+        component_group.get("approved_authoritative_component_label")
+        or component_group.get("proposed_base_label_without_breaking_capacity")
+        or component_group.get("proposed_authoritative_component_label")
+    )
+    if mapping_id in AD12_MAPPING_IDS:
+        decision = ad12_by_mapping[mapping_id]
+        exact_scope = require_mapping(decision.get("exact_scope"), "AD12 exact_scope")
+        exact_rows = set(
+            require_list(exact_scope.get("row_draft_ids"), "AD12 exact rows")
+        )
+        if set(component_group.get("row_draft_ids", [])) != exact_rows:
+            raise CompletionError(f"AD12 exact scope mismatch: {mapping_id}")
+        component_code = AD12_COMPONENT_CODE
+        install_type = AD12_INSTALL_TYPE
+        breaking_capacity = "4,5кА"
+    elif mapping_id == MAPPING_018_ID:
+        state = mapping_018_by_group.get(review_group_id)
+        if state is None:
+            raise CompletionError(
+                f"mapping018 exact review scope missing: {review_group_id}"
+            )
+        component_code = state.get("component_code")
+        install_type = state.get("install_type")
+        if (
+            state.get("exact_article") is not None
+            or state.get("breaking_capacity") != "NOT_APPLICABLE"
+            or state.get("characteristic_C") != "NOT_APPLICABLE"
+        ):
+            raise CompletionError("mapping018 non-applicability overlay mismatch")
+        breaking_capacity = None
+        base_label = state.get("authoritative_label")
+    elif review_group_id in mapping_018_by_group:
+        raise CompletionError(f"mapping018 scope expansion: {review_group_id}")
+
+    if not isinstance(component_code, str) or not component_code:
+        raise CompletionError(f"component_code is unresolved for {review_group_id}")
+    if not isinstance(install_type, str) or not install_type:
+        raise CompletionError(f"install_type is unresolved for {review_group_id}")
+    label = final_component_label(
+        require_string(base_label, f"{review_group_id}.base_label"),
+        breaking_capacity,
+    )
+    return component_code, install_type, label
+
+
 def validate_embedded_successor_contract(
     draft: Mapping[str, Any],
     *,
@@ -768,6 +1344,7 @@ def validate_v02_payload_readiness(
     sche_product_decisions: Mapping[str, Any],
     standard_product_decisions: Mapping[str, Any],
     ad12_decisions: Mapping[str, Any],
+    mapping_018_decisions: Mapping[str, Any],
 ) -> None:
     """Validate the application contract without creating an applied payload."""
     if (
@@ -818,6 +1395,15 @@ def validate_v02_payload_readiness(
     )
     bc_by_group = breaking_capacity_by_review_group(effective)
     ad12_by_mapping = validate_ad12_decisions(ad12_decisions)
+    mapping_018_by_group = validate_mapping_018_decisions(
+        mapping_018_decisions,
+        effective,
+        parent,
+        component_groups,
+        cabinet_groups,
+        parent_path=parent_path,
+        parent_sha256=parent_sha,
+    )
     sche_product_by_group = validate_product_name_decisions(sche_product_decisions)
     cabinet_fields = approved_cabinet_fields(effective)
 
@@ -903,47 +1489,12 @@ def validate_v02_payload_readiness(
         if values.get("component_qty") != expected_quantity:
             raise CompletionError(f"draft quantity changed for {row_id}")
 
-        review_group_id = require_string(
-            component_group.get("review_group_id"),
-            f"{row_id}.review_group_id",
+        resolve_component_state(
+            component_group,
+            bc_by_group=bc_by_group,
+            ad12_by_mapping=ad12_by_mapping,
+            mapping_018_by_group=mapping_018_by_group,
         )
-        mapping_id = require_string(
-            component_group.get("mapping_request_id"),
-            f"{row_id}.mapping_request_id",
-        )
-        component_code = component_group.get("approved_internal_component_code")
-        install_type = component_group.get("install_type")
-        if (
-            bc_by_group.get(review_group_id) is None
-            and component_group.get("breaking_capacity_policy_applies") is True
-        ):
-            approved_capacity = component_group.get("breaking_capacity_human_approval")
-            if approved_capacity is not None and not isinstance(approved_capacity, str):
-                raise CompletionError(
-                    f"invalid breaking-capacity approval: {review_group_id}"
-                )
-        if mapping_id in AD12_MAPPING_IDS:
-            decision = ad12_by_mapping[mapping_id]
-            exact_scope = require_mapping(
-                decision.get("exact_scope"), "AD12 exact_scope"
-            )
-            exact_rows = set(
-                require_list(exact_scope.get("row_draft_ids"), "AD12 exact rows")
-            )
-            if set(component_group.get("row_draft_ids", [])) != exact_rows:
-                raise CompletionError(f"AD12 exact scope mismatch: {mapping_id}")
-            component_code = AD12_COMPONENT_CODE
-            install_type = AD12_INSTALL_TYPE
-        if not isinstance(component_code, str) or not component_code:
-            raise CompletionError(f"component_code is unresolved for {review_group_id}")
-        if not isinstance(install_type, str) or not install_type:
-            raise CompletionError(f"install_type is unresolved for {review_group_id}")
-        base_label = (
-            component_group.get("approved_authoritative_component_label")
-            or component_group.get("proposed_base_label_without_breaking_capacity")
-            or component_group.get("proposed_authoritative_component_label")
-        )
-        require_string(base_label, f"{review_group_id}.base_label")
 
     coverage = require_mapping(draft.get("coverage"), "coverage")
     if (
@@ -959,6 +1510,7 @@ def complete_v02_payload(
     sche_product_decisions: Mapping[str, Any],
     standard_product_decisions: Mapping[str, Any],
     ad12_decisions: Mapping[str, Any],
+    mapping_018_decisions: Mapping[str, Any],
     *,
     lineage: Mapping[str, Mapping[str, str]],
     applied_at_utc: str,
@@ -969,6 +1521,7 @@ def complete_v02_payload(
         sche_product_decisions,
         standard_product_decisions,
         ad12_decisions,
+        mapping_018_decisions,
     )
     parent, parent_sha, parent_path = load_parent_scope_packet(effective)
     component_groups = [
@@ -1007,6 +1560,15 @@ def complete_v02_payload(
 
     bc_by_group = breaking_capacity_by_review_group(effective)
     ad12_by_mapping = validate_ad12_decisions(ad12_decisions)
+    mapping_018_by_group = validate_mapping_018_decisions(
+        mapping_018_decisions,
+        effective,
+        parent,
+        component_groups,
+        cabinet_groups,
+        parent_path=parent_path,
+        parent_sha256=parent_sha,
+    )
     sche_product_by_group = validate_product_name_decisions(sche_product_decisions)
     cabinet_fields = approved_cabinet_fields(effective)
 
@@ -1105,49 +1667,12 @@ def complete_v02_payload(
         if values.get("component_qty") != expected_quantity:
             raise CompletionError(f"draft quantity changed for {row_id}")
 
-        review_group_id = require_string(
-            component_group.get("review_group_id"),
-            f"{row_id}.review_group_id",
+        component_code, install_type, label = resolve_component_state(
+            component_group,
+            bc_by_group=bc_by_group,
+            ad12_by_mapping=ad12_by_mapping,
+            mapping_018_by_group=mapping_018_by_group,
         )
-        mapping_id = require_string(
-            component_group.get("mapping_request_id"),
-            f"{row_id}.mapping_request_id",
-        )
-        component_code = component_group.get("approved_internal_component_code")
-        install_type = component_group.get("install_type")
-        breaking_capacity = bc_by_group.get(review_group_id)
-        if (
-            breaking_capacity is None
-            and component_group.get("breaking_capacity_policy_applies") is True
-        ):
-            approved_capacity = component_group.get("breaking_capacity_human_approval")
-            if isinstance(approved_capacity, str) and approved_capacity:
-                breaking_capacity = approved_capacity
-        if mapping_id in AD12_MAPPING_IDS:
-            decision = ad12_by_mapping[mapping_id]
-            exact_scope = require_mapping(
-                decision.get("exact_scope"), "AD12 exact_scope"
-            )
-            exact_rows = set(
-                require_list(exact_scope.get("row_draft_ids"), "AD12 exact rows")
-            )
-            if set(component_group.get("row_draft_ids", [])) != exact_rows:
-                raise CompletionError(f"AD12 exact scope mismatch: {mapping_id}")
-            component_code = AD12_COMPONENT_CODE
-            install_type = AD12_INSTALL_TYPE
-            breaking_capacity = "4,5кА"
-        if not isinstance(component_code, str) or not component_code:
-            raise CompletionError(f"component_code is unresolved for {review_group_id}")
-        if not isinstance(install_type, str) or not install_type:
-            raise CompletionError(f"install_type is unresolved for {review_group_id}")
-
-        base_label = (
-            component_group.get("approved_authoritative_component_label")
-            or component_group.get("proposed_base_label_without_breaking_capacity")
-            or component_group.get("proposed_authoritative_component_label")
-        )
-        base_label = require_string(base_label, f"{review_group_id}.base_label")
-        label = final_component_label(base_label, breaking_capacity)
         completed_group = output_groups[cabinet_group_id]
         values.update(
             {
@@ -1193,6 +1718,16 @@ def complete_v02_payload(
             "install_type": AD12_INSTALL_TYPE,
             "breaking_capacity": "4,5кА",
         },
+        "mapping_018": {
+            "mapping_request_id": MAPPING_018_ID,
+            "review_group_ids": list(MAPPING_018_REVIEW_GROUP_IDS),
+            "row_draft_ids": list(MAPPING_018_ROW_IDS),
+            "component_code": MAPPING_018_COMPONENT_CODE,
+            "install_type": MAPPING_018_INSTALL_TYPE,
+            "exact_article": None,
+            "breaking_capacity": "NOT_APPLICABLE",
+            "scope_expansion": False,
+        },
     }
     output["next_required_human_actions"] = [
         "Separate Igor authorization is required before a checked calculator run.",
@@ -1216,6 +1751,8 @@ def load_exact_application_inputs(
     expected_standard_product_name_decisions_sha256: str,
     ad12_breaking_capacity_decisions_json: Path,
     expected_ad12_breaking_capacity_decisions_sha256: str,
+    mapping_018_decisions_json: Path,
+    expected_mapping_018_decisions_sha256: str,
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, dict[str, str]],
@@ -1233,6 +1770,9 @@ def load_exact_application_inputs(
         ),
         "ad12_breaking_capacity_decisions": (
             ad12_breaking_capacity_decisions_json.expanduser().resolve(strict=False)
+        ),
+        "mapping_018_decisions": mapping_018_decisions_json.expanduser().resolve(
+            strict=False
         ),
     }
     expected_hashes = {
@@ -1253,6 +1793,10 @@ def load_exact_application_inputs(
             expected_ad12_breaking_capacity_decisions_sha256,
             "expected AD12 breaking-capacity decisions SHA-256",
         ),
+        "mapping_018_decisions": require_sha256(
+            expected_mapping_018_decisions_sha256,
+            "expected mapping018 decisions SHA-256",
+        ),
     }
     if inputs["standard_product_name_decisions"] != STANDARD_PRODUCT_DECISION_PATH:
         raise CompletionError("standard product-name decision path mismatch")
@@ -1261,6 +1805,10 @@ def load_exact_application_inputs(
         != STANDARD_PRODUCT_DECISION_SHA256
     ):
         raise CompletionError("standard product-name decision exact SHA mismatch")
+    if inputs["mapping_018_decisions"] != MAPPING_018_DECISION_PATH:
+        raise CompletionError("mapping018 decision path mismatch")
+    if expected_hashes["mapping_018_decisions"] != MAPPING_018_DECISION_SHA256:
+        raise CompletionError("mapping018 decision exact SHA mismatch")
     loaded: dict[str, dict[str, Any]] = {}
     lineage: dict[str, dict[str, str]] = {}
     before_hashes: dict[str, str] = {}
@@ -1301,6 +1849,8 @@ def validate_v02_application_readiness(
     expected_standard_product_name_decisions_sha256: str,
     ad12_breaking_capacity_decisions_json: Path,
     expected_ad12_breaking_capacity_decisions_sha256: str,
+    mapping_018_decisions_json: Path,
+    expected_mapping_018_decisions_sha256: str,
 ) -> None:
     loaded, _lineage, before_hashes, inputs = load_exact_application_inputs(
         draft_json=draft_json,
@@ -1319,6 +1869,8 @@ def validate_v02_application_readiness(
         expected_ad12_breaking_capacity_decisions_sha256=(
             expected_ad12_breaking_capacity_decisions_sha256
         ),
+        mapping_018_decisions_json=mapping_018_decisions_json,
+        expected_mapping_018_decisions_sha256=(expected_mapping_018_decisions_sha256),
     )
     validate_v02_payload_readiness(
         loaded["draft"],
@@ -1326,6 +1878,7 @@ def validate_v02_application_readiness(
         loaded["sche_product_name_decisions"],
         loaded["standard_product_name_decisions"],
         loaded["ad12_breaking_capacity_decisions"],
+        loaded["mapping_018_decisions"],
     )
     recheck_application_inputs(inputs, before_hashes)
 
@@ -1342,6 +1895,8 @@ def apply_v02_completion(
     expected_standard_product_name_decisions_sha256: str,
     ad12_breaking_capacity_decisions_json: Path,
     expected_ad12_breaking_capacity_decisions_sha256: str,
+    mapping_018_decisions_json: Path,
+    expected_mapping_018_decisions_sha256: str,
     output_json: Path,
     application_authorized_by_igor: bool,
     applied_at_utc: str | None = None,
@@ -1375,6 +1930,8 @@ def apply_v02_completion(
         expected_ad12_breaking_capacity_decisions_sha256=(
             expected_ad12_breaking_capacity_decisions_sha256
         ),
+        mapping_018_decisions_json=mapping_018_decisions_json,
+        expected_mapping_018_decisions_sha256=(expected_mapping_018_decisions_sha256),
     )
 
     payload = complete_v02_payload(
@@ -1383,6 +1940,7 @@ def apply_v02_completion(
         loaded["sche_product_name_decisions"],
         loaded["standard_product_name_decisions"],
         loaded["ad12_breaking_capacity_decisions"],
+        loaded["mapping_018_decisions"],
         lineage=lineage,
         applied_at_utc=applied_at_utc or datetime.now(UTC).isoformat(),
     )
@@ -1451,6 +2009,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 expected_ad12_breaking_capacity_decisions_sha256=(
                     args.expected_ad12_breaking_capacity_decisions_sha256
                 ),
+                mapping_018_decisions_json=args.mapping_018_decisions_json,
+                expected_mapping_018_decisions_sha256=(
+                    args.expected_mapping_018_decisions_sha256
+                ),
             )
             print("PASS: v0.2 application readiness validated; nothing applied")
             return 0
@@ -1476,6 +2038,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             expected_ad12_breaking_capacity_decisions_sha256=(
                 args.expected_ad12_breaking_capacity_decisions_sha256
+            ),
+            mapping_018_decisions_json=args.mapping_018_decisions_json,
+            expected_mapping_018_decisions_sha256=(
+                args.expected_mapping_018_decisions_sha256
             ),
             output_json=args.output_json,
             application_authorized_by_igor=args.application_authorized_by_igor,

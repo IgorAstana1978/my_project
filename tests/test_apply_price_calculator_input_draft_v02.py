@@ -63,6 +63,229 @@ def write_json(path: Path, value: Any) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def mapping_018_artifact(path: Path) -> dict[str, Any]:
+    return {
+        "schema_version": application.MAPPING_018_DECISION_SCHEMA,
+        "artifact_type": "immutable_human_decision_capture",
+        "project_id": "2024/086",
+        "status": application.MAPPING_018_DECISION_STATUS,
+        "authority": {
+            "authority_holder": "Игорь",
+            "authority_type": "DIRECT_HUMAN_DECISION",
+            "decision_text_verbatim": "ПОДТВЕРЖДАЮ ПОЛНОСТЬЮ",
+            "approved_question": {
+                "question_id": application.MAPPING_018_QUESTION_ID,
+                "selected_answer_verbatim": "ПОДТВЕРЖДАЮ ПОЛНОСТЬЮ",
+                "selected_answer_was_offered": True,
+                "decision_status": "APPROVED_BY_IGOR_NOT_APPLIED",
+            },
+            "authority_scope_expansion": False,
+        },
+        "source_lineage": copy.deepcopy(application.MAPPING_018_SOURCE_LINEAGE),
+        "exact_approved_scope": {
+            "mapping_request_id": application.MAPPING_018_ID,
+            "review_group_ids": list(application.MAPPING_018_REVIEW_GROUP_IDS),
+            "row_draft_ids": list(application.MAPPING_018_ROW_IDS),
+            "row_membership": application.mapping_018_expected_row_membership(),
+            "coverage": {
+                "review_groups": "6/6",
+                "rows": "16/16",
+                "duplicate_membership": 0,
+            },
+        },
+        "approved_technical_state": copy.deepcopy(
+            list(application.MAPPING_018_APPROVED_TECHNICAL_STATES)
+        ),
+        "quantity_semantics": {
+            "value": "PER_INDIVIDUAL_CABINET",
+            "statement": (
+                "Quantities 3/4/5/6 apply to each separate "
+                "ЩЭ-3кв/ЩЭ-4кв/ЩЭ-5кв/ЩЭ-6кв cabinet, not to a section total "
+                "or project total."
+            ),
+        },
+        "apparatus_isolation": {
+            "approved_scope_apparatus": "ВН 2Р 63А",
+            "must_not_be_merged_with": "ВА47 2Р 63А",
+            "separate_mapping_request_id": "COMPONENT-MAPPING-017",
+            "isolation_required": True,
+        },
+        "question_resolution": {
+            "consolidated": {
+                "question_id": application.MAPPING_018_QUESTION_ID,
+                "status": "APPROVED_BY_IGOR_NOT_APPLIED",
+            },
+            "new_breaking_capacity_questions_created": 0,
+        },
+        "technical_non_applicability": {
+            "characteristic_C": "NOT_APPLICABLE",
+            "breaking_capacity": "NOT_APPLICABLE",
+            "exact_article": None,
+        },
+        "application_status": "NOT_APPLIED",
+        "immutable_state": {
+            "immutable": True,
+            "no_overwrite": True,
+            "output_folder_created_for_this_capture": str(path.parent),
+            "existing_packet_or_card_modified": False,
+        },
+        "safety_state": dict(application.MAPPING_018_SAFETY),
+    }
+
+
+def bind_mapping_018_parent(
+    parent: dict[str, Any], decision_path: Path, decision_sha: str
+) -> None:
+    parent.setdefault("source_lineage", {})[
+        "mapping_018_full_approval_human_decision"
+    ] = {
+        "path": str(decision_path),
+        "sha256": decision_sha,
+        "schema_version": application.MAPPING_018_DECISION_SCHEMA,
+        "status": application.MAPPING_018_DECISION_STATUS,
+        "immutable": True,
+        "application_status": "NOT_APPLIED",
+    }
+    groups = parent["component_label_review_groups"]
+    by_review = {group["review_group_id"]: group for group in groups}
+    target_rows = set(application.MAPPING_018_ROW_IDS)
+    target_reviews = set(application.MAPPING_018_REVIEW_GROUP_IDS)
+    row_details: dict[str, tuple[Any, Any]] = {}
+    displaced_rows: list[str] = []
+    for group in groups:
+        rows = group["row_draft_ids"]
+        if (
+            group["review_group_id"] not in target_reviews
+            and group.get("mapping_request_id") == application.MAPPING_018_ID
+        ):
+            group["mapping_request_id"] = "COMPONENT-MAPPING-031"
+        evidence = group.get("component_evidence_ids", [None] * len(rows))
+        quantities = group.get("row_component_qty_per_individual_cabinet", {})
+        for position, row_id in enumerate(rows):
+            row_details[row_id] = (quantities.get(row_id, 1), evidence[position])
+            if group["review_group_id"] in target_reviews and row_id not in target_rows:
+                displaced_rows.append(row_id)
+        kept_rows = [
+            row_id
+            for row_id in rows
+            if row_id not in target_rows
+            and group["review_group_id"] not in target_reviews
+        ]
+        group["row_draft_ids"] = kept_rows
+        group["row_component_qty_per_individual_cabinet"] = {
+            row_id: row_details[row_id][0] for row_id in kept_rows
+        }
+        group["component_evidence_ids"] = [
+            row_details[row_id][1] for row_id in kept_rows
+        ]
+        if isinstance(group.get("scope"), dict):
+            group["scope"]["affected_rows_exact"] = kept_rows
+    if displaced_rows:
+        receiver = by_review["COMPONENT-LABEL-REVIEW-030"]
+        receiver["row_draft_ids"].extend(displaced_rows)
+        receiver["row_component_qty_per_individual_cabinet"].update(
+            {row_id: row_details[row_id][0] for row_id in displaced_rows}
+        )
+        receiver["component_evidence_ids"].extend(
+            row_details[row_id][1] for row_id in displaced_rows
+        )
+        if isinstance(receiver.get("scope"), dict):
+            receiver["scope"]["affected_rows_exact"] = receiver["row_draft_ids"]
+    signature = {
+        "component_identity": "ВЫКЛЮЧАТЕЛЬ НАГРУЗКИ",
+        "model_type": "ВН",
+        "ratings": ["63А"],
+        "poles": 2,
+        "functional_role": "LOAD_SWITCHING_ROLE_NOT_FURTHER_RESOLVED",
+    }
+    group_lineage = {
+        "path": str(decision_path),
+        "sha256": decision_sha,
+        "status": application.MAPPING_018_DECISION_STATUS,
+        "application_status": "NOT_APPLIED",
+    }
+    for scope in application.MAPPING_018_GROUP_SCOPES:
+        (
+            review_group_id,
+            cabinet_group_id,
+            template,
+            source_label,
+            authoritative_label,
+            quantity,
+            rows,
+        ) = scope
+        group = by_review[review_group_id]
+        row_ids = [row[0] for row in rows]
+        evidence_ids = [row[2] for row in rows]
+        group.update(
+            {
+                "mapping_request_id": application.MAPPING_018_ID,
+                "status": application.MAPPING_018_DECISION_STATUS,
+                "row_draft_ids": row_ids,
+                "cabinet_group_ids": [cabinet_group_id],
+                "component_evidence_ids": evidence_ids,
+                "source_technical_positions": [source_label],
+                "mapping_decision": {
+                    "path": (
+                        r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-"
+                        r"PROJECT-2024-086-HUMAN-DECISIONS-20260731-023\pricing-"
+                        r"mapping-human-decisions-v0.1.json"
+                    ),
+                    "sha256": (
+                        "7c778f3d35fe4cdc05e8592dae6d2a7be368ad751439897ceecb6c6fc488d23d"
+                    ),
+                    "json_path": "$.component_decisions[17]",
+                    "request_id": application.MAPPING_018_ID,
+                },
+                "proposed_authoritative_component_label": authoritative_label,
+                "approved_internal_component_code": None,
+                "approved_article": None,
+                "install_type": None,
+                "technical_signature": copy.deepcopy(signature),
+                "breaking_capacity_policy_applies": False,
+                "breaking_capacity_human_approval": None,
+                "row_component_qty_per_individual_cabinet": {
+                    row_id: quantity for row_id in row_ids
+                },
+                "current_mapping_candidate": {
+                    "component_code": application.MAPPING_018_COMPONENT_CODE,
+                    "approved_article": None,
+                    "install_type": application.MAPPING_018_INSTALL_TYPE,
+                },
+                "exact_code_article_status": "NOT_APPLICABLE_TO_LOAD_SWITCH",
+                "cabinet_templates": [template],
+                "proposed_mapping_candidate": {
+                    "component_code": application.MAPPING_018_COMPONENT_CODE,
+                    "install_type": application.MAPPING_018_INSTALL_TYPE,
+                    "exact_article": None,
+                },
+                "resolved_human_question_ids": [application.MAPPING_018_QUESTION_ID],
+                "authoritative_mapping_018_human_decision": copy.deepcopy(
+                    group_lineage
+                ),
+                "source_notation_provenance": [
+                    {
+                        "path": (
+                            r"C:\Users\IgorN\Documents\production_ai_cases\CASE-"
+                            r"QF-PROJECT-2024-086-TECHNICAL-FIELD-EVIDENCE-"
+                            r"20260723-001\component-apparatus-evidence.json"
+                        ),
+                        "sha256": (
+                            "7d9e3fca43981f0f38083e2d41c9be8f188fa5dad30aa8b0837cdceffd2fafc6"
+                        ),
+                        "json_path": (
+                            f"$.component_evidence["
+                            f"{int(evidence_id[-3:]) - 1}].raw_description"
+                        ),
+                        "component_evidence_id": evidence_id,
+                        "evidence_status": "PROJECT_EVIDENCE_UNAPPROVED",
+                    }
+                    for evidence_id in evidence_ids
+                ],
+            }
+        )
+
+
 def synthetic_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, Path]:
@@ -70,10 +293,20 @@ def synthetic_inputs(
     component_rows: dict[int, list[str]] = {
         9: [f"ROW-DRAFT-{index:04d}" for index in range(24, 28)],
         15: ["ROW-DRAFT-0015"],
-        16: [f"ROW-DRAFT-{index:04d}" for index in range(74, 76)],
+        19: [f"ROW-DRAFT-{index:04d}" for index in range(74, 76)],
+        24: ["ROW-DRAFT-0077"],
+        25: ["ROW-DRAFT-0086"],
+        26: [f"ROW-DRAFT-{index:04d}" for index in range(87, 94)],
+        27: ["ROW-DRAFT-0100"],
+        28: [f"ROW-DRAFT-{index:04d}" for index in range(101, 106)],
+        29: ["ROW-DRAFT-0107"],
     }
-    reserved = set(component_rows[9] + component_rows[15] + component_rows[16])
-    ordinary_groups = [index for index in range(1, 32) if index not in (9, 15, 16)]
+    reserved = {row_id for rows in component_rows.values() for row_id in rows}
+    ordinary_groups = [
+        index
+        for index in range(1, 32)
+        if index not in {9, 15, 19, 24, 25, 26, 27, 28, 29}
+    ]
     for index in ordinary_groups:
         component_rows[index] = []
     for position, row_id in enumerate(
@@ -84,14 +317,26 @@ def synthetic_inputs(
     component_groups: list[dict[str, Any]] = []
     for index in range(1, 32):
         review_id = f"COMPONENT-LABEL-REVIEW-{index:03d}"
-        mapping_id = f"COMPONENT-MAPPING-{index:03d}"
+        if index <= 9:
+            mapping_number = index
+        elif index <= 13:
+            mapping_number = 10
+        elif index <= 19:
+            mapping_number = index - 3
+        elif index <= 23:
+            mapping_number = 17
+        elif index <= 29:
+            mapping_number = 18
+        else:
+            mapping_number = index - 11
+        mapping_id = f"COMPONENT-MAPPING-{mapping_number:03d}"
         rows = component_rows[index]
         code: str | None = "EKF-VA47-29-1P"
         install_type: str | None = "modular_1p"
         base_label = "Автоматический выключатель ВА47 1Р 16А — 1шт."
         breaking_capacity_applies = index <= 18
         breaking_capacity_approval: str | None = None
-        if index in (9, 16):
+        if index in (9, 19):
             code = None
             install_type = None
             base_label = "Дифференциальный автомат АД12 2Р 16А, 30мА — 1шт."
@@ -101,7 +346,7 @@ def synthetic_inputs(
             install_type = "diff_1p_n"
             base_label = "АД12, 2P, C16, 30мА"
             breaking_capacity_approval = "6кА"
-        elif index > 18:
+        elif index >= 20:
             code = "EKF-VN-32-3P"
             install_type = "load_switch_3p"
             base_label = "Вводной выключатель нагрузки 3Р Iр=16А - 1шт."
@@ -170,6 +415,15 @@ def synthetic_inputs(
         "component_label_review_groups": component_groups,
         "cabinet_label_review_groups": cabinet_groups,
     }
+    mapping_018_path = tmp_path / "mapping-018.json"
+    mapping_018_sha = write_json(
+        mapping_018_path, mapping_018_artifact(mapping_018_path)
+    )
+    monkeypatch.setattr(
+        application, "MAPPING_018_DECISION_PATH", mapping_018_path.resolve()
+    )
+    monkeypatch.setattr(application, "MAPPING_018_DECISION_SHA256", mapping_018_sha)
+    bind_mapping_018_parent(parent, mapping_018_path, mapping_018_sha)
     parent_path = tmp_path / "parent.json"
     parent_sha = write_json(parent_path, parent)
 
@@ -235,6 +489,23 @@ def synthetic_inputs(
             "component_coverage": "109/109",
             "cabinet_coverage": "14/14",
             "scope_expansion": False,
+            "source_component_coverage": {
+                "mapping_018_rows": "16/16",
+                "mapping_018_groups": "6/6",
+                "duplicate_mapping_018_membership": 0,
+            },
+        },
+        "application_authorized": False,
+        "application_status": "NOT_APPLIED",
+        "workflow_safety_state": {
+            "human_decisions_applied": False,
+            "application_authorized": False,
+            "application_status": "NOT_APPLIED",
+            "completed_input_created": False,
+            "calculator_started": False,
+            "custom_sche_resolver_started": False,
+            "downstream_started": False,
+            "prices_read": False,
         },
         "resolved_human_review_not_applied": {
             "breaking_capacity_decisions": [
@@ -313,7 +584,7 @@ def synthetic_inputs(
             }
             for index, mapping_id in (
                 (9, "COMPONENT-MAPPING-009"),
-                (16, "COMPONENT-MAPPING-016"),
+                (19, "COMPONENT-MAPPING-016"),
             )
         ],
     }
@@ -326,6 +597,12 @@ def synthetic_inputs(
         for row_id in rows
     }
     row_to_quantity = {row_id: 1 for rows in component_rows.values() for row_id in rows}
+    row_to_quantity.update(
+        {
+            membership["row_draft_id"]: membership["quantity_per_individual_cabinet"]
+            for membership in application.mapping_018_expected_row_membership()
+        }
+    )
     draft = {
         "schema_version": "price_calculator_input_draft.v0.2",
         "draft_type": "price_calculator_input_draft",
@@ -486,6 +763,7 @@ def synthetic_inputs(
         "products": product_path,
         "standard": standard_path,
         "ad12": ad12_path,
+        "mapping018": mapping_018_path,
     }
 
 
@@ -506,6 +784,9 @@ def expected_sha_arguments(inputs: dict[str, Path]) -> dict[str, str]:
         "expected_ad12_breaking_capacity_decisions_sha256": hashlib.sha256(
             inputs["ad12"].read_bytes()
         ).hexdigest(),
+        "expected_mapping_018_decisions_sha256": hashlib.sha256(
+            inputs["mapping018"].read_bytes()
+        ).hexdigest(),
     }
 
 
@@ -518,6 +799,7 @@ def application_arguments(
         "sche_product_name_decisions_json": inputs["products"],
         "standard_product_name_decisions_json": inputs["standard"],
         "ad12_breaking_capacity_decisions_json": inputs["ad12"],
+        "mapping_018_decisions_json": inputs["mapping018"],
         "output_json": output,
         "application_authorized_by_igor": authorized,
         **expected_sha_arguments(inputs),
@@ -538,6 +820,28 @@ def validate_standard_fixture(
         application.validate_standard_product_name_decisions(
             artifact,
             draft["cabinet_groups"],
+            parent["cabinet_label_review_groups"],
+            parent_path=parent_path,
+            parent_sha256=parent_binding["sha256"],
+        ),
+    )
+
+
+def validate_mapping_018_fixture(
+    inputs: dict[str, Path], artifact: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    effective = json.loads(inputs["effective"].read_text(encoding="utf-8"))
+    parent_binding = effective["source_lineage"]["parent_effective_packet"]
+    parent_path = Path(parent_binding["path"]).resolve(strict=False)
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    decisions = artifact or json.loads(inputs["mapping018"].read_text(encoding="utf-8"))
+    return cast(
+        dict[str, Any],
+        application.validate_mapping_018_decisions(
+            decisions,
+            effective,
+            parent,
+            parent["component_label_review_groups"],
             parent["cabinet_label_review_groups"],
             parent_path=parent_path,
             parent_sha256=parent_binding["sha256"],
@@ -573,7 +877,15 @@ def test_v02_completion_preserves_scope_quantity_and_scoped_bc(
     assert output.is_file()
     assert len(rows) == 109
     assert len(payload["cabinet_groups"]) == 14
-    assert all(row["calculator_values"]["component_qty"] == 1 for row in rows.values())
+    mapping_018_quantities = {
+        membership["row_draft_id"]: membership["quantity_per_individual_cabinet"]
+        for membership in application.mapping_018_expected_row_membership()
+    }
+    assert all(
+        row["calculator_values"]["component_qty"]
+        == mapping_018_quantities.get(row_id, 1)
+        for row_id, row in rows.items()
+    )
     assert all(
         ("4,5кА" in rows[row_id]["component_label"]) == (row_id in ad12_rows)
         for row_id in rows
@@ -587,6 +899,17 @@ def test_v02_completion_preserves_scope_quantity_and_scoped_bc(
         "EKF-AD32-1P-N"
     )
     assert "6кА" in rows["ROW-DRAFT-0015"]["component_label"]
+    assert all(
+        rows[row_id]["calculator_values"]["component_code"]
+        == application.MAPPING_018_COMPONENT_CODE
+        and rows[row_id]["calculator_values"]["install_type"]
+        == application.MAPPING_018_INSTALL_TYPE
+        and "кА" not in rows[row_id]["component_label"]
+        for row_id in application.MAPPING_018_ROW_IDS
+    )
+    assert payload["completion"]["mapping_018"]["row_draft_ids"] == list(
+        application.MAPPING_018_ROW_IDS
+    )
     assert payload["completion"]["scope"] == {
         "component_groups": 31,
         "rows": "109/109",
@@ -773,6 +1096,215 @@ def test_standard_artifact_duplicate_json_key_is_rejected(
         application.load_json(path, "standard product-name decisions")
 
 
+def test_valid_mapping_018_artifact_has_exact_six_group_sixteen_row_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = synthetic_inputs(tmp_path, monkeypatch)
+
+    states = validate_mapping_018_fixture(inputs)
+
+    assert list(states) == list(application.MAPPING_018_REVIEW_GROUP_IDS)
+    assert {state["cabinet_template"] for state in states.values()} == {
+        "ЩЭ-3кв",
+        "ЩЭ-4кв",
+        "ЩЭ-5кв",
+        "ЩЭ-6кв",
+    }
+    assert len(application.mapping_018_expected_row_membership()) == 16
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "schema",
+        "project",
+        "status",
+        "authority",
+        "scope_mapping",
+        "scope_group_missing",
+        "scope_group_extra",
+        "scope_group_duplicate",
+        "scope_group_reordered",
+        "scope_row_missing",
+        "scope_row_extra",
+        "scope_row_duplicate",
+        "scope_row_reordered",
+        "membership",
+        "technical_state",
+        "quantity_semantics",
+        "apparatus_isolation",
+        "question_resolution",
+        "technical_non_applicability",
+        "application_status",
+        "immutable",
+        "no_overwrite",
+        "safety_missing",
+        "safety_true",
+        "lineage_immutable",
+        "lineage_path",
+        "workbook_read",
+    ],
+)
+def test_mapping_018_artifact_contract_mutations_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    inputs = synthetic_inputs(tmp_path, monkeypatch)
+    artifact = json.loads(inputs["mapping018"].read_text(encoding="utf-8"))
+    scope = artifact["exact_approved_scope"]
+    if mutation == "schema":
+        artifact["schema_version"] = "wrong"
+    elif mutation == "project":
+        artifact["project_id"] = "wrong"
+    elif mutation == "status":
+        artifact["status"] = "APPLIED"
+    elif mutation == "authority":
+        artifact["authority"]["authority_type"] = "NOT_DIRECT"
+    elif mutation == "scope_mapping":
+        scope["mapping_request_id"] = "COMPONENT-MAPPING-017"
+    elif mutation == "scope_group_missing":
+        scope["review_group_ids"].pop()
+    elif mutation == "scope_group_extra":
+        scope["review_group_ids"].append("COMPONENT-LABEL-REVIEW-030")
+    elif mutation == "scope_group_duplicate":
+        scope["review_group_ids"][1] = scope["review_group_ids"][0]
+    elif mutation == "scope_group_reordered":
+        scope["review_group_ids"].reverse()
+    elif mutation == "scope_row_missing":
+        scope["row_draft_ids"].pop()
+    elif mutation == "scope_row_extra":
+        scope["row_draft_ids"].append("ROW-DRAFT-9999")
+    elif mutation == "scope_row_duplicate":
+        scope["row_draft_ids"][1] = scope["row_draft_ids"][0]
+    elif mutation == "scope_row_reordered":
+        scope["row_draft_ids"].reverse()
+    elif mutation == "membership":
+        scope["row_membership"][0]["canonical_invoice_range"] = "wrong"
+    elif mutation == "technical_state":
+        artifact["approved_technical_state"][0]["component_code"] = "WRONG"
+    elif mutation == "quantity_semantics":
+        artifact["quantity_semantics"]["value"] = "PROJECT_TOTAL"
+    elif mutation == "apparatus_isolation":
+        artifact["apparatus_isolation"]["isolation_required"] = False
+    elif mutation == "question_resolution":
+        artifact["question_resolution"]["new_breaking_capacity_questions_created"] = 1
+    elif mutation == "technical_non_applicability":
+        artifact["technical_non_applicability"]["exact_article"] = "invented"
+    elif mutation == "application_status":
+        artifact["application_status"] = "APPLIED"
+    elif mutation == "immutable":
+        artifact["immutable_state"]["immutable"] = False
+    elif mutation == "no_overwrite":
+        artifact["immutable_state"]["no_overwrite"] = False
+    elif mutation == "safety_missing":
+        artifact["safety_state"].pop("downstream_started")
+    elif mutation == "safety_true":
+        artifact["safety_state"]["pricing_input_modified"] = True
+    elif mutation == "lineage_immutable":
+        artifact["source_lineage"]["mapping_018_audit"]["immutable"] = False
+    elif mutation == "lineage_path":
+        artifact["source_lineage"]["mapping_018_audit"]["path"] = "wrong.json"
+    else:
+        artifact["source_lineage"]["canonical_workbook"][
+            "workbook_content_read_for_this_capture"
+        ] = True
+
+    with pytest.raises(application.CompletionError):
+        validate_mapping_018_fixture(inputs, artifact)
+
+
+def test_mapping_018_artifact_duplicate_json_key_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "duplicate-mapping018.json"
+    path.write_text('{"schema_version":"a","schema_version":"b"}', encoding="utf-8")
+
+    with pytest.raises(application.CompletionError, match="duplicate JSON key"):
+        application.load_json(path, "mapping018 decisions")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "parent_binding",
+        "parent_lineage",
+        "effective_coverage",
+        "effective_safety",
+        "group_order",
+        "group_mapping",
+        "group_mapping_path",
+        "group_template",
+        "group_rows",
+        "group_label",
+        "group_code",
+        "group_article",
+        "group_install",
+        "group_evidence_provenance",
+        "cabinet_membership_missing",
+        "cabinet_binding",
+    ],
+)
+def test_mapping_018_parent_and_effective_mutations_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    inputs = synthetic_inputs(tmp_path, monkeypatch)
+    effective = json.loads(inputs["effective"].read_text(encoding="utf-8"))
+    parent_binding = effective["source_lineage"]["parent_effective_packet"]
+    parent_path = Path(parent_binding["path"]).resolve(strict=False)
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    groups = parent["component_label_review_groups"]
+    cabinets = parent["cabinet_label_review_groups"]
+    if mutation == "parent_binding":
+        parent_binding["sha256"] = "0" * 64
+    elif mutation == "parent_lineage":
+        parent["source_lineage"]["mapping_018_full_approval_human_decision"][
+            "application_status"
+        ] = "APPLIED"
+    elif mutation == "effective_coverage":
+        effective["invariants"]["source_component_coverage"][
+            "mapping_018_rows"
+        ] = "15/16"
+    elif mutation == "effective_safety":
+        effective["workflow_safety_state"]["prices_read"] = True
+    elif mutation == "group_order":
+        groups[23], groups[24] = groups[24], groups[23]
+    elif mutation == "group_mapping":
+        groups[23]["mapping_request_id"] = "COMPONENT-MAPPING-017"
+    elif mutation == "group_mapping_path":
+        groups[23]["mapping_decision"]["json_path"] = "$.component_decisions[16]"
+    elif mutation == "group_template":
+        groups[23]["cabinet_templates"] = ["ЩЭ-4кв"]
+    elif mutation == "group_rows":
+        groups[23]["row_draft_ids"] = []
+    elif mutation == "group_label":
+        groups[23]["proposed_authoritative_component_label"] = "WRONG"
+    elif mutation == "group_code":
+        groups[23]["approved_internal_component_code"] = "invented"
+    elif mutation == "group_article":
+        groups[23]["approved_article"] = "invented"
+    elif mutation == "group_install":
+        groups[23]["install_type"] = "invented"
+    elif mutation == "group_evidence_provenance":
+        groups[23]["source_notation_provenance"][0]["component_evidence_id"] = "WRONG"
+    elif mutation == "cabinet_membership_missing":
+        cabinets[9]["affected_row_draft_ids"].remove("ROW-DRAFT-0077")
+    else:
+        cabinets[9]["source_cabinet_template"] = "ЩЭ-4кв"
+
+    artifact = json.loads(inputs["mapping018"].read_text(encoding="utf-8"))
+    with pytest.raises(application.CompletionError):
+        application.validate_mapping_018_decisions(
+            artifact,
+            effective,
+            parent,
+            groups,
+            cabinets,
+            parent_path=parent_path,
+            parent_sha256=parent_binding["sha256"],
+        )
+
+
 def test_standard_and_sche_product_scopes_must_not_overlap() -> None:
     standard = dict(application.STANDARD_PRODUCT_NAMES)
     sche = dict(application.SCHE_PRODUCT_NAMES)
@@ -790,6 +1322,7 @@ def test_standard_and_sche_product_scopes_must_not_overlap() -> None:
         "expected_sche_product_name_decisions_sha256",
         "expected_standard_product_name_decisions_sha256",
         "expected_ad12_breaking_capacity_decisions_sha256",
+        "expected_mapping_018_decisions_sha256",
     ],
 )
 def test_v02_completion_rejects_each_expected_sha_mismatch_without_output(
@@ -821,6 +1354,20 @@ def test_standard_artifact_path_is_hard_bound_without_output(
     assert not output.exists()
 
 
+def test_mapping_018_artifact_path_is_hard_bound_without_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = synthetic_inputs(tmp_path, monkeypatch)
+    copied = tmp_path / "copied-mapping018.json"
+    copied.write_bytes(inputs["mapping018"].read_bytes())
+    inputs["mapping018"] = copied
+    output = tmp_path / "wrong-mapping018-path-output.json"
+
+    with pytest.raises(application.CompletionError, match="mapping018 decision path"):
+        application.apply_v02_completion(**application_arguments(inputs, output))
+    assert not output.exists()
+
+
 def test_application_lineage_contains_exact_standard_input(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -832,6 +1379,17 @@ def test_application_lineage_contains_exact_standard_input(
     assert standard_lineage == {
         "path": str(application.STANDARD_PRODUCT_DECISION_PATH),
         "sha256": application.STANDARD_PRODUCT_DECISION_SHA256,
+    }
+
+
+def test_application_lineage_contains_exact_mapping_018_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload, _output = apply_fixture(tmp_path, monkeypatch)
+
+    assert payload["completion"]["lineage"]["mapping_018_decisions"] == {
+        "path": str(application.MAPPING_018_DECISION_PATH),
+        "sha256": application.MAPPING_018_DECISION_SHA256,
     }
 
 
@@ -892,6 +1450,7 @@ def test_readiness_mode_validates_without_authorization_or_output(
         sche_product_name_decisions_json=inputs["products"],
         standard_product_name_decisions_json=inputs["standard"],
         ad12_breaking_capacity_decisions_json=inputs["ad12"],
+        mapping_018_decisions_json=inputs["mapping018"],
         **hashes,
     )
 
@@ -915,6 +1474,7 @@ def test_readiness_mode_preserves_existing_quantity_gate(
             sche_product_name_decisions_json=inputs["products"],
             standard_product_name_decisions_json=inputs["standard"],
             ad12_breaking_capacity_decisions_json=inputs["ad12"],
+            mapping_018_decisions_json=inputs["mapping018"],
             **expected_sha_arguments(inputs),
         )
 
@@ -936,6 +1496,7 @@ def test_readiness_rejects_missing_standard_product_without_output(
             sche_product_name_decisions_json=inputs["products"],
             standard_product_name_decisions_json=inputs["standard"],
             ad12_breaking_capacity_decisions_json=inputs["ad12"],
+            mapping_018_decisions_json=inputs["mapping018"],
             **expected_sha_arguments(inputs),
         )
     assert not forbidden_output.exists()
@@ -970,6 +1531,7 @@ def test_application_readiness_accepts_valid_successor_contract_via_seam(
         sche_product_name_decisions_json=inputs["products"],
         standard_product_name_decisions_json=inputs["standard"],
         ad12_breaking_capacity_decisions_json=inputs["ad12"],
+        mapping_018_decisions_json=inputs["mapping018"],
         **expected_sha_arguments(inputs),
     )
     assert len(calls) == 1
@@ -1004,6 +1566,7 @@ def test_application_readiness_rejects_transitive_successor_failure(
             sche_product_name_decisions_json=inputs["products"],
             standard_product_name_decisions_json=inputs["standard"],
             ad12_breaking_capacity_decisions_json=inputs["ad12"],
+            mapping_018_decisions_json=inputs["mapping018"],
             **expected_sha_arguments(inputs),
         )
 
@@ -1036,6 +1599,21 @@ def test_full_application_runs_embedded_successor_validator_without_seam(
             contract_row["source_component_evidence_ids"]
         )
         row["approved_signature"] = copy.deepcopy(contract_row["approved_signature"])
+    mapping_018_evidence = {
+        membership["row_draft_id"]: membership["component_evidence_id"]
+        for membership in application.mapping_018_expected_row_membership()
+    }
+    mapping_018_quantities = {
+        membership["row_draft_id"]: membership["quantity_per_individual_cabinet"]
+        for membership in application.mapping_018_expected_row_membership()
+    }
+    for row in application_base["calculator_input_format"]["row_drafts"]:
+        evidence_id = mapping_018_evidence.get(row["row_id"])
+        if evidence_id is not None:
+            row["source_component_evidence_ids"] = [evidence_id]
+            row["calculator_values"]["component_qty"] = mapping_018_quantities[
+                row["row_id"]
+            ]
 
     base_path = tmp_path / "successor-base.json"
     base_sha = write_json(base_path, application_base)
@@ -1079,6 +1657,11 @@ def test_full_application_runs_embedded_successor_validator_without_seam(
     builder_parent["cabinet_label_review_groups"] = original_parent[
         "cabinet_label_review_groups"
     ]
+    bind_mapping_018_parent(
+        builder_parent,
+        inputs["mapping018"],
+        hashlib.sha256(inputs["mapping018"].read_bytes()).hexdigest(),
+    )
     parent_path = tmp_path / "successor-parent.json"
     parent_sha = write_json(parent_path, builder_parent)
     monkeypatch.setattr(builder, "PARENT_SHA256", parent_sha)
@@ -1175,6 +1758,7 @@ def test_readiness_rejects_malformed_successor_provenance(
             sche_product_name_decisions_json=inputs["products"],
             standard_product_name_decisions_json=inputs["standard"],
             ad12_breaking_capacity_decisions_json=inputs["ad12"],
+            mapping_018_decisions_json=inputs["mapping018"],
             **expected_sha_arguments(inputs),
         )
 
@@ -1208,6 +1792,10 @@ def test_readiness_cli_forbids_application_authorization(
             str(inputs["ad12"]),
             "--expected-ad12-breaking-capacity-decisions-sha256",
             hashes["expected_ad12_breaking_capacity_decisions_sha256"],
+            "--mapping-018-decisions-json",
+            str(inputs["mapping018"]),
+            "--expected-mapping-018-decisions-sha256",
+            hashes["expected_mapping_018_decisions_sha256"],
             "--readiness-only",
             "--application-authorized-by-igor",
         ]
@@ -1255,6 +1843,39 @@ def test_standard_input_toctou_drift_fails_without_output(
         application.CompletionError,
         match="changed.*standard_product_name_decisions",
     ):
+        application.apply_v02_completion(
+            **application_arguments(inputs, output),
+            applied_at_utc="2026-08-11T00:00:00+00:00",
+        )
+    assert not output.exists()
+    assert not list(tmp_path.glob(".*.staging"))
+
+
+@pytest.mark.parametrize("failure", ["drift", "read_error"])
+def test_mapping_018_input_recheck_fails_closed_and_cleans_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    inputs = synthetic_inputs(tmp_path, monkeypatch)
+    output = tmp_path / f"mapping018-{failure}-output.json"
+    original_complete = application.complete_v02_payload
+
+    def complete_then_break_input(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = cast(dict[str, Any], original_complete(*args, **kwargs))
+        if failure == "drift":
+            inputs["mapping018"].write_text("drift", encoding="utf-8")
+        else:
+            inputs["mapping018"].unlink()
+        return payload
+
+    monkeypatch.setattr(application, "complete_v02_payload", complete_then_break_input)
+    expected = (
+        "changed.*mapping_018_decisions"
+        if failure == "drift"
+        else "cannot be rechecked: mapping_018_decisions"
+    )
+    with pytest.raises(application.CompletionError, match=expected):
         application.apply_v02_completion(
             **application_arguments(inputs, output),
             applied_at_utc="2026-08-11T00:00:00+00:00",
