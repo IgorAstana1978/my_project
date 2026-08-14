@@ -1303,3 +1303,97 @@ def test_custom_sche_uses_checked_base_cost_without_price_row(
 
     assert result.status == "PASS"
     assert result.cabinet_price == 10000
+
+
+def test_invoice519_exact_pr_formula_anchors_are_calculated() -> None:
+    for material, work, expected in ((14850, 3024, 54023), (17050, 3564, 59166)):
+        result = calculator.calculate_invoice519_position_price(
+            project_id="2024/086",
+            profile_decision_id="IGOR-INVOICE519-PRICING-PROFILE-2024-086-001",
+            formula_family="CURRENT_MODULAR_CASE_PROFILE",
+            cabinet_code="CAB-KURN-038-24",
+            cabinet_base_kzt=12557,
+            additional_cabinet_cost_kzt=0,
+            component_material_total_kzt=material,
+            work_total_kzt=work,
+            physical_multiplicity=1,
+        )
+
+        assert result.rounded_unit_price_kzt == expected
+        assert result.position_total_kzt == expected
+        assert result.apartment_component_kzt == 0
+        assert result.unrounded_unit_price_kzt != Decimal(expected)
+
+
+def test_invoice519_exact_sche_formula_anchors_are_calculated() -> None:
+    cases = (
+        (3, 9600, 2592, 80413),
+        (4, 12800, 3456, 96270),
+        (5, 16000, 4320, 112127),
+        (6, 19200, 5184, 127984),
+    )
+    for apartments, material, work, expected in cases:
+        result = calculator.calculate_invoice519_position_price(
+            project_id="2024/086",
+            profile_decision_id="IGOR-INVOICE519-PRICING-PROFILE-2024-086-001",
+            formula_family="CURRENT_SCHE_CASE_PROFILE",
+            cabinet_code="CAB-SCHE-BI-900X900X120-M12",
+            cabinet_base_kzt=20305,
+            additional_cabinet_cost_kzt=0,
+            component_material_total_kzt=material,
+            work_total_kzt=work,
+            physical_multiplicity=2,
+            apartment_count=apartments,
+        )
+
+        assert result.rounded_unit_price_kzt == expected
+        assert result.position_total_kzt == expected * 2
+        assert result.apartment_component_kzt == 5100 * apartments
+
+
+def test_invoice519_formula_is_exact_scope_and_fail_closed() -> None:
+    valid = {
+        "project_id": "2024/086",
+        "profile_decision_id": "IGOR-INVOICE519-PRICING-PROFILE-2024-086-001",
+        "formula_family": "CURRENT_MODULAR_CASE_PROFILE",
+        "cabinet_code": "CAB-KRN-12",
+        "cabinet_base_kzt": 6936,
+        "additional_cabinet_cost_kzt": 0,
+        "component_material_total_kzt": 100,
+        "work_total_kzt": 20,
+        "physical_multiplicity": 1,
+    }
+    invalid_overrides = (
+        {"project_id": "OTHER"},
+        {"profile_decision_id": "OTHER"},
+        {"cabinet_code": "UNKNOWN"},
+        {"cabinet_base_kzt": 18762},
+        {"additional_cabinet_cost_kzt": 1},
+        {"component_material_total_kzt": -1},
+        {"work_total_kzt": -1},
+        {"physical_multiplicity": 0},
+        {"formula_family": "RESERVED"},
+        {"apartment_count": 3},
+    )
+    for override in invalid_overrides:
+        arguments = valid | override
+        try:
+            calculator.calculate_invoice519_position_price(**arguments)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected fail-closed formula for {override}")
+
+    for apartments in (None, 2, 7):
+        arguments = valid | {
+            "formula_family": "CURRENT_SCHE_CASE_PROFILE",
+            "cabinet_code": "CAB-SCHE-BI-900X900X120-M12",
+            "cabinet_base_kzt": 20305,
+            "apartment_count": apartments,
+        }
+        try:
+            calculator.calculate_invoice519_position_price(**arguments)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid ЩЭ apartment scope must fail")

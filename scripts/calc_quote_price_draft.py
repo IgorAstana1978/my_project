@@ -30,6 +30,23 @@ POSITIVE_INTEGER_RE = re.compile(r"[1-9][0-9]*\Z")
 POSITIVE_DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z")
 MATERIAL_MULTIPLIER = Decimal("1.25")
 FINAL_MULTIPLIER = Decimal("1.15")
+INVOICE519_PROJECT_ID = "2024/086"
+INVOICE519_PROFILE_DECISION_ID = "IGOR-INVOICE519-PRICING-PROFILE-2024-086-001"
+INVOICE519_CASE_CORRECTION = Decimal("1.08765")
+INVOICE519_VAT_DIVISOR = Decimal("1.16")
+INVOICE519_BUYER_REPRESENTATIVE_BONUS = Decimal("1.2")
+INVOICE519_INTERNAL_MATERIAL_FACTOR = Decimal("1.2")
+INVOICE519_SCHE_APARTMENT_COMPONENT_KZT = 5100
+INVOICE519_MODULAR_FORMULA_FAMILY = "CURRENT_MODULAR_CASE_PROFILE"
+INVOICE519_SCHE_FORMULA_FAMILY = "CURRENT_SCHE_CASE_PROFILE"
+INVOICE519_SCHE_CABINET_CODE = "CAB-SCHE-BI-900X900X120-M12"
+INVOICE519_CABINET_BASES_KZT = {
+    "CAB-KURN-038-24": 12557,
+    "CAB-KRN-18": 7678,
+    "CAB-KRN-12": 6936,
+    "CAB-KRN-24": 7985,
+    "CAB-SCHE-BI-900X900X120-M12": 20305,
+}
 
 
 @dataclass(frozen=True)
@@ -371,6 +388,98 @@ class PriceCalculationResult:
     base: Decimal | None = None
     total_preliminary_price: int | None = None
     red_flags: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class Invoice519PositionPrice:
+    formula_family: str
+    cabinet_base_kzt: int
+    additional_cabinet_cost_kzt: int
+    component_material_total_kzt: int
+    work_total_kzt: int
+    apartment_component_kzt: int
+    unrounded_unit_price_kzt: Decimal
+    rounded_unit_price_kzt: int
+    physical_multiplicity: int
+    position_total_kzt: int
+
+
+def calculate_invoice519_position_price(
+    *,
+    project_id: str,
+    profile_decision_id: str,
+    formula_family: str,
+    cabinet_code: str,
+    cabinet_base_kzt: int,
+    additional_cabinet_cost_kzt: int,
+    component_material_total_kzt: int,
+    work_total_kzt: int,
+    physical_multiplicity: int,
+    apartment_count: int | None = None,
+) -> Invoice519PositionPrice:
+    """Apply the exact case-scoped Invoice 519 position formula."""
+    if (
+        project_id != INVOICE519_PROJECT_ID
+        or profile_decision_id != INVOICE519_PROFILE_DECISION_ID
+    ):
+        raise ValueError("Invoice 519 pricing tail is restricted to its exact project")
+    expected_base = INVOICE519_CABINET_BASES_KZT.get(cabinet_code)
+    if expected_base is None or cabinet_base_kzt != expected_base:
+        raise ValueError("cabinet base does not match the exact Invoice 519 profile")
+    if (
+        additional_cabinet_cost_kzt != 0
+        or component_material_total_kzt < 0
+        or work_total_kzt < 0
+        or physical_multiplicity <= 0
+    ):
+        raise ValueError("Invoice 519 position inputs are outside the approved scope")
+
+    apartment_component_kzt = 0
+    if formula_family == INVOICE519_SCHE_FORMULA_FAMILY:
+        if cabinet_code != INVOICE519_SCHE_CABINET_CODE or apartment_count not in {
+            3,
+            4,
+            5,
+            6,
+        }:
+            raise ValueError("custom ЩЭ formula identity is invalid")
+        apartment_component_kzt = (
+            INVOICE519_SCHE_APARTMENT_COMPONENT_KZT * apartment_count
+        )
+    elif formula_family == INVOICE519_MODULAR_FORMULA_FAMILY:
+        if cabinet_code == INVOICE519_SCHE_CABINET_CODE or apartment_count is not None:
+            raise ValueError("modular formula cannot use custom ЩЭ inputs")
+    else:
+        raise ValueError("reserved or unknown formula family cannot be applied")
+
+    formula_base = (
+        Decimal(cabinet_base_kzt)
+        + Decimal(additional_cabinet_cost_kzt)
+        + Decimal(component_material_total_kzt) * INVOICE519_INTERNAL_MATERIAL_FACTOR
+        + Decimal(work_total_kzt)
+        + Decimal(apartment_component_kzt)
+    )
+    unrounded = (
+        formula_base
+        * MATERIAL_MULTIPLIER
+        * FINAL_MULTIPLIER
+        * INVOICE519_CASE_CORRECTION
+        / INVOICE519_VAT_DIVISOR
+        * INVOICE519_BUYER_REPRESENTATIVE_BONUS
+    )
+    rounded = int(unrounded.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return Invoice519PositionPrice(
+        formula_family=formula_family,
+        cabinet_base_kzt=cabinet_base_kzt,
+        additional_cabinet_cost_kzt=additional_cabinet_cost_kzt,
+        component_material_total_kzt=component_material_total_kzt,
+        work_total_kzt=work_total_kzt,
+        apartment_component_kzt=apartment_component_kzt,
+        unrounded_unit_price_kzt=unrounded,
+        rounded_unit_price_kzt=rounded,
+        physical_multiplicity=physical_multiplicity,
+        position_total_kzt=rounded * physical_multiplicity,
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
