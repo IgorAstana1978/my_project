@@ -1012,6 +1012,78 @@ def valid_pricing_profile_contract() -> dict[str, Any]:
     }
 
 
+def additive_pricing_profile_contract(completed_path: Path) -> dict[str, Any]:
+    profile = valid_pricing_profile_contract()
+    completed_sha = "a" * 64
+    profile["additive_successor"] = {
+        "contract": runner.ADDITIVE_PROFILE_CONTRACT,
+        "project_id": "2024/086",
+        "parent": {
+            "path": str(runner.PRICING_PROFILE_PATH),
+            "sha256": runner.PRICING_PROFILE_SHA256,
+        },
+        "completed_input_successor": {
+            "path": str(completed_path),
+            "sha256": completed_sha,
+            "contract": runner.ADDITIVE_COMPLETED_CONTRACT,
+        },
+        "direct_human_decision_inputs": copy.deepcopy(
+            runner.ADDITIVE_DECISION_BINDINGS
+        ),
+        "append_only": True,
+        "scope_expansion": False,
+        "pricing_calculation_executed": False,
+        "approved_shu_t1_unit_price_kzt": 53763,
+        "approved_shu_t1_exact_scope_total_kzt": 215052,
+        "candidate_project_total_kzt": 11841516,
+        "candidate_project_total_status": runner.PROFILE_DRAFT_STATUS,
+        "price_approval_status": runner.PROFILE_APPROVAL_STATUS,
+    }
+    profile["authoritative_inputs"].extend(
+        [
+            {
+                "role": "completed_technical_input_additive_successor",
+                "path": str(completed_path),
+                "sha256": completed_sha,
+                "schema_or_type": "price_calculator_input_draft.v0.2",
+                "purpose": "exact 15-group/112-row additive technical authority",
+            },
+            *copy.deepcopy(runner.ADDITIVE_DECISION_BINDINGS),
+        ]
+    )
+    profile["scope_partition"]["current_completed_technical_scope"]["coverage"] = (
+        copy.deepcopy(runner.ADDITIVE_PROFILE_COVERAGE)
+    )
+    return profile
+
+
+def test_additive_profile_exact_envelope_passes_and_drifts_fail(
+    tmp_path: Path,
+) -> None:
+    profile = additive_pricing_profile_contract(tmp_path / "completed-successor.json")
+    assert runner.validate_pricing_profile_contract(profile, profile_result(tmp_path))
+    mutations = [
+        lambda value: value["additive_successor"].__setitem__(
+            "candidate_project_total_kzt", 11841515
+        ),
+        lambda value: value["additive_successor"]["direct_human_decision_inputs"][
+            2
+        ].__setitem__("sha256", "0" * 64),
+        lambda value: value["additive_successor"].__setitem__(
+            "pricing_calculation_executed", True
+        ),
+        lambda value: value["scope_partition"]["current_completed_technical_scope"][
+            "coverage"
+        ].__setitem__("physical_cabinets", 136),
+    ]
+    for mutation in mutations:
+        changed = copy.deepcopy(profile)
+        mutation(changed)
+        result = profile_result(tmp_path)
+        assert not runner.validate_pricing_profile_contract(changed, result)
+        assert result.red_flags
+
+
 def profile_result(tmp_path: Path) -> Any:
     return runner.CheckedRunResult(
         completed_input_json=tmp_path / "completed.json",
@@ -1472,6 +1544,213 @@ def synthetic_profile_inventory() -> tuple[dict[str, Any], dict[str, Any]]:
     return completed, profile
 
 
+def synthetic_additive_profile_inventory(
+    completed_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    completed, profile = synthetic_profile_inventory()
+    completed["source"] = {
+        "additive_completed_input_successor": {
+            "contract": runner.ADDITIVE_COMPLETED_CONTRACT,
+            "direct_human_decision_inputs": copy.deepcopy(
+                runner.ADDITIVE_DECISION_BINDINGS
+            ),
+            "scope_expansion": False,
+        }
+    }
+    group = {
+        "cabinet_group_id": "CABINET-GROUP-015",
+        "source_cabinet_template": "ЩРН-12",
+        "product_name": "ШУ-Т1",
+        "cabinet_code": "CAB-KRN-12",
+        "cabinet_label": "Корпус КРН-12 265×330×100 мм, металл",
+        "row_draft_ids": ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"],
+    }
+    profile_group = {
+        "cabinet_group_id": "CABINET-GROUP-015",
+        "completed_input_json_path": "$.cabinet_groups[14]",
+        "source_cabinet_template": "ЩРН-12",
+        "product_name": "ШУ-Т1",
+        "cabinet_code": "CAB-KRN-12",
+        "cabinet_base_kzt": 6936,
+        "approved_additional_cabinet_cost_kzt": 0,
+        "formula_family": "CURRENT_MODULAR_CASE_PROFILE",
+        "row_draft_ids": ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"],
+    }
+    values = [
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-RT-820",
+            "component_qty": 1,
+            "install_type": "temperature_relay_din_2mod",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "component_qty": 1,
+            "install_type": "diff_1p_n",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-VA47-29-2P",
+            "component_qty": 1,
+            "install_type": "modular_2p",
+        },
+    ]
+    labels = [
+        "Реле температуры RT-820 EKF PROxima с внешним датчиком",
+        "АД12 Basic АВДТ 2P C16/30мА 4.5kA",
+        "Автоматический выключатель ВА47-29 BASIC 2P C10 4.5kA",
+    ]
+    new_rows = [
+        {
+            "row_id": f"ROW-DRAFT-{index:04d}",
+            "cabinet_group_id": "CABINET-GROUP-015",
+            "component_label": label,
+            "calculator_values": row_values,
+        }
+        for index, row_values, label in zip(
+            range(110, 113), values, labels, strict=True
+        )
+    ]
+    completed["cabinet_groups"].append(group)
+    completed["calculator_input_format"]["row_drafts"].extend(new_rows)
+    current = profile["current_completed_technical_scope"]
+    current["coverage"] = copy.deepcopy(runner.ADDITIVE_PROFILE_COVERAGE)
+    current["products"] = list(runner.ADDITIVE_PROFILE_PRODUCTS)
+    current["cabinet_groups"].append(profile_group)
+    position_ids = [f"PRICE-POSITION-{index:03d}" for index in range(52, 56)]
+    source_ids = ["TFE-006", "TFE-029", "TFE-052", "TFE-074"]
+    source_indexes = [5, 28, 51, 73]
+    sections = ["9", "11", "13", "15"]
+    documents = [
+        "b03d2d87f8ce6a8def89eed3e796dd5daaad1ba9ae55e07c5d643acfaa417e46",
+        "a00829db7ca196995a53b8313106e90037990a5284cef8fa7dcda92cdc24137e",
+        "02dde3268d3ceef4d4f0ad6e616f44bbfe37fe8f66a39d4b7fabb4a04b0aa6c2",
+        "4ca1bd6f27d6474e0fbf2b56d67ba8100016d4350556e704a91fc880ad0a62dd",
+    ]
+    new_positions = []
+    for position_id, source_id, source_index, section, document_sha in zip(
+        position_ids, source_ids, source_indexes, sections, documents, strict=True
+    ):
+        new_positions.append(
+            {
+                "pricing_position_id": position_id,
+                "technical_scope_status": "CURRENT_COMPLETED_INPUT_SCOPE",
+                "section": section,
+                "discipline": "ЭОМ",
+                "source_document": {
+                    "document_id": f"Секция {section}_ЭОМ.pdf",
+                    "sha256": document_sha,
+                },
+                "source_position_id": source_id,
+                "source_position_json_path": f"$.positions[{source_index}]",
+                "cabinet_group_id": "CABINET-GROUP-015",
+                "cabinet_group_json_path": "$.cabinet_groups[14]",
+                "product_name": "ШУ-Т1",
+                "cabinet_code": "CAB-KRN-12",
+                "row_draft_ids": [
+                    "ROW-DRAFT-0110",
+                    "ROW-DRAFT-0111",
+                    "ROW-DRAFT-0112",
+                ],
+                "row_draft_json_paths": [
+                    "$.calculator_input_format.row_drafts[109]",
+                    "$.calculator_input_format.row_drafts[110]",
+                    "$.calculator_input_format.row_drafts[111]",
+                ],
+                "composition_fingerprint_sha256": runner.SHU_T1_FINGERPRINT,
+                "physical_multiplicity": 1,
+                "unit_pricing_before_multiplicity": True,
+                "invoice_comparator": {"manual_override_used": False},
+                "pricing_calculation_status": "NOT_EXECUTED",
+                "approved_unit_price_kzt": 53763,
+                "approved_unit_price_decision_status": "APPROVED_NOT_APPLIED",
+            }
+        )
+    current["pricing_positions"].extend(new_positions)
+    current["composition_fingerprints"].append(
+        {
+            "fingerprint_sha256": runner.SHU_T1_FINGERPRINT,
+            "canonicalization": (
+                "SHA256 UTF-8 canonical JSON of sorted "
+                "component_code/component_qty/install_type tuples"
+            ),
+            "components": sorted(
+                [
+                    {
+                        "component_code": value["component_code"],
+                        "component_qty": value["component_qty"],
+                        "install_type": value["install_type"],
+                    }
+                    for value in values
+                ],
+                key=lambda item: (
+                    item["component_code"],
+                    item["component_qty"],
+                    item["install_type"],
+                ),
+            ),
+            "source_position_ids": source_ids,
+            "pricing_position_ids": position_ids,
+        }
+    )
+    profile["additive_successor"] = additive_pricing_profile_contract(completed_path)[
+        "additive_successor"
+    ]
+    return completed, profile
+
+
+def test_additive_inventory_builds_15_groups_55_positions_137_cabinets_12_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completed_path = tmp_path / "completed-successor.json"
+    completed, profile = synthetic_additive_profile_inventory(completed_path)
+    result = runner.CheckedRunResult(
+        completed_input_json=completed_path,
+        price_workbook=tmp_path / "prices.xlsx",
+    )
+    monkeypatch.setattr(
+        runner, "validate_profile_formula_contract", lambda current, root, output: True
+    )
+    positions = runner.validate_and_build_profile_positions(completed, profile, result)
+    assert len(positions) == 55
+    assert sum(position.physical_multiplicity for position in positions) == 137
+    assert (
+        len({position.composition_fingerprint_sha256 for position in positions}) == 12
+    )
+    assert [position.product_name for position in positions[-4:]] == ["ШУ-Т1"] * 4
+    assert not result.red_flags
+
+
+def test_additive_inventory_rejects_missing_binding_and_section_aggregation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        runner, "validate_profile_formula_contract", lambda current, root, output: True
+    )
+    completed_path = tmp_path / "completed-successor.json"
+    completed, profile = synthetic_additive_profile_inventory(completed_path)
+    completed["source"]["additive_completed_input_successor"][
+        "direct_human_decision_inputs"
+    ].pop()
+    result = runner.CheckedRunResult(completed_path, tmp_path / "prices.xlsx")
+    assert not runner.validate_and_build_profile_positions(completed, profile, result)
+
+    completed, profile = synthetic_additive_profile_inventory(completed_path)
+    profile["current_completed_technical_scope"]["pricing_positions"][-4][
+        "physical_multiplicity"
+    ] = 4
+    del profile["current_completed_technical_scope"]["pricing_positions"][-3:]
+    result = runner.CheckedRunResult(completed_path, tmp_path / "prices.xlsx")
+    assert not runner.validate_and_build_profile_positions(completed, profile, result)
+
+
 def test_exact_inventory_builds_14_groups_51_positions_133_cabinets_11_hashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1670,6 +1949,39 @@ def test_profile_inputs_have_initial_and_repeatable_toctou_sha_checks(
     assert any("drift" in flag for flag in result.red_flags)
 
 
+def test_additive_profile_rechecks_all_three_human_decision_shas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, profile, profile_path, metal = profile_bound_files(tmp_path, monkeypatch)
+    completed_input = profile["authoritative_inputs"][0]
+    completed_input["role"] = "completed_technical_input_additive_successor"
+    decision_paths = [tmp_path / f"decision-{index}.json" for index in range(1, 4)]
+    bindings = []
+    for index, path in enumerate(decision_paths, start=1):
+        path.write_bytes(f"decision-{index}".encode())
+        binding = {
+            "role": f"decision_{index}",
+            "path": str(path),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        bindings.append(binding)
+        profile["authoritative_inputs"].append(copy.deepcopy(binding))
+    profile["additive_successor"] = {}
+    monkeypatch.setattr(runner, "ADDITIVE_DECISION_BINDINGS", bindings)
+
+    snapshots = runner.capture_profile_input_shas(
+        result,
+        profile,
+        profile_path,
+        metal,
+    )
+    assert snapshots is not None
+    assert {"decision_1", "decision_2", "decision_3"} <= set(snapshots)
+    decision_paths[1].write_bytes(b"drift")
+    assert not runner.recheck_profile_input_shas(result, snapshots, "final")
+    assert any("decision_2" in flag for flag in result.red_flags)
+
+
 def test_profile_input_sha_checks_control_path_mismatch_missing_and_read_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1788,6 +2100,70 @@ def test_execute_profile_position_calculates_anchor_and_expands_result(
     assert result.group_summaries == {"CABINET-GROUP-001": 54023}
 
 
+def test_execute_shu_t1_profile_position_calculates_exact_53763_anchor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = profile_result(tmp_path)
+    position = runner.ProfilePositionInput(
+        pricing_position_id="PRICE-POSITION-052",
+        section="9",
+        discipline="ЭОМ",
+        source_document={"document_id": "Секция 9_ЭОМ.pdf", "sha256": "a" * 64},
+        cabinet_group_id="CABINET-GROUP-015",
+        product_name="ШУ-Т1",
+        cabinet_code="CAB-KRN-12",
+        formula_family="CURRENT_MODULAR_CASE_PROFILE",
+        row_draft_ids=["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"],
+        rows=[
+            {
+                "product_name": "ШУ-Т1",
+                "cabinet_code": "CAB-KRN-12",
+                "consumables_factor": 1.2,
+                "component_code": "EKF-RT-820",
+                "component_qty": 1,
+                "install_type": "temperature_relay_din_2mod",
+                "component_label": (
+                    "Реле температуры RT-820 EKF PROxima с внешним датчиком"
+                ),
+                "cabinet_label": "Корпус КРН-12 265×330×100 мм, металл",
+            },
+            {},
+            {},
+        ],
+        composition_fingerprint_sha256=runner.SHU_T1_FINGERPRINT,
+        physical_multiplicity=1,
+        apartment_count=None,
+        approved_unit_price_kzt=53763,
+        cabinet_base_kzt=6936,
+        additional_cabinet_cost_kzt=0,
+    )
+
+    def fake_execute(*args: Any, **kwargs: Any) -> bool:
+        result.item_summaries.append(
+            runner.ItemCalculationSummary(
+                product_name="ШУ-Т1",
+                input_rows_count=3,
+                cabinet="CAB-KRN-12 / cabinet",
+                cabinet_price="6 936",
+                component_material_total="20 450",
+                work_total="1 764",
+                additional_materials_total="4 090",
+                total_preliminary_price=47783,
+            )
+        )
+        return True
+
+    monkeypatch.setattr(runner, "execute_calculator", fake_execute)
+    calculator = runner.load_calculator_module()
+    assert runner.execute_profile_position(
+        result, position, tmp_path / "bridge.csv", calculator, None
+    )
+    calculation = result.position_calculations[0]
+    assert calculation.unrounded_unit_price_kzt == "53762.72702586206896551724138"
+    assert calculation.rounded_unit_price_kzt == 53763
+    assert calculation.position_total_kzt == 53763
+
+
 def test_execute_profile_position_rejects_failed_fields_formula_and_anchor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1852,6 +2228,46 @@ def test_execute_profile_position_rejects_failed_fields_formula_and_anchor(
         runner.load_calculator_module(),
         None,
     )
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, AttributeError])
+def test_execute_profile_position_formula_exceptions_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exception_type: type[Exception],
+) -> None:
+    source = Path(runner.__file__).read_text(encoding="utf-8")
+    assert "except (AttributeError, ValueError):  # fmt: skip" in source
+    result = profile_result(tmp_path)
+
+    def append_summary(*args: Any, **kwargs: Any) -> bool:
+        result.item_summaries.append(
+            runner.ItemCalculationSummary(
+                "ПР",
+                1,
+                "cabinet",
+                "12 557",
+                "14 850",
+                "3 024",
+                "2 970",
+                1,
+            )
+        )
+        return True
+
+    def fail_formula(**kwargs: Any) -> Any:
+        raise exception_type("synthetic formula failure")
+
+    monkeypatch.setattr(runner, "execute_calculator", append_summary)
+    assert not runner.execute_profile_position(
+        result,
+        sample_profile_position(),
+        tmp_path / "bridge.csv",
+        SimpleNamespace(calculate_invoice519_position_price=fail_formula),
+        None,
+    )
+    assert result.red_flags == ["case formula failed closed for PRICE-POSITION-001"]
+    assert not result.position_calculations
 
 
 def configure_profile_run_mocks(

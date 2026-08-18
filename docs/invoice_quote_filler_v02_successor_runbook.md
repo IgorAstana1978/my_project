@@ -4,6 +4,67 @@ This runbook covers only the fail-closed successor-draft path. It does not
 authorize a real successor build, technical-decision application, calculator
 run, custom ЩЭ resolver, pricing, CSV/XLSX/PDF creation, or downstream work.
 
+## ШУ-Т1 additive completed-input successor (code-only)
+
+The ШУ-Т1 path uses
+`scripts/build_completed_price_calculator_input_v02_additive_successor.py`.
+The name is intentional: this builder creates a successor to an already
+completed v0.2 input, not a draft successor. The similarly named
+`build_price_calculator_input_draft_v02_additive_successor.py` is forbidden.
+
+The parent is exact-bound to the immutable 14-group/109-row completed input
+with SHA-256
+`71d933c14a603c24ba8072311b84992d1708cbc7ff1fede59727e727218f5bdb`.
+All existing cabinet groups and rows remain a deep-equal prefix. The only
+allowed append is `CABINET-GROUP-015` plus `ROW-DRAFT-0110..0112`, producing
+15 cabinet groups, 34 component groups and 112 rows. The new group represents
+four section-aware physical ШУ-Т1 positions without aggregating their pricing
+grain.
+
+The builder requires all three direct Human Decision bindings together:
+
+- composition: `bccf62150488037b7df50804c88454119748be103da22dad456db2969126c008`;
+- cabinet/pricing: `b3a1bb84bacb2cc5127752cb378b2151552fcb443f02116b12269a086add4247`;
+- RT-820 code/install: `95c9f2610a6e8429242789e17c3b69ffae31db28655736aed12caa1d3939630f`.
+
+Path, SHA-256, schema, status, decision ID, direct Igor authority,
+`NOT_APPLIED`, immutability and no-overwrite semantics are checked exactly.
+RT-820 is one `EKF-RT-820` row with
+`temperature_relay_din_2mod`; TST05 remains provenance of that complete set
+and never becomes a separate component or charge. Existing AD12 scopes and
+mapping018 data are protected by the unchanged parent prefix.
+
+The code-only authorization represented by this repository change does not
+authorize executing either builder. The tokens below are only CLI
+acknowledgements to be supplied after future separate exact Igor decisions;
+their presence in code or documentation is not an authorization.
+
+The technical successor must be authorized and published first. Its builder
+accepts only
+`IGOR_SHU_T1_TECHNICAL_SUCCESSOR_PUBLICATION_AUTHORIZED`, after a separate
+decision naming the exact output path and no-overwrite intent. Publication then
+uses private sibling staging, initial and immediate pre-publication TOCTOU
+checks, an exclusive atomic no-overwrite link, post-publication
+reread/validation and staging cleanup.
+
+The dependent Invoice 519 profile builder is
+`scripts/build_invoice519_pricing_profile_additive_successor.py`. It must bind
+the newly published completed-input successor by its exact path and SHA plus
+the same three Human Decisions. It preserves the 14/51/133/11 profile prefix
+and appends 1/4/4/1 to reach 15 groups, 55 section-aware positions, 137
+physical cabinets and 12 fingerprints. Each ШУ-Т1 position has multiplicity
+1, approved-not-applied unit price 53,763 KZT; the four-position addition is
+215,052 KZT and the resulting preliminary candidate project total is
+11,841,516 KZT. These values are not final price approval.
+
+Only after the technical successor's exact path and SHA-256 have been checked
+may Igor issue a separate decision for the pricing-profile successor. That
+builder accepts only
+`IGOR_SHU_T1_INVOICE519_PRICING_PROFILE_SUCCESSOR_PUBLICATION_AUTHORIZED`.
+The two publication tokens are not interchangeable, and
+`IGOR_CODE_ONLY_SUCCESSOR_BUILD_AUTHORIZED` is rejected by both builders. This
+corrective code-only authorization permits running neither builder.
+
 ## Immutable bindings
 
 - Base draft SHA-256:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
@@ -336,7 +336,30 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
         strict_raw_label=True,
     ),
+    ApprovedComponentPriceMapping(
+        TechnicalSignature(
+            "temperature_relay",
+            0,
+            0,
+            None,
+            None,
+            "temperature_relay_din_2mod",
+        ),
+        "КРН",
+        19,
+        "Терморегулятор RT-820",
+        15000,
+        900,
+        component_code="EKF-RT-820",
+        strict_raw_label=True,
+    ),
 )
+RT820_COMPONENT_CODE = "EKF-RT-820"
+RT820_PRODUCT_NAME = "ШУ-Т1"
+RT820_INSTALL_TYPE = "temperature_relay_din_2mod"
+RT820_COMPONENT_LABEL = "Реле температуры RT-820 EKF PROxima с внешним датчиком"
+RT820_CABINET_CODE = "CAB-KRN-12"
+RT820_APPROVED_MAPPING = APPROVED_COMPONENT_PRICE_MAPPINGS[-1]
 
 APPROVED_CABINET_PRICE_MAPPINGS = (
     ApprovedCabinetPriceMapping(
@@ -731,6 +754,22 @@ def resolve_component_mapping(
     return matches[0] if len(matches) == 1 else None
 
 
+def resolve_case_scoped_rt820_mapping(
+    row: Mapping[str, str],
+) -> ApprovedComponentPriceMapping | None:
+    """Resolve RT-820 only for the exact project-2024/086 ШУ-Т1 row contract."""
+    if row.get("component_code") != RT820_COMPONENT_CODE:
+        return None
+    if (
+        row.get("product_name") == RT820_PRODUCT_NAME
+        and row.get("cabinet_code") == RT820_CABINET_CODE
+        and row.get("install_type") == RT820_INSTALL_TYPE
+        and row.get("component_label") == RT820_COMPONENT_LABEL
+    ):
+        return RT820_APPROVED_MAPPING
+    return None
+
+
 def signature_requires_component_code(signature: TechnicalSignature) -> bool:
     return any(
         mapping.signature == signature and mapping.component_code is not None
@@ -833,16 +872,28 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
         if header_tuple == TECHNICAL_COLUMNS:
             component_label = row["component_label"]
             cabinet_label = row["cabinet_label"]
-            component_signature = parse_component_signature(
-                component_label,
-                row["install_type"],
+            rt820_requested = component_code == RT820_COMPONENT_CODE
+            component_mapping = resolve_case_scoped_rt820_mapping(row)
+            component_signature = (
+                RT820_APPROVED_MAPPING.signature
+                if component_mapping is not None
+                else parse_component_signature(
+                    component_label,
+                    row["install_type"],
+                )
             )
-            component_mapping = (
-                resolve_component_mapping(component_signature, component_code)
-                if component_signature is not None
-                else None
-            )
+            if not rt820_requested and component_signature is not None:
+                component_mapping = resolve_component_mapping(
+                    component_signature, component_code
+                )
             if component_mapping is None:
+                if rt820_requested:
+                    add_red_flag(
+                        result,
+                        f"row {row_number}: RT-820 is allowed only for the exact "
+                        "project 2024/086 ШУ-Т1 code/install/label contract; ask Igor",
+                    )
+                    continue
                 legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
                 explicitly_validated = technical_component_definition_matches(
                     component_signature,
@@ -892,6 +943,13 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 )
                 continue
         else:
+            if component_code == RT820_COMPONENT_CODE:
+                add_red_flag(
+                    result,
+                    f"row {row_number}: RT-820 requires the exact technical-label "
+                    "contract; family or label-free fallback is prohibited; ask Igor",
+                )
+                continue
             component_definition = COMPONENT_DEFINITIONS.get(component_code)
             if component_definition is None:
                 add_red_flag(

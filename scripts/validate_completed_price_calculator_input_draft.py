@@ -82,12 +82,69 @@ INSTALL_TYPES = {
     "mccb_up_to_100a",
     "mccb_125_250a",
     "mccb_400a_plus",
+    "temperature_relay_din_2mod",
 }
 V02_COMPLETED_MAPPING_STATUS = "APPROVED_HUMAN_DECISIONS_APPLIED"
 V02_COMPLETION_STATUS = "V02_TECHNICAL_COMPLETION_APPLIED_NOT_PRICED"
 V02_EXPECTED_COMPONENT_GROUPS = 31
 V02_EXPECTED_ROWS = 109
 V02_EXPECTED_CABINET_GROUPS = 14
+V02_ADDITIVE_SUCCESSOR_CONTRACT = "controlled_additive_completed_input_successor.v0.1"
+V02_ADDITIVE_EXPECTED_COMPONENT_GROUPS = 34
+V02_ADDITIVE_EXPECTED_ROWS = 112
+V02_ADDITIVE_EXPECTED_CABINET_GROUPS = 15
+V02_ADDITIVE_PARENT = {
+    "path": (
+        "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+        "CASE-QF-PROJECT-2024-086-PRICE-CALCULATOR-APPLICATION-20260812-001\\"
+        "price-calculator-input-v0.2-completed.json"
+    ),
+    "sha256": "71d933c14a603c24ba8072311b84992d1708cbc7ff1fede59727e727218f5bdb",
+}
+V02_ADDITIVE_DECISION_BINDINGS = [
+    {
+        "role": "technical_composition_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-SHU-T1-HUMAN-DECISIONS-20260817-001\\"
+            "technical-shu-t1-composition-human-decisions-v0.1.json"
+        ),
+        "sha256": "bccf62150488037b7df50804c88454119748be103da22dad456db2969126c008",
+        "schema_version": "technical_shu_t1_composition_human_decisions.v0.1",
+        "status": "IGOR_SHU_T1_COMPOSITION_APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-SHU-T1-COMPOSITION-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+    {
+        "role": "cabinet_pricing_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-SHU-T1-CABINET-PRICING-DECISION-20260817-001\\"
+            "technical-shu-t1-cabinet-pricing-human-decisions-v0.1.json"
+        ),
+        "sha256": "b3a1bb84bacb2cc5127752cb378b2151552fcb443f02116b12269a086add4247",
+        "schema_version": "technical_shu_t1_cabinet_pricing_human_decisions.v0.1",
+        "status": "APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-SHU-T1-CABINET-PRICING-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+    {
+        "role": "rt820_code_install_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-RT820-CODE-INSTALL-DECISION-20260818-001\\"
+            "technical-rt820-code-install-human-decisions-v0.1.json"
+        ),
+        "sha256": "95c9f2610a6e8429242789e17c3b69ffae31db28655736aed12caa1d3939630f",
+        "schema_version": "technical_rt820_code_install_human_decisions.v0.1",
+        "status": "IGOR_RT820_CODE_INSTALL_APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-RT820-CODE-INSTALL-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+]
 FORBIDDEN_KEYS = {
     "price_confirmed_by_igor",
     "price_includes_vat",
@@ -528,6 +585,126 @@ def validate_rows(
     result.checks["rows"] = "pass" if valid else "fail"
 
 
+def validate_v02_additive_envelope(
+    data: Mapping[str, Any], result: ValidationResult
+) -> bool:
+    source = data.get("source")
+    metadata = (
+        source.get("additive_completed_input_successor")
+        if isinstance(source, Mapping)
+        else None
+    )
+    if metadata is None:
+        return False
+    valid = isinstance(metadata, Mapping)
+    if not isinstance(metadata, Mapping):
+        add_red_flag(result, "v0.2 additive successor metadata must be an object")
+        return True
+    expected_metadata = {
+        "contract": V02_ADDITIVE_SUCCESSOR_CONTRACT,
+        "project_id": "2024/086",
+        "parent": V02_ADDITIVE_PARENT,
+        "direct_human_decision_inputs": V02_ADDITIVE_DECISION_BINDINGS,
+        "append_only": True,
+        "scope_expansion": False,
+    }
+    if metadata != expected_metadata:
+        valid = False
+        add_red_flag(result, "v0.2 additive successor exact bindings mismatch")
+    completion = data.get("completion")
+    additive_completion = (
+        completion.get("additive_successor")
+        if isinstance(completion, Mapping)
+        else None
+    )
+    if additive_completion != {
+        "contract": V02_ADDITIVE_SUCCESSOR_CONTRACT,
+        "application_status": "NOT_APPLIED",
+        "pricing_calculation_executed": False,
+        "successor_publication_requires_separate_exact_igor_authorization": True,
+    }:
+        valid = False
+        add_red_flag(result, "v0.2 additive completion envelope mismatch")
+    if isinstance(completion, Mapping) and completion.get("scope") != {
+        "component_groups": V02_ADDITIVE_EXPECTED_COMPONENT_GROUPS,
+        "rows": "112/112",
+        "cabinet_groups": "15/15",
+        "duplicate_component_membership": 0,
+        "duplicate_cabinet_membership": 0,
+        "scope_expansion": False,
+    }:
+        valid = False
+        add_red_flag(result, "v0.2 additive completion scope mismatch")
+    groups = data.get("cabinet_groups")
+    calculator_format = data.get("calculator_input_format")
+    rows = (
+        calculator_format.get("row_drafts")
+        if isinstance(calculator_format, Mapping)
+        else None
+    )
+    expected_values = [
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-RT-820",
+            "component_qty": 1,
+            "install_type": "temperature_relay_din_2mod",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "component_qty": 1,
+            "install_type": "diff_1p_n",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-VA47-29-2P",
+            "component_qty": 1,
+            "install_type": "modular_2p",
+        },
+    ]
+    if not (
+        isinstance(groups, list)
+        and len(groups) == V02_ADDITIVE_EXPECTED_CABINET_GROUPS
+        and isinstance(groups[-1], Mapping)
+        and groups[-1].get("cabinet_group_id") == "CABINET-GROUP-015"
+        and groups[-1].get("product_name") == "ШУ-Т1"
+        and groups[-1].get("row_draft_ids")
+        == ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"]
+    ):
+        valid = False
+        add_red_flag(result, "v0.2 additive ШУ-Т1 cabinet group mismatch")
+    if not (
+        isinstance(rows, list)
+        and len(rows) == V02_ADDITIVE_EXPECTED_ROWS
+        and all(isinstance(row, Mapping) for row in rows[-3:])
+        and [row.get("row_id") for row in rows[-3:]]
+        == ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"]
+        and [row.get("calculator_values") for row in rows[-3:]] == expected_values
+        and sum(
+            row.get("calculator_values", {}).get("component_code") == "EKF-RT-820"
+            for row in rows
+            if isinstance(row, Mapping)
+        )
+        == 1
+        and all(
+            "TST05" not in str(row.get("calculator_values", {}).get("component_code"))
+            for row in rows
+            if isinstance(row, Mapping)
+        )
+    ):
+        valid = False
+        add_red_flag(result, "v0.2 additive ШУ-Т1 row envelope mismatch")
+    if not valid:
+        result.checks["schema constants"] = "fail"
+    return True
+
+
 def validate_v02_completed_payload(
     data: Mapping[str, Any],
     result: ValidationResult,
@@ -563,6 +740,7 @@ def validate_v02_completed_payload(
     ):
         valid_schema = False
         add_red_flag(result, "v0.2 completion contract mismatch")
+    additive_successor = validate_v02_additive_envelope(data, result)
     result.checks["schema constants"] = "pass" if valid_schema else "fail"
 
     safety = data.get("safety")
@@ -599,11 +777,19 @@ def validate_v02_completed_payload(
     result.checks["calculator format"] = "pass" if format_valid else "fail"
 
     cabinet_groups = data.get("cabinet_groups")
+    expected_groups = (
+        V02_ADDITIVE_EXPECTED_CABINET_GROUPS
+        if additive_successor
+        else V02_EXPECTED_CABINET_GROUPS
+    )
+    expected_rows = (
+        V02_ADDITIVE_EXPECTED_ROWS if additive_successor else V02_EXPECTED_ROWS
+    )
     rows_valid = (
         isinstance(cabinet_groups, list)
-        and len(cabinet_groups) == V02_EXPECTED_CABINET_GROUPS
+        and len(cabinet_groups) == expected_groups
         and rows is not None
-        and len(rows) == V02_EXPECTED_ROWS
+        and len(rows) == expected_rows
     )
     group_rows: dict[str, set[str]] = {}
     row_ids: set[str] = set()
@@ -701,8 +887,8 @@ def validate_v02_completed_payload(
         add_red_flag(result, "v0.2 row/cabinet coverage mismatch")
     coverage = data.get("coverage")
     if not isinstance(coverage, Mapping) or (
-        coverage.get("pricing_row_draft_count") != V02_EXPECTED_ROWS
-        or coverage.get("cabinet_group_count") != V02_EXPECTED_CABINET_GROUPS
+        coverage.get("pricing_row_draft_count") != expected_rows
+        or coverage.get("cabinet_group_count") != expected_groups
     ):
         rows_valid = False
         add_red_flag(result, "v0.2 coverage fields mismatch")

@@ -21,6 +21,37 @@ The runner validates the completed JSON draft before it creates any calculator
 input. It only runs the existing calculator after
 `scripts/validate_completed_price_calculator_input_draft.py` returns `PASS`.
 
+## Controlled ШУ-Т1 successor envelope
+
+The unchanged baseline Invoice 519 profile remains exactly 14 technical
+groups, 51 section-aware pricing positions, 133 physical cabinets and 11
+composition fingerprints. A ШУ-Т1 additive profile is accepted only as the
+complete 15/55/137/12 envelope. Partial expansion is rejected.
+
+Both the completed-input successor and pricing-profile successor must carry
+the same three exact Human Decision path/SHA/schema/status/decision-ID/direct-
+authority bindings. The profile must additionally bind the exact path and SHA
+of the completed-input successor. Four separate positions are required for
+sections 9, 11, 13 and 15, each with physical multiplicity 1. Collapsing them
+into one position with multiplicity 4 is forbidden.
+
+For this exact case only, `EKF-RT-820` is accepted with product `ШУ-Т1`,
+cabinet `CAB-KRN-12`, install type `temperature_relay_din_2mod` and the exact
+RT-820 complete-set label. Its source is `КРН!A19:C19`: material 15,000 KZT
+and exact component work 900 KZT. Generic modular-2P work 432 KZT,
+family/fuzzy/similar-relay fallback and a separate TST05 row or charge all
+fail closed.
+
+The checked arithmetic contract is X/I/G/H = 6936/0/20450/1764. Unit price is
+rounded once after the full formula to 53,763 KZT, then multiplicity is
+applied: 53,763 × 4 = 215,052 KZT. The additive candidate project total is
+11,841,516 KZT and must remain `DRAFT_PRELIMINARY_PRICE_CALCULATION` /
+`REQUIRES_IGOR_PRICE_APPROVAL`.
+
+The repository implementation and synthetic tests do not authorize a real
+successor build or runner invocation. Any such action requires a separate
+exact Igor authorization for the inputs, hashes and requested output/action.
+
 ## Command
 
 Run from the repository root:

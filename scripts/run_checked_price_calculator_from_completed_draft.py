@@ -91,6 +91,62 @@ EXPECTED_PROFILE_PRODUCTS = [
     "ЩЭ-6кв",
     "ЩО-3Ж",
 ]
+ADDITIVE_PROFILE_CONTRACT = (
+    "controlled_additive_invoice519_pricing_profile_successor.v0.1"
+)
+ADDITIVE_COMPLETED_CONTRACT = "controlled_additive_completed_input_successor.v0.1"
+ADDITIVE_PROFILE_COVERAGE = {
+    "technical_cabinet_groups": 15,
+    "section_aware_pricing_positions": 55,
+    "physical_cabinets": 137,
+    "composition_fingerprints": 12,
+}
+ADDITIVE_PROFILE_PRODUCTS = [*EXPECTED_PROFILE_PRODUCTS, "ШУ-Т1"]
+SHU_T1_FINGERPRINT = "4b5cf23236653dfd33e27eefa8034ad2a779b5e2b40f0adc972ee49912dbc0ec"
+ADDITIVE_DECISION_BINDINGS = [
+    {
+        "role": "technical_composition_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-SHU-T1-HUMAN-DECISIONS-20260817-001\\"
+            "technical-shu-t1-composition-human-decisions-v0.1.json"
+        ),
+        "sha256": "bccf62150488037b7df50804c88454119748be103da22dad456db2969126c008",
+        "schema_version": "technical_shu_t1_composition_human_decisions.v0.1",
+        "status": "IGOR_SHU_T1_COMPOSITION_APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-SHU-T1-COMPOSITION-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+    {
+        "role": "cabinet_pricing_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-SHU-T1-CABINET-PRICING-DECISION-20260817-001\\"
+            "technical-shu-t1-cabinet-pricing-human-decisions-v0.1.json"
+        ),
+        "sha256": "b3a1bb84bacb2cc5127752cb378b2151552fcb443f02116b12269a086add4247",
+        "schema_version": "technical_shu_t1_cabinet_pricing_human_decisions.v0.1",
+        "status": "APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-SHU-T1-CABINET-PRICING-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+    {
+        "role": "rt820_code_install_human_decision",
+        "path": (
+            "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+            "CASE-QF-PROJECT-2024-086-RT820-CODE-INSTALL-DECISION-20260818-001\\"
+            "technical-rt820-code-install-human-decisions-v0.1.json"
+        ),
+        "sha256": "95c9f2610a6e8429242789e17c3b69ffae31db28655736aed12caa1d3939630f",
+        "schema_version": "technical_rt820_code_install_human_decisions.v0.1",
+        "status": "IGOR_RT820_CODE_INSTALL_APPROVED_NOT_APPLIED",
+        "decision_id": "IGOR-RT820-CODE-INSTALL-2024-086-001",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED",
+    },
+]
 EXPECTED_PROFILE_INPUTS = (
     (
         "completed_technical_input",
@@ -392,12 +448,6 @@ def load_pricing_profile(
     expected_sha256: str,
 ) -> Mapping[str, Any] | None:
     path = resolved(pricing_profile_path)
-    if path != resolved(PRICING_PROFILE_PATH):
-        add_red_flag(result, "pricing profile path is not the canonical exact path")
-        return None
-    if expected_sha256 != PRICING_PROFILE_SHA256:
-        add_red_flag(result, "pricing profile expected SHA-256 is not authoritative")
-        return None
     try:
         payload = path.read_bytes()
     except OSError:
@@ -424,6 +474,13 @@ def load_pricing_profile(
     if not isinstance(data, Mapping):
         add_red_flag(result, "pricing profile root must be an object")
         return None
+    additive = isinstance(data.get("additive_successor"), Mapping)
+    if not additive and (
+        path != resolved(PRICING_PROFILE_PATH)
+        or expected_sha256 != PRICING_PROFILE_SHA256
+    ):
+        add_red_flag(result, "pricing profile path/SHA is not the canonical exact base")
+        return None
     return cast(Mapping[str, Any], data)
 
 
@@ -436,6 +493,47 @@ def profile_check(
         return True
     add_red_flag(result, f"pricing profile: {message}")
     return False
+
+
+def additive_profile_metadata(
+    profile: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    metadata = profile.get("additive_successor")
+    return cast(Mapping[str, Any], metadata) if isinstance(metadata, Mapping) else None
+
+
+def validate_additive_profile_envelope(
+    profile: Mapping[str, Any], result: CheckedRunResult
+) -> bool:
+    metadata = additive_profile_metadata(profile)
+    if metadata is None:
+        return True
+    completed = metadata.get("completed_input_successor")
+    valid = all(
+        (
+            metadata.get("contract") == ADDITIVE_PROFILE_CONTRACT,
+            metadata.get("project_id") == PRICING_PROFILE_PROJECT_ID,
+            metadata.get("parent")
+            == {"path": str(PRICING_PROFILE_PATH), "sha256": PRICING_PROFILE_SHA256},
+            isinstance(completed, Mapping),
+            isinstance(completed, Mapping)
+            and completed.get("contract") == ADDITIVE_COMPLETED_CONTRACT,
+            isinstance(completed, Mapping) and isinstance(completed.get("path"), str),
+            isinstance(completed, Mapping)
+            and isinstance(completed.get("sha256"), str)
+            and len(completed["sha256"]) == 64,
+            metadata.get("direct_human_decision_inputs") == ADDITIVE_DECISION_BINDINGS,
+            metadata.get("append_only") is True,
+            metadata.get("scope_expansion") is False,
+            metadata.get("pricing_calculation_executed") is False,
+            metadata.get("approved_shu_t1_unit_price_kzt") == 53763,
+            metadata.get("approved_shu_t1_exact_scope_total_kzt") == 215052,
+            metadata.get("candidate_project_total_kzt") == 11841516,
+            metadata.get("candidate_project_total_status") == PROFILE_DRAFT_STATUS,
+            metadata.get("price_approval_status") == PROFILE_APPROVAL_STATUS,
+        )
+    )
+    return profile_check(result, valid, "additive successor envelope mismatch")
 
 
 def validate_pricing_profile_contract(
@@ -491,6 +589,7 @@ def validate_pricing_profile_contract(
             "scope expansion is forbidden",
         ),
     ]
+    additive = additive_profile_metadata(profile) is not None
     actual_inputs = profile.get("authoritative_inputs")
     input_projection: tuple[tuple[Any, Any, Any, Any], ...] = ()
     if isinstance(actual_inputs, list):
@@ -504,27 +603,43 @@ def validate_pricing_profile_contract(
             for item in actual_inputs
             if isinstance(item, Mapping)
         )
-    checks.append(
-        profile_check(
-            result,
-            input_projection == EXPECTED_PROFILE_INPUTS,
-            "authoritative inputs mismatch",
+    inputs_valid = input_projection == EXPECTED_PROFILE_INPUTS
+    if additive and isinstance(actual_inputs, list):
+        extra_inputs = actual_inputs[len(EXPECTED_PROFILE_INPUTS) :]
+        metadata = cast(Mapping[str, Any], profile["additive_successor"])
+        completed = cast(Mapping[str, Any], metadata["completed_input_successor"])
+        inputs_valid = (
+            input_projection[: len(EXPECTED_PROFILE_INPUTS)] == EXPECTED_PROFILE_INPUTS
+            and len(extra_inputs) == 4
+            and extra_inputs[0]
+            == {
+                "role": "completed_technical_input_additive_successor",
+                "path": completed["path"],
+                "sha256": completed["sha256"],
+                "schema_or_type": "price_calculator_input_draft.v0.2",
+                "purpose": "exact 15-group/112-row additive technical authority",
+            }
+            and extra_inputs[1:] == ADDITIVE_DECISION_BINDINGS
         )
-    )
-    checks.extend(validate_profile_policy_contract(profile, result))
+    checks.append(profile_check(result, inputs_valid, "authoritative inputs mismatch"))
+    checks.append(validate_additive_profile_envelope(profile, result))
+    checks.extend(validate_profile_policy_contract(profile, result, additive=additive))
     return all(checks)
 
 
 def validate_profile_policy_contract(
     profile: Mapping[str, Any],
     result: CheckedRunResult,
+    *,
+    additive: bool = False,
 ) -> list[bool]:
+    coverage = ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE
     expected_scope_partition = {
         "current_completed_technical_scope": {
             "technical_scope_status": "CURRENT_COMPLETED_INPUT_SCOPE",
             "pricing_profile_decision_status": "APPROVED_NOT_APPLIED",
             "pricing_calculation_status": "NOT_EXECUTED",
-            "coverage": EXPECTED_PROFILE_COVERAGE,
+            "coverage": coverage,
         },
         "reserved_case_level_formula_rules": {
             "formula_rule_status": "HUMAN_APPROVED_CASE_LEVEL_RULE_NOT_APPLIED",
@@ -895,12 +1010,14 @@ def validate_profile_formula_contract(
     profile: Mapping[str, Any],
     result: CheckedRunResult,
 ) -> bool:
+    additive = additive_profile_metadata(profile) is not None
     modular = current_scope.get("modular_formula_family")
     sche = current_scope.get("sche_formula_family")
     expected_modular = {
         "scope_cabinet_group_ids": [
             *(f"CABINET-GROUP-{index:03d}" for index in range(1, 10)),
             "CABINET-GROUP-014",
+            *(["CABINET-GROUP-015"] if additive else []),
         ],
         "material_factor": "1.2",
         "approved_formula": (
@@ -1035,6 +1152,19 @@ def validate_profile_formula_contract(
             if not common_ok or not family_ok:
                 reserved_ok = False
                 break
+    shu_t1_expected = {
+        "sections": ["9", "11", "13", "15"],
+        "X_cabinet_base_kzt": 6936,
+        "I_additional_cabinet_cost_kzt": 0,
+        "G_material_kzt": 20450,
+        "H_work_kzt": 1764,
+        "raw_unit_price_kzt": "53762.72702586206896551724138",
+        "approved_unit_price_kzt": 53763,
+        "physical_multiplicity": 4,
+        "approved_exact_scope_total_kzt": 215052,
+        "round_unit_before_multiplicity": True,
+        "decision_status": "APPROVED_NOT_APPLIED",
+    }
     return all(
         (
             profile_check(
@@ -1058,6 +1188,16 @@ def validate_profile_formula_contract(
                 reserved_ok,
                 "reserved formula contract mismatch",
             ),
+            profile_check(
+                result,
+                (
+                    current_scope.get("shu_t1_approved_calculated_price")
+                    == shu_t1_expected
+                    if additive
+                    else "shu_t1_approved_calculated_price" not in current_scope
+                ),
+                "ШУ-Т1 formula/rounding/multiplicity contract mismatch",
+            ),
         )
     )
 
@@ -1071,8 +1211,15 @@ def profile_row_index(
         add_red_flag(result, "profile completed calculator format is invalid")
         return None
     rows = calculator_format.get("row_drafts")
-    if not isinstance(rows, list) or len(rows) != 109:
-        add_red_flag(result, "profile requires exact 109 completed row drafts")
+    source = data.get("source")
+    additive = isinstance(source, Mapping) and isinstance(
+        source.get("additive_completed_input_successor"), Mapping
+    )
+    expected_rows = 112 if additive else 109
+    if not isinstance(rows, list) or len(rows) != expected_rows:
+        add_red_flag(
+            result, f"profile requires exact {expected_rows} completed row drafts"
+        )
         return None
     typed_rows: list[Mapping[str, Any]] = []
     indexed: dict[str, Mapping[str, Any]] = {}
@@ -1097,6 +1244,38 @@ def validate_and_build_profile_positions(
     if data.get("schema_version") != V02_SCHEMA_VERSION:
         add_red_flag(result, "Invoice 519 profile requires completed v0.2 input")
         return []
+    additive_metadata = additive_profile_metadata(profile)
+    additive = additive_metadata is not None
+    if additive:
+        source = data.get("source")
+        technical_metadata = (
+            source.get("additive_completed_input_successor")
+            if isinstance(source, Mapping)
+            else None
+        )
+        completed_binding = additive_metadata.get("completed_input_successor")
+        additive_bindings_ok = all(
+            (
+                isinstance(technical_metadata, Mapping),
+                isinstance(technical_metadata, Mapping)
+                and technical_metadata.get("contract") == ADDITIVE_COMPLETED_CONTRACT,
+                isinstance(technical_metadata, Mapping)
+                and technical_metadata.get("direct_human_decision_inputs")
+                == ADDITIVE_DECISION_BINDINGS,
+                isinstance(technical_metadata, Mapping)
+                and technical_metadata.get("scope_expansion") is False,
+                isinstance(completed_binding, Mapping),
+                isinstance(completed_binding, Mapping)
+                and resolved(Path(cast(str, completed_binding.get("path", ""))))
+                == result.completed_input_json,
+                isinstance(completed_binding, Mapping)
+                and completed_binding.get("contract") == ADDITIVE_COMPLETED_CONTRACT,
+            )
+        )
+        if not profile_check(
+            result, additive_bindings_ok, "technical/profile successor binding mismatch"
+        ):
+            return []
     row_indexes = profile_row_index(data, result)
     if row_indexes is None:
         return []
@@ -1116,17 +1295,28 @@ def validate_and_build_profile_positions(
     ):
         add_red_flag(result, "profile inventory lists are invalid")
         return []
+    expected_coverage = (
+        ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE
+    )
+    expected_products = (
+        ADDITIVE_PROFILE_PRODUCTS if additive else EXPECTED_PROFILE_PRODUCTS
+    )
+    expected_groups = 15 if additive else 14
+    expected_positions = 55 if additive else 51
+    expected_fingerprints_count = 12 if additive else 11
+    expected_multiplicity = 137 if additive else 133
     inventory_ok = all(
         (
-            current_scope.get("coverage") == EXPECTED_PROFILE_COVERAGE,
-            current_scope.get("products") == EXPECTED_PROFILE_PRODUCTS,
-            len(completed_groups) == 14,
-            len(profile_groups) == 14,
-            len(positions) == 51,
-            len(fingerprints) == 11,
+            current_scope.get("coverage") == expected_coverage,
+            current_scope.get("products") == expected_products,
+            len(completed_groups) == expected_groups,
+            len(profile_groups) == expected_groups,
+            len(positions) == expected_positions,
+            len(fingerprints) == expected_fingerprints_count,
         )
     )
-    if not profile_check(result, inventory_ok, "14/51/133/11 inventory mismatch"):
+    inventory_label = "15/55/137/12" if additive else "14/51/133/11"
+    if not profile_check(result, inventory_ok, f"{inventory_label} inventory mismatch"):
         return []
     if not validate_profile_formula_contract(current_scope, profile, result):
         return []
@@ -1290,7 +1480,7 @@ def validate_and_build_profile_positions(
         approved_price = raw_position.get("approved_unit_price_kzt")
         expected_decision_status = (
             "APPROVED_NOT_APPLIED"
-            if product_name == "ПР" or apartment_count is not None
+            if product_name in {"ПР", "ШУ-Т1"} or apartment_count is not None
             else "NOT_CALCULATED_NOT_APPROVED"
         )
         if not profile_check(
@@ -1376,12 +1566,19 @@ def validate_and_build_profile_positions(
             )
         )
     expected_fingerprints = [
-        derived_fingerprints[key] for key in sorted(derived_fingerprints)
+        derived_fingerprints[key]
+        for key in sorted(
+            key
+            for key in derived_fingerprints
+            if not additive or key != SHU_T1_FINGERPRINT
+        )
     ]
+    if additive and SHU_T1_FINGERPRINT in derived_fingerprints:
+        expected_fingerprints.append(derived_fingerprints[SHU_T1_FINGERPRINT])
     final_ok = all(
         (
-            total_multiplicity == 133,
-            len(derived_fingerprints) == 11,
+            total_multiplicity == expected_multiplicity,
+            len(derived_fingerprints) == expected_fingerprints_count,
             fingerprints == expected_fingerprints,
             {
                 row_id
@@ -1542,19 +1739,28 @@ def capture_profile_input_shas(
     profile: Mapping[str, Any],
     pricing_profile_path: Path,
     custom_sche_metal_workbook: Path | None,
+    pricing_profile_sha256: str | None = None,
 ) -> dict[str, tuple[Path, str]] | None:
     roles = profile_input_role_map(profile)
     if custom_sche_metal_workbook is None:
         add_red_flag(result, "custom ЩЭ metal workbook is required by pricing profile")
         return None
+    if pricing_profile_sha256 is None:
+        pricing_profile_sha256 = PRICING_PROFILE_SHA256
+    additive = additive_profile_metadata(profile) is not None
+    completed_role = (
+        "completed_technical_input_additive_successor"
+        if additive
+        else "completed_technical_input"
+    )
     requested = {
         "pricing_profile": (
             resolved(pricing_profile_path),
-            PRICING_PROFILE_SHA256,
+            pricing_profile_sha256,
         ),
-        "completed_technical_input": (
+        completed_role: (
             result.completed_input_json,
-            roles.get("completed_technical_input", {}).get("sha256"),
+            roles.get(completed_role, {}).get("sha256"),
         ),
         "main_price_workbook": (
             result.price_workbook,
@@ -1565,9 +1771,16 @@ def capture_profile_input_shas(
             roles.get("custom_sche_metal_workbook", {}).get("sha256"),
         ),
     }
+    if additive:
+        for binding in ADDITIVE_DECISION_BINDINGS:
+            role = cast(str, binding["role"])
+            requested[role] = (
+                resolved(Path(cast(str, binding["path"]))),
+                cast(str, binding["sha256"]),
+            )
     for role, (path, expected_sha) in requested.items():
         expected_path = (
-            PRICING_PROFILE_PATH
+            pricing_profile_path
             if role == "pricing_profile"
             else Path(cast(str, roles.get(role, {}).get("path", "")))
         )
@@ -1745,7 +1958,7 @@ def execute_profile_position(
             physical_multiplicity=position.physical_multiplicity,
             apartment_count=position.apartment_count,
         )
-    except AttributeError, ValueError:
+    except (AttributeError, ValueError):  # fmt: skip
         add_red_flag(
             result,
             f"case formula failed closed for {position.pricing_position_id}",
@@ -1862,6 +2075,7 @@ def run_checked_price_calculator_from_completed_draft(
             profile,
             pricing_profile_path,
             custom_sche_metal_workbook,
+            expected_pricing_profile_sha256,
         )
         if snapshots is None:
             return result
@@ -2001,13 +2215,39 @@ def run_profile_checked_calculation(
                 break
         if len(result.temp_csv_paths) == len(position_inputs):
             result.checks["CSV bridge"] = "pass"
-        if all_calculators_passed and len(result.position_calculations) == 51:
+        expected_position_count = (
+            55 if additive_profile_metadata(profile) is not None else 51
+        )
+        if (
+            all_calculators_passed
+            and len(result.position_calculations) == expected_position_count
+        ):
             result.checks["calculator execution"] = "pass"
             result.overall_preliminary_total = sum(
                 calculation.position_total_kzt
                 for calculation in result.position_calculations
             )
             result.preliminary_project_total = result.overall_preliminary_total
+            metadata = additive_profile_metadata(profile)
+            if metadata is not None and (
+                result.overall_preliminary_total
+                != metadata.get("candidate_project_total_kzt")
+                or [
+                    calculation.rounded_unit_price_kzt
+                    for calculation in result.position_calculations[-4:]
+                ]
+                != [53763, 53763, 53763, 53763]
+                or sum(
+                    calculation.position_total_kzt
+                    for calculation in result.position_calculations[-4:]
+                )
+                != 215052
+            ):
+                result.checks["calculator execution"] = "fail"
+                add_red_flag(
+                    result,
+                    "ШУ-Т1 successor total/round-before-multiplicity contract mismatch",
+                )
         if result.checks["calculator execution"] != "pass":
             return result
         if not recheck_profile_input_shas(result, snapshots, "final"):

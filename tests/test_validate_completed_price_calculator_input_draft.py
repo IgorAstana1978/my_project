@@ -1,3 +1,4 @@
+import copy
 import importlib.util
 import json
 import sys
@@ -135,6 +136,182 @@ def valid_data() -> dict[str, Any]:
             "consumables_factor_confirmed_by_igor": True,
         },
     }
+
+
+def valid_additive_v02_data() -> dict[str, Any]:
+    base_rows: list[dict[str, Any]] = []
+    group_row_ids: dict[str, list[str]] = {
+        f"CABINET-GROUP-{index:03d}": [] for index in range(1, 15)
+    }
+    for index in range(1, 110):
+        group_index = min(((index - 1) // 8) + 1, 14)
+        group_id = f"CABINET-GROUP-{group_index:03d}"
+        row_id = f"ROW-DRAFT-{index:04d}"
+        group_row_ids[group_id].append(row_id)
+        base_rows.append(
+            {
+                "row_id": row_id,
+                "cabinet_group_id": group_id,
+                "calculator_values": {
+                    "product_name": f"BASE-{group_index}",
+                    "cabinet_code": "CAB-KRN-12",
+                    "consumables_factor": 1.2,
+                    "component_code": "EKF-VA47-29-1P",
+                    "component_qty": 1,
+                    "install_type": "modular_1p",
+                },
+                "mapping_status": validator.V02_COMPLETED_MAPPING_STATUS,
+                "component_label": "base",
+            }
+        )
+    groups = [
+        {
+            "cabinet_group_id": group_id,
+            "source_cabinet_template": f"BASE-{index}",
+            "product_name": f"BASE-{index}",
+            "cabinet_code": "CAB-KRN-12",
+            "cabinet_label": "Корпус КРН-12 265×330×100 мм, металл",
+            "consumables_factor": 1.2,
+            "mapping_status": validator.V02_COMPLETED_MAPPING_STATUS,
+            "row_draft_ids": group_row_ids[group_id],
+        }
+        for index, group_id in enumerate(group_row_ids, start=1)
+    ]
+    groups.append(
+        {
+            "cabinet_group_id": "CABINET-GROUP-015",
+            "source_cabinet_template": "ЩРН-12",
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "cabinet_label": "Корпус КРН-12 265×330×100 мм, металл",
+            "consumables_factor": 1.2,
+            "mapping_status": validator.V02_COMPLETED_MAPPING_STATUS,
+            "row_draft_ids": ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"],
+        }
+    )
+    appended_values = [
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-RT-820",
+            "component_qty": 1,
+            "install_type": "temperature_relay_din_2mod",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-AD12-1P-N-C16-30MA-4P5KA",
+            "component_qty": 1,
+            "install_type": "diff_1p_n",
+        },
+        {
+            "product_name": "ШУ-Т1",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-VA47-29-2P",
+            "component_qty": 1,
+            "install_type": "modular_2p",
+        },
+    ]
+    rows = [
+        *base_rows,
+        *[
+            {
+                "row_id": f"ROW-DRAFT-{index:04d}",
+                "cabinet_group_id": "CABINET-GROUP-015",
+                "calculator_values": values,
+                "mapping_status": validator.V02_COMPLETED_MAPPING_STATUS,
+                "component_label": "approved",
+            }
+            for index, values in zip(range(110, 113), appended_values, strict=True)
+        ],
+    ]
+    return {
+        "schema_version": validator.SCHEMA_VERSION_V02,
+        "draft_type": "price_calculator_input_draft",
+        "source": {
+            "additive_completed_input_successor": {
+                "contract": validator.V02_ADDITIVE_SUCCESSOR_CONTRACT,
+                "project_id": "2024/086",
+                "parent": validator.V02_ADDITIVE_PARENT,
+                "direct_human_decision_inputs": copy.deepcopy(
+                    validator.V02_ADDITIVE_DECISION_BINDINGS
+                ),
+                "append_only": True,
+                "scope_expansion": False,
+            }
+        },
+        "cabinet_groups": groups,
+        "calculator_input_format": {
+            "kind": "confirmed_composition_csv_row_drafts",
+            "delimiter": ";",
+            "columns": list(validator.CALCULATOR_COLUMNS),
+            "row_drafts": rows,
+        },
+        "coverage": {
+            "pricing_row_draft_count": 112,
+            "cabinet_group_count": 15,
+        },
+        "safety": {"price_calculation_executed": False},
+        "next_required_human_actions": [],
+        "completion": {
+            "status": validator.V02_COMPLETION_STATUS,
+            "authorization_claim_is_not_human_approval": True,
+            "scope": {
+                "component_groups": 34,
+                "rows": "112/112",
+                "cabinet_groups": "15/15",
+                "duplicate_component_membership": 0,
+                "duplicate_cabinet_membership": 0,
+                "scope_expansion": False,
+            },
+            "additive_successor": {
+                "contract": validator.V02_ADDITIVE_SUCCESSOR_CONTRACT,
+                "application_status": "NOT_APPLIED",
+                "pricing_calculation_executed": False,
+                "successor_publication_requires_separate_exact_igor_authorization": (
+                    True
+                ),
+            },
+        },
+    }
+
+
+def test_additive_v02_full_envelope_passes(tmp_path: Path) -> None:
+    result = validator.validate_completed_price_calculator_input_draft(
+        write_json(tmp_path, valid_additive_v02_data())
+    )
+    assert result.status == "PASS"
+    assert result.red_flags == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda data: data["source"]["additive_completed_input_successor"][
+            "direct_human_decision_inputs"
+        ][2].__setitem__("sha256", "0" * 64),
+        lambda data: data["calculator_input_format"]["row_drafts"][-3][
+            "calculator_values"
+        ].__setitem__("install_type", "modular_2p"),
+        lambda data: data["calculator_input_format"]["row_drafts"].append(
+            copy.deepcopy(data["calculator_input_format"]["row_drafts"][-1])
+        ),
+        lambda data: data["completion"]["scope"].__setitem__("component_groups", 33),
+    ],
+)
+def test_additive_v02_partial_or_drifted_envelope_fails(
+    tmp_path: Path, mutation: Any
+) -> None:
+    data = valid_additive_v02_data()
+    mutation(data)
+    result = validator.validate_completed_price_calculator_input_draft(
+        write_json(tmp_path, data)
+    )
+    assert result.status == "FAIL"
+    assert result.red_flags
 
 
 def write_json(tmp_path: Path, data: dict[str, Any]) -> Path:

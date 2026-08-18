@@ -9,6 +9,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -803,6 +804,132 @@ def sha256(path: Path) -> str:
 
 def calculate(workbook_path: Path, csv_path: Path) -> Any:
     return calculator.calculate_price_draft(workbook_path, csv_path)
+
+
+def write_shu_t1_workbook(path: Path, *, rt_work: int = 900) -> None:
+    workbook = Workbook()
+    krn = workbook.active
+    krn.title = "КРН"
+    krn["A5"] = "УЗО АД-32 1Р+N до 63А EKF"
+    krn["B5"] = 4100
+    krn["C5"] = 432
+    krn["A13"] = "ВА47 2 полюсный"
+    krn["B13"] = 1350
+    krn["C13"] = 432
+    krn["A19"] = "Терморегулятор RT-820"
+    krn["B19"] = 15000
+    krn["C19"] = rt_work
+    krn["L6"] = "Корпус КРН-12 265х330х100"
+    krn["M6"] = 6936
+    workbook.save(path)
+    workbook.close()
+
+
+def shu_t1_rows() -> list[list[str]]:
+    cabinet = "Корпус КРН-12 265×330×100 мм, металл"
+    return [
+        technical_row(
+            product_name="ШУ-Т1",
+            cabinet_code="CAB-KRN-12",
+            component_code="EKF-RT-820",
+            install_type="temperature_relay_din_2mod",
+            component_label="Реле температуры RT-820 EKF PROxima с внешним датчиком",
+            cabinet_label=cabinet,
+        ),
+        technical_row(
+            product_name="ШУ-Т1",
+            cabinet_code="CAB-KRN-12",
+            component_code="EKF-AD12-1P-N-C16-30MA-4P5KA",
+            install_type="diff_1p_n",
+            component_label="АД12 Basic АВДТ 2P C16/30мА 4.5kA",
+            cabinet_label=cabinet,
+        ),
+        technical_row(
+            product_name="ШУ-Т1",
+            cabinet_code="CAB-KRN-12",
+            component_code="EKF-VA47-29-2P",
+            install_type="modular_2p",
+            component_label=("Автоматический выключатель ВА47-29 BASIC 2P C10 4.5kA"),
+            cabinet_label=cabinet,
+        ),
+    ]
+
+
+def test_exact_shu_t1_rt820_mapping_preserves_exact_material_and_work(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    write_technical_csv(csv_path, shu_t1_rows())
+
+    result = calculate(workbook_path, csv_path)
+
+    assert result.status == "PASS"
+    assert result.cabinet_price == 6936
+    assert result.component_material_total == 20450
+    assert result.work_total == 1764
+    # The standalone calculator reports its internal pre-tail draft. Invoice 519
+    # applies the case tail and approved 53,763 KZT anchor in the checked runner.
+    assert result.total_preliminary_price == 47783
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        (0, "OTHER-PROJECT-PRODUCT"),
+        (2, "CAB-KRN-24"),
+        (4, "SIMILAR-RELAY"),
+        (5, "modular_2p"),
+        (6, "Похожее реле температуры 2P"),
+    ],
+)
+def test_rt820_exact_scope_identity_and_fallbacks_fail_closed(
+    tmp_path: Path, column: int, value: str
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    rows = shu_t1_rows()
+    rows[0][column] = value
+    write_technical_csv(csv_path, rows)
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert result.red_flags
+
+
+def test_rt820_requires_exact_900_work_and_never_uses_generic_432(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path, rt_work=432)
+    write_technical_csv(csv_path, shu_t1_rows())
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert any("price mismatch" in flag for flag in result.red_flags)
+
+
+def test_rt820_label_free_csv_is_forbidden(tmp_path: Path) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    write_csv(
+        csv_path,
+        [
+            [
+                "ШУ-Т1",
+                "CAB-KRN-12",
+                "1.20",
+                "EKF-RT-820",
+                "1",
+                "temperature_relay_din_2mod",
+            ]
+        ],
+    )
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert any("label-free fallback" in flag for flag in result.red_flags)
 
 
 def test_confirmed_reference_calculation_is_44512(tmp_path: Path) -> None:
