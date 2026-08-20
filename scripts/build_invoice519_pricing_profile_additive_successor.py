@@ -142,6 +142,24 @@ def require(condition: bool, message: str) -> None:
         raise ContractError(message)
 
 
+def validate_pricing_profile_safety_flags(safety: Any, description: str) -> None:
+    require(isinstance(safety, Mapping), f"{description} safety flags missing")
+    require(
+        "pricing_profile_decision_recorded" in safety
+        and type(safety["pricing_profile_decision_recorded"]) is bool
+        and safety["pricing_profile_decision_recorded"] is True,
+        f"{description} pricing decision record flag mismatch",
+    )
+    require(
+        all(
+            type(value) is bool and value is False
+            for key, value in safety.items()
+            if key != "pricing_profile_decision_recorded"
+        ),
+        f"{description} safety flag mismatch",
+    )
+
+
 def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -219,13 +237,7 @@ def validate_base_profile(base: Mapping[str, Any]) -> None:
         len(current.get("composition_fingerprints", [])) == 11,
         "base fingerprint count mismatch",
     )
-    safety = base.get("safety_flags")
-    require(
-        isinstance(safety, Mapping)
-        and bool(safety)
-        and all(value is False for value in safety.values()),
-        "base profile safety flags must all be false",
-    )
+    validate_pricing_profile_safety_flags(base.get("safety_flags"), "base profile")
 
 
 def validate_decision(
@@ -657,9 +669,8 @@ def validate_successor_payload(
         current.get("products") == [*base_current["products"], "ШУ-Т1"],
         "profile product list is not append-only",
     )
-    require(
-        all(value is False for value in successor.get("safety_flags", {}).values()),
-        "profile successor safety flag became true",
+    validate_pricing_profile_safety_flags(
+        successor.get("safety_flags"), "profile successor"
     )
     require(
         successor.get("application_status") == "NOT_APPLIED",

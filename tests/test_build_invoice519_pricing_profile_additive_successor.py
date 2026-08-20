@@ -77,6 +77,7 @@ def base_profile() -> dict[str, Any]:
         },
         "current_completed_technical_scope": current,
         "safety_flags": {
+            "pricing_profile_decision_recorded": True,
             "calculator_run_authorized": False,
             "client_send_authorized": False,
             "production_authorized": False,
@@ -269,12 +270,80 @@ def test_builds_append_only_15_55_137_12_profile_successor() -> None:
         successor["additive_successor"]["price_approval_status"]
         == "REQUIRES_IGOR_PRICE_APPROVAL"
     )
+    assert successor["safety_flags"] == base["safety_flags"]
 
 
 def test_profile_successor_is_deterministic() -> None:
     _base, first = build()
     _base, second = build()
     assert first == second
+
+
+def test_exact_approved_not_applied_parent_safety_contract_passes() -> None:
+    builder.validate_base_profile(base_profile())
+
+
+@pytest.mark.parametrize("value", [False, None, "true", 0, 1, [], {}])
+def test_pricing_profile_decision_recorded_requires_exact_true(value: Any) -> None:
+    base = base_profile()
+    base["safety_flags"]["pricing_profile_decision_recorded"] = value
+    with pytest.raises(builder.ContractError, match="decision record flag"):
+        builder.validate_base_profile(base)
+
+
+def test_pricing_profile_decision_recorded_is_required() -> None:
+    base = base_profile()
+    del base["safety_flags"]["pricing_profile_decision_recorded"]
+    with pytest.raises(builder.ContractError, match="decision record flag"):
+        builder.validate_base_profile(base)
+
+
+@pytest.mark.parametrize(
+    "flag_names",
+    [
+        ("calculator_run_authorized",),
+        ("calculator_run_authorized", "client_send_authorized"),
+    ],
+)
+def test_other_true_safety_flags_remain_fail_closed(
+    flag_names: tuple[str, ...],
+) -> None:
+    base = base_profile()
+    for flag_name in flag_names:
+        base["safety_flags"][flag_name] = True
+    with pytest.raises(builder.ContractError, match="safety flag mismatch"):
+        builder.validate_base_profile(base)
+
+
+@pytest.mark.parametrize("value", [None, "false", 0, 1, [], {}])
+def test_other_safety_flags_require_false_booleans(value: Any) -> None:
+    base = base_profile()
+    base["safety_flags"]["calculator_run_authorized"] = value
+    with pytest.raises(builder.ContractError, match="safety flag mismatch"):
+        builder.validate_base_profile(base)
+
+
+def test_parent_application_status_remains_not_applied() -> None:
+    base = base_profile()
+    base["application_status"] = "APPLIED"
+    with pytest.raises(builder.ContractError, match="base profile applied"):
+        builder.validate_base_profile(base)
+
+
+def test_parent_status_remains_exact_approved_not_applied() -> None:
+    base = base_profile()
+    base["status"] = "APPROVED_NOT_APPLIED"
+    with pytest.raises(builder.ContractError, match="base profile status mismatch"):
+        builder.validate_base_profile(base)
+
+
+def test_successor_other_true_safety_flag_remains_fail_closed() -> None:
+    base, successor = build()
+    successor["safety_flags"]["client_send_authorized"] = True
+    with pytest.raises(builder.ContractError, match="profile successor safety flag"):
+        builder.validate_successor_payload(
+            successor, base, Path(r"C:\outside\completed-successor.json"), "a" * 64
+        )
 
 
 @pytest.mark.parametrize(

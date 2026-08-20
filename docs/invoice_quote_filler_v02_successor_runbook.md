@@ -34,6 +34,13 @@ RT-820 is one `EKF-RT-820` row with
 and never becomes a separate component or charge. Existing AD12 scopes and
 mapping018 data are protected by the unchanged parent prefix.
 
+For the exact parent pricing profile with status
+`IGOR_INVOICE519_PRICING_PROFILE_APPROVED_NOT_APPLIED`,
+`safety_flags.pricing_profile_decision_recorded` must be the boolean `true`:
+it records the prior direct Human Decision only. It does not apply the profile,
+run pricing, approve a price or authorize downstream work. Every other safety
+flag must exist as a boolean when present and remain strictly `false`.
+
 The code-only authorization represented by this repository change does not
 authorize executing either builder. The tokens below are only CLI
 acknowledgements to be supplied after future separate exact Igor decisions;
