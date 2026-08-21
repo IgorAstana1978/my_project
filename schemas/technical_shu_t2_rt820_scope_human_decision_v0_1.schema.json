@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/technical_shu_t2_rt820_scope_human_decision_v0_1.schema.json",
+  "title": "Project 2024/086 SHU-T2 RT-820 scope Human Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "project_id",
+    "decision_id",
+    "status",
+    "authority",
+    "application_status",
+    "created_at_utc",
+    "input_bindings",
+    "lineage_anchors",
+    "exact_scope",
+    "rt820_contract",
+    "bundle_semantics",
+    "supersession",
+    "shu_t1_integrity",
+    "safety",
+    "publication_control"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "technical_shu_t2_rt820_scope_human_decision.v0.1"
+    },
+    "artifact_type": {
+      "const": "IMMUTABLE_HUMAN_DECISION_CAPTURE"
+    },
+    "project_id": {
+      "const": "2024/086"
+    },
+    "decision_id": {
+      "const": "IGOR-SHU-T2-RT820-SCOPE-2024-086-001"
+    },
+    "status": {
+      "const": "IGOR_SHU_T2_RT820_SCOPE_APPROVED_NOT_APPLIED"
+    },
+    "authority": {
+      "const": "IGOR_DIRECT_HUMAN_APPROVAL"
+    },
+    "application_status": {
+      "const": "NOT_APPLIED"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "input_bindings": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "path",
+          "expected_sha256",
+          "actual_sha256",
+          "schema_version",
+          "status",
+          "artifact_identity"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "technical_successor",
+              "composition_decision",
+              "cabinet_pricing_decision",
+              "rt820_code_install_decision",
+              "pricing_profile"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "actual_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "schema_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifact_identity": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "lineage_anchors": {
+      "const": {
+        "applied_component_lineage_sha256": "6433e862c7281ac699a12b81e30a02e7f45702ddab22441efd2c79d36589dd6f",
+        "canonical_position_lineage_sha256": "41ca4e3b63433c8f06c7630565c3d5d5380659e49027bf091a6aff6ab007123e"
+      }
+    },
+    "exact_scope": {
+      "const": {
+        "product": "ШУ-Т2",
+        "cabinet_group_id": "CABINET-GROUP-003",
+        "cabinet_code": "CAB-KRN-12",
+        "positions": [
+          {
+            "section": "10",
+            "technical_position_id": "TFE-016",
+            "pricing_position_id": "PRICE-POSITION-009",
+            "relay_evidence_id": "COMP-031",
+            "sensor_evidence_id": "COMP-034",
+            "physical_multiplicity": 1
+          },
+          {
+            "section": "12",
+            "technical_position_id": "TFE-041",
+            "pricing_position_id": "PRICE-POSITION-023",
+            "relay_evidence_id": "COMP-085",
+            "sensor_evidence_id": "COMP-088",
+            "physical_multiplicity": 1
+          },
+          {
+            "section": "14",
+            "technical_position_id": "TFE-061",
+            "pricing_position_id": "PRICE-POSITION-035",
+            "relay_evidence_id": "COMP-128",
+            "sensor_evidence_id": "COMP-131",
+            "physical_multiplicity": 1
+          },
+          {
+            "section": "16",
+            "technical_position_id": "TFE-083",
+            "pricing_position_id": "PRICE-POSITION-047",
+            "relay_evidence_id": "COMP-178",
+            "sensor_evidence_id": "COMP-181",
+            "physical_multiplicity": 1
+          }
+        ],
+        "source_evidence_row_count": 8,
+        "future_component_row_count": 4
+      }
+    },
+    "rt820_contract": {
+      "const": {
+        "component_code": "EKF-RT-820",
+        "component_qty_per_physical_cabinet": 1,
+        "install_type": "temperature_relay_din_2mod",
+        "module_width": 2,
+        "source_range": "КРН!A19:C19",
+        "source_label": "Терморегулятор RT-820",
+        "material_kzt": 15000,
+        "work_kzt": 900,
+        "generic_work_432_prohibited": true,
+        "family_fallback_prohibited": true,
+        "fuzzy_fallback_prohibited": true,
+        "similar_relay_fallback_prohibited": true
+      }
+    },
+    "bundle_semantics": {
+      "const": {
+        "relay_and_sensor_form_one_indivisible_complete_set": true,
+        "tst05_provenance_only": true,
+        "separate_tst05_component_row": false,
+        "separate_tst05_material_charge": false,
+        "separate_tst05_work_charge": false,
+        "separate_tst05_pricing_row": false,
+        "double_counting_prohibited": true
+      }
+    },
+    "supersession": {
+      "const": {
+        "prior_decision_id": "HDA-019-H19-3",
+        "superseded_field": "$.supply_boundary.rt007s_authority_proof.rule_payload.forbidden_transfer_designation",
+        "prior_value": "ШУ-Т2",
+        "applies_only_to_evidence_ids": [
+          "COMP-031",
+          "COMP-034",
+          "COMP-085",
+          "COMP-088",
+          "COMP-128",
+          "COMP-131",
+          "COMP-178",
+          "COMP-181"
+        ],
+        "outside_cabinet_exclusion_count_must_be_derived": true,
+        "outside_cabinet_exclusion_count_override_prohibited": true,
+        "all_other_supply_boundaries_unchanged": true,
+        "all_other_human_decisions_unchanged": true,
+        "shu_t1_unchanged": true
+      }
+    },
+    "shu_t1_integrity": {
+      "const": {
+        "cabinet_group_id": "CABINET-GROUP-015",
+        "technical_row_ids": [
+          "ROW-DRAFT-0110",
+          "ROW-DRAFT-0111",
+          "ROW-DRAFT-0112"
+        ],
+        "pricing_position_ids": [
+          "PRICE-POSITION-052",
+          "PRICE-POSITION-053",
+          "PRICE-POSITION-054",
+          "PRICE-POSITION-055"
+        ],
+        "composition_fingerprint_sha256": "4b5cf23236653dfd33e27eefa8034ad2a779b5e2b40f0adc972ee49912dbc0ec",
+        "byte_and_semantic_change_authorized": false
+      }
+    },
+    "safety": {
+      "const": {
+        "human_decision_recorded": true,
+        "decision_applied_to_technical_successor": false,
+        "decision_applied_to_pricing_profile": false,
+        "calculator_run_authorized": false,
+        "price_calculated": false,
+        "price_approved": false,
+        "price_floor_authorized": false,
+        "quote_or_invoice_authorized": false,
+        "client_send_authorized": false,
+        "procurement_authorized": false,
+        "production_authorized": false,
+        "downstream_authorized": false,
+        "scope_expansion": false
+      }
+    },
+    "publication_control": {
+      "const": {
+        "immutable": true,
+        "no_overwrite": true,
+        "atomic_publication": true,
+        "input_toctou_recheck_required": true,
+        "final_strict_json_reread_required": true,
+        "authorization_token_required": true
+      }
+    }
+  }
+}
