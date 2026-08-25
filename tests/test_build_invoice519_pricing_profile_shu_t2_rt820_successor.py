@@ -86,6 +86,12 @@ def synthetic_parent_profile() -> dict[str, Any]:
     profile["authority"] = copy.deepcopy(builder.EXPECTED_AUTHORITY)
     profile["safety_flags"] = copy.deepcopy(builder.EXPECTED_SAFETY_FLAGS)
     profile["non_approvals"] = copy.deepcopy(builder.EXPECTED_NON_APPROVALS)
+    profile["scope_partition"]["reserved_case_level_formula_rules"] = {
+        "formula_rule_status": "HUMAN_APPROVED_CASE_LEVEL_RULE_NOT_APPLIED",
+        "technical_scope_status": "NO_CONFIRMED_POSITION_IN_CURRENT_COMPLETED_INPUT",
+        "application_status": "NOT_APPLIED",
+        "excluded_from_current_coverage": True,
+    }
     scope = profile["current_completed_technical_scope"]
     scope["cabinet_groups"][2].update(
         {
@@ -413,6 +419,35 @@ def test_synthetic_valid_successor_has_exact_controlled_replacement(
         "physical_cabinets": 137,
         "composition_fingerprints": 11,
     }
+    parent_partition = parent["scope_partition"]
+    successor_partition = payload["scope_partition"]
+    assert (
+        parent_partition["current_completed_technical_scope"]["coverage"][
+            "composition_fingerprints"
+        ]
+        == 12
+    )
+    assert successor_partition["current_completed_technical_scope"]["coverage"] == (
+        builder.EXPECTED_COVERAGE
+    )
+    assert (
+        scope["coverage"]
+        == successor_partition["current_completed_technical_scope"]["coverage"]
+    )
+    assert {
+        key: value
+        for key, value in successor_partition[
+            "current_completed_technical_scope"
+        ].items()
+        if key != "coverage"
+    } == {
+        key: value
+        for key, value in parent_partition["current_completed_technical_scope"].items()
+        if key != "coverage"
+    }
+    assert successor_partition["reserved_case_level_formula_rules"] == (
+        parent_partition["reserved_case_level_formula_rules"]
+    )
     assert len(scope["cabinet_groups"]) == 15
     assert len(scope["pricing_positions"]) == 55
     assert (
@@ -467,6 +502,148 @@ def test_synthetic_valid_successor_has_exact_controlled_replacement(
         "approved": False,
         "applied": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("name", "mutation"),
+    [
+        (
+            "main_11_partition_12",
+            lambda value: value["scope_partition"]["current_completed_technical_scope"][
+                "coverage"
+            ].update({"composition_fingerprints": 12}),
+        ),
+        (
+            "main_12_partition_11",
+            lambda value: value["current_completed_technical_scope"]["coverage"].update(
+                {"composition_fingerprints": 12}
+            ),
+        ),
+        (
+            "missing_partition_coverage",
+            lambda value: value["scope_partition"][
+                "current_completed_technical_scope"
+            ].pop("coverage"),
+        ),
+        (
+            "extra_coverage_key",
+            lambda value: value["scope_partition"]["current_completed_technical_scope"][
+                "coverage"
+            ].update({"unexpected": 1}),
+        ),
+        (
+            "missing_coverage_key",
+            lambda value: value["current_completed_technical_scope"]["coverage"].pop(
+                "physical_cabinets"
+            ),
+        ),
+        (
+            "null_fingerprint_count",
+            lambda value: value["scope_partition"]["current_completed_technical_scope"][
+                "coverage"
+            ].update({"composition_fingerprints": None}),
+        ),
+        (
+            "string_fingerprint_count",
+            lambda value: value["scope_partition"]["current_completed_technical_scope"][
+                "coverage"
+            ].update({"composition_fingerprints": "11"}),
+        ),
+        (
+            "non_integer_fingerprint_count",
+            lambda value: value["scope_partition"]["current_completed_technical_scope"][
+                "coverage"
+            ].update({"composition_fingerprints": 11.0}),
+        ),
+    ],
+)
+def test_successor_validation_rejects_coverage_pair_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    mutation: Any,
+) -> None:
+    paths, shas, _, _, _ = synthetic_contract(tmp_path / name, monkeypatch)
+    loaded = builder.load_and_validate_inputs(paths, shas)
+    payload = builder.build_successor_payload(loaded)
+    mutation(payload)
+    with pytest.raises(builder.ContractError, match="coverage"):
+        builder.validate_successor_payload(payload, loaded)
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (
+            (
+                "scope_partition",
+                "current_completed_technical_scope",
+                "technical_scope_status",
+            ),
+            "CHANGED",
+        ),
+        (
+            (
+                "scope_partition",
+                "current_completed_technical_scope",
+                "pricing_profile_decision_status",
+            ),
+            "CHANGED",
+        ),
+        (
+            (
+                "scope_partition",
+                "current_completed_technical_scope",
+                "pricing_calculation_status",
+            ),
+            "CHANGED",
+        ),
+        (
+            (
+                "scope_partition",
+                "reserved_case_level_formula_rules",
+                "formula_rule_status",
+            ),
+            "CHANGED",
+        ),
+        (
+            (
+                "scope_partition",
+                "reserved_case_level_formula_rules",
+                "technical_scope_status",
+            ),
+            "CHANGED",
+        ),
+        (
+            (
+                "scope_partition",
+                "reserved_case_level_formula_rules",
+                "application_status",
+            ),
+            "APPLIED",
+        ),
+        (
+            (
+                "scope_partition",
+                "reserved_case_level_formula_rules",
+                "excluded_from_current_coverage",
+            ),
+            False,
+        ),
+    ],
+)
+def test_successor_validation_rejects_every_other_scope_partition_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: tuple[Any, ...],
+    replacement: Any,
+) -> None:
+    paths, shas, _, _, _ = synthetic_contract(tmp_path, monkeypatch)
+    loaded = builder.load_and_validate_inputs(paths, shas)
+    payload = builder.build_successor_payload(loaded)
+    mutate_path(payload, path, replacement)
+    with pytest.raises(builder.ContractError, match="partition"):
+        builder.validate_successor_payload(payload, loaded)
 
 
 @pytest.mark.parametrize(
@@ -731,6 +908,14 @@ def test_synthetic_publication_is_atomic_and_no_overwrite(
     result = builder.publish_successor(paths, shas, output)
     assert output.read_bytes() == result.encoded
     assert sha256(output) == result.sha256
+    published = json.loads(output.read_text(encoding="utf-8"))
+    assert published["current_completed_technical_scope"]["coverage"] == (
+        builder.EXPECTED_COVERAGE
+    )
+    assert (
+        published["scope_partition"]["current_completed_technical_scope"]["coverage"]
+        == builder.EXPECTED_COVERAGE
+    )
     assert set(output.parent.iterdir()) == {output}
     with pytest.raises(builder.ContractError, match="already exists"):
         builder.publish_successor(paths, shas, output)
@@ -810,6 +995,41 @@ def test_toctou_and_post_link_validation_failure_roll_back_everything(
         builder.publish_successor(paths, shas, output)
     assert link_completed is True
     assert not output.exists()
+    assert not output.parent.exists()
+
+
+def test_post_link_partition_coverage_mutation_rolls_back_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths, shas, _, _, _ = synthetic_contract(tmp_path / "inputs", monkeypatch)
+    output = tmp_path / "case" / builder.OUTPUT_FILENAME
+    success_marker = output.with_suffix(".success")
+    link_completed = False
+    original_link = builder.os.link
+    original_validate = builder.validate_successor_payload
+
+    def wrapped_link(source: Any, target: Any) -> None:
+        nonlocal link_completed
+        original_link(source, target)
+        link_completed = True
+
+    def reject_partition_mutation(payload: Any, loaded: Any) -> None:
+        if link_completed:
+            payload["scope_partition"]["current_completed_technical_scope"]["coverage"][
+                "composition_fingerprints"
+            ] = 12
+        original_validate(payload, loaded)
+
+    monkeypatch.setattr(builder.os, "link", wrapped_link)
+    monkeypatch.setattr(
+        builder, "validate_successor_payload", reject_partition_mutation
+    )
+    with pytest.raises(builder.ContractError, match="partition coverage mismatch"):
+        builder.publish_successor(paths, shas, output)
+    assert link_completed is True
+    assert not output.exists()
+    assert not success_marker.exists()
+    assert not list(tmp_path.rglob("*.staging"))
     assert not output.parent.exists()
 
 

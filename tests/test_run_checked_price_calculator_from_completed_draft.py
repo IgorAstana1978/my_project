@@ -1945,6 +1945,9 @@ def test_exact_shu_t2_profile_envelope_passes_and_any_price_approval_fails() -> 
 
 def test_shu_t2_profile_frozen_sha_constant_is_exact() -> None:
     assert runner.SHU_T2_RT820_PROFILE_SHA256 == (
+        "ae604108514a2b19b58c262c0e2fae379be6eac8a7286ffc2da605ac29637c9e"
+    )
+    assert runner.SHU_T2_RT820_REJECTED_PROFILE_SHA256 == (
         "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
     )
 
@@ -1986,6 +1989,33 @@ def test_shu_t2_profile_rejects_non_frozen_cli_sha(
         result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
         assert runner.load_pricing_profile(result, profile_path, expected_sha) is None
         assert result.red_flags
+
+
+def test_historical_shu_t2_profile_sha_is_rejected_before_calculation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile_path = write_json(tmp_path, exact_shu_t2_envelope())
+
+    class HistoricalSha:
+        @staticmethod
+        def hexdigest() -> str:
+            return "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
+
+    monkeypatch.setattr(runner.hashlib, "sha256", lambda _payload: HistoricalSha())
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert (
+        runner.load_pricing_profile(
+            result,
+            profile_path,
+            runner.SHU_T2_RT820_REJECTED_PROFILE_SHA256,
+        )
+        is None
+    )
+    assert result.red_flags == [
+        "SHU-T2 pricing profile -001 SHA is rejected: coverage mismatch"
+    ]
+    assert result.calculator_runs == []
+    assert result.temp_csv_paths == []
 
 
 def exact_shu_t2_replacement_scope() -> dict[str, Any]:

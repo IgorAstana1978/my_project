@@ -116,6 +116,9 @@ SHU_T1_FINGERPRINT = "4b5cf23236653dfd33e27eefa8034ad2a779b5e2b40f0adc972ee49912
 SHU_T2_RT820_PROFILE_CONTRACT = "controlled_shu_t2_rt820_pricing_profile_successor.v0.1"
 SHU_T2_RT820_TECHNICAL_CONTRACT = "controlled_shu_t2_rt820_technical_successor.v0.1"
 SHU_T2_RT820_PROFILE_SHA256 = (
+    "ae604108514a2b19b58c262c0e2fae379be6eac8a7286ffc2da605ac29637c9e"
+)
+SHU_T2_RT820_REJECTED_PROFILE_SHA256 = (
     "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
 )
 SHU_T2_RT820_PROFILE_COVERAGE = {
@@ -529,10 +532,14 @@ def load_pricing_profile(
     ):
         add_red_flag(result, "pricing profile path/SHA is not the canonical exact base")
         return None
-    if (
-        isinstance(data.get("shu_t2_rt820_pricing_profile_successor"), Mapping)
-        and expected_sha256 != SHU_T2_RT820_PROFILE_SHA256
-    ):
+    shu_t2 = isinstance(data.get("shu_t2_rt820_pricing_profile_successor"), Mapping)
+    if shu_t2 and expected_sha256 == SHU_T2_RT820_REJECTED_PROFILE_SHA256:
+        add_red_flag(
+            result,
+            "SHU-T2 pricing profile -001 SHA is rejected: coverage mismatch",
+        )
+        return None
+    if shu_t2 and expected_sha256 != SHU_T2_RT820_PROFILE_SHA256:
         add_red_flag(result, "SHU-T2 pricing profile exact frozen SHA-256 mismatch")
         return None
     return cast(Mapping[str, Any], data)

@@ -925,7 +925,13 @@ def test_shu_t2_rt820_requires_every_exact_contract_binding(
 
 @pytest.mark.parametrize(
     "profile_sha",
-    ["a" * 64, "b" * 64, calculator.SHU_T2_RT820_PROFILE_SHA256.upper(), ""],
+    [
+        "a" * 64,
+        "b" * 64,
+        "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701",
+        calculator.SHU_T2_RT820_PROFILE_SHA256.upper(),
+        "",
+    ],
 )
 def test_standalone_calculator_rejects_every_non_frozen_profile_sha(
     tmp_path: Path, profile_sha: str

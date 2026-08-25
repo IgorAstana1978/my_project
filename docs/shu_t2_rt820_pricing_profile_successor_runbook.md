@@ -58,12 +58,20 @@ exact root/nested key sets и требует полного deep-equal совп�
 non-approvals, unrelated scope, authoritative bindings или validation summary
 отклоняется и после hard link приводит к rollback без output/marker.
 
+Отдельный semantic invariant не полагается только на reconstructed expected
+payload. Coverage в `current_completed_technical_scope` и в зеркальном
+`scope_partition.current_completed_technical_scope` обязаны иметь exact key set,
+exact integer values `15/55/137/11`, совпадать с `EXPECTED_COVERAGE` и друг с
+другом. Все остальные поля `scope_partition` остаются deep-equal parent.
+
 Rollback удаляет только inode, принадлежащий invocation. Foreign replacement
 сохраняется, а cleanup failure переводит результат в ошибку.
 
 ## Exact successor contract
 
 - coverage: `15 / 55 / 137 / 116 / 11`;
+- mirrored pricing-profile coverage: `11/11` composition fingerprints в main и
+  partition contours;
 - `CABINET-GROUP-003`: 8 → 12 row IDs;
 - positions `009/023/035/047`: identity и non-approval state сохранены;
 - остальные 51 positions deep-equal;
@@ -81,8 +89,18 @@ Rollback удаляет только inode, принадлежащий invocatio
 
 Детерминированные bytes будущей публикации получаются только через
 `serialize(payload)`. Для текущих четырёх exact inputs их frozen SHA-256:
-`7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701`.
+`ae604108514a2b19b58c262c0e2fae379be6eac8a7286ffc2da605ac29637c9e`,
+размер — `139028` bytes.
 Вычисление SHA в памяти не является публикацией и не создаёт output directory.
+
+Historical publication `...-20260825-001` с SHA
+`7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701`
+остаётся immutable и не удаляется, но запрещена для checked runner: её main
+coverage имеет `11`, а mirrored partition coverage — `12`. Будущая corrected
+publication должна использовать только fresh directory
+`C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-SHU-T2-RT820-PRICING-PROFILE-SUCCESSOR-20260825-002`
+и filename `invoice519-pricing-profile-shu-t2-rt820-successor.json` после
+отдельной real-publication authorization.
 
 ## Разделение разрешений
 

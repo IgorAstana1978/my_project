@@ -794,6 +794,10 @@ def successor_metadata(loaded: LoadedInputs) -> dict[str, Any]:
 def build_successor_payload(loaded: LoadedInputs) -> dict[str, Any]:
     payload = copy.deepcopy(cast(Mapping[str, Any], loaded.parent.value))
     scope = cast(dict[str, Any], payload["current_completed_technical_scope"])
+    scope_partition = cast(dict[str, Any], payload["scope_partition"])
+    partition_scope = cast(
+        dict[str, Any], scope_partition["current_completed_technical_scope"]
+    )
     groups = cast(list[dict[str, Any]], scope["cabinet_groups"])
     positions = cast(list[dict[str, Any]], scope["pricing_positions"])
     fingerprints = cast(list[dict[str, Any]], scope["composition_fingerprints"])
@@ -828,6 +832,7 @@ def build_successor_payload(loaded: LoadedInputs) -> dict[str, Any]:
         item for item in fingerprints if item["fingerprint_sha256"] != OLD_FINGERPRINT
     ]
     scope["coverage"] = copy.deepcopy(EXPECTED_COVERAGE)
+    partition_scope["coverage"] = copy.deepcopy(EXPECTED_COVERAGE)
     scope["shu_t2_rt820_preliminary_candidate"] = {
         "status": "NOT_CALCULATED_NOT_APPROVED",
         "approved_unit_price_kzt": None,
@@ -876,6 +881,69 @@ def build_successor_payload(loaded: LoadedInputs) -> dict[str, Any]:
     return payload
 
 
+def _validate_successor_coverage_pair(
+    payload: Mapping[str, Any], parent: Mapping[str, Any]
+) -> None:
+    scope = payload.get("current_completed_technical_scope")
+    partition = payload.get("scope_partition")
+    parent_partition = parent.get("scope_partition")
+    require(isinstance(scope, Mapping), "successor current scope missing")
+    require(isinstance(partition, Mapping), "successor scope partition missing")
+    require(isinstance(parent_partition, Mapping), "parent scope partition missing")
+    require(
+        set(partition) == set(parent_partition),
+        "successor scope partition envelope mismatch",
+    )
+    partition_scope = partition.get("current_completed_technical_scope")
+    parent_partition_scope = parent_partition.get("current_completed_technical_scope")
+    require(
+        isinstance(partition_scope, Mapping),
+        "successor partition coverage scope missing",
+    )
+    require(
+        isinstance(parent_partition_scope, Mapping),
+        "parent partition coverage scope missing",
+    )
+    require(
+        set(partition_scope) == set(parent_partition_scope),
+        "successor partition coverage envelope mismatch",
+    )
+    require(
+        {key: value for key, value in partition_scope.items() if key != "coverage"}
+        == {
+            key: value
+            for key, value in parent_partition_scope.items()
+            if key != "coverage"
+        },
+        "successor partition current scope metadata changed",
+    )
+    require(
+        partition.get("reserved_case_level_formula_rules")
+        == parent_partition.get("reserved_case_level_formula_rules"),
+        "successor reserved scope partition changed",
+    )
+    main_coverage = scope.get("coverage")
+    partition_coverage = partition_scope.get("coverage")
+    for label, coverage in (
+        ("successor main coverage", main_coverage),
+        ("successor partition coverage", partition_coverage),
+    ):
+        require(isinstance(coverage, Mapping), f"{label} missing")
+        require(
+            set(coverage) == set(EXPECTED_COVERAGE),
+            f"{label} key set mismatch",
+        )
+        require(
+            all(type(coverage[key]) is int for key in EXPECTED_COVERAGE),
+            f"{label} values must be exact integers",
+        )
+        require(coverage == EXPECTED_COVERAGE, f"{label} mismatch")
+    require(
+        main_coverage == partition_coverage,
+        "successor coverage pair mismatch",
+    )
+
+
 def validate_successor_payload(
     payload: Mapping[str, Any], loaded: LoadedInputs
 ) -> None:
@@ -887,6 +955,7 @@ def validate_successor_payload(
         "successor root key envelope mismatch",
     )
     require(payload.get("project_id") == PROJECT_ID, "successor project mismatch")
+    _validate_successor_coverage_pair(payload, parent)
     require(
         payload.get("shu_t2_rt820_pricing_profile_successor")
         == successor_metadata(loaded),

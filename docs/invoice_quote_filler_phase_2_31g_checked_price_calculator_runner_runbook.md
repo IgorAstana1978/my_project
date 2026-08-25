@@ -303,14 +303,25 @@ Runner поддерживает две successor-пары без общего р
 
 Cross-pair combinations fail closed. Для новой пары runner проверяет exact
 technical/profile/Human Decision SHA bindings, coverage `15/55/137/116/11`,
+согласованную main/partition fingerprint coverage `11/11`,
 неизменность 51 positions и 14 cabinet groups вне scope, объединённый fingerprint
 восьми positions и non-approval state. После validation временный CSV получает
 отдельные contract-binding columns. Calculator разрешает RT-820 для ШУ-Т2 только
 с этим exact header; legacy ШУ-Т1 header остаётся действующим. Для нового
 pricing-profile contract actual file SHA, CLI expected SHA и frozen SHA
-`7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701`
+`ae604108514a2b19b58c262c0e2fae379be6eac8a7286ffc2da605ac29637c9e`
 обязаны быть равны. Любой другой синтаксически корректный 64-hex SHA, uppercase
 SHA, missing SHA или изменённый profile fail closed до calculator invocation.
+
+Historical immutable `-20260825-001` profile SHA
+`7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701`
+явно отклоняется до calculator invocation с coverage-mismatch red flag и не
+изменяется. Corrected profile может быть опубликован только после отдельного
+разрешения в fresh directory
+`C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-SHU-T2-RT820-PRICING-PROFILE-SUCCESSOR-20260825-002`
+с filename `invoice519-pricing-profile-shu-t2-rt820-successor.json`; текущая
+code-only фаза не создаёт этот directory или файл. Corrected serialized size —
+`139028` bytes.
 
 RT-820 всегда читается только из `КРН!A19:C19` как `15000/900`. Generic work
 `432`, family/fuzzy fallback и отдельный TST05 row/charge запрещены.
