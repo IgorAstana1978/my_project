@@ -287,6 +287,230 @@ def test_additive_v02_full_envelope_passes(tmp_path: Path) -> None:
     assert result.red_flags == []
 
 
+def valid_shu_t2_v02_data() -> dict[str, Any]:
+    data = valid_additive_v02_data()
+    evidence_ids = [
+        "COMP-031",
+        "COMP-034",
+        "COMP-085",
+        "COMP-088",
+        "COMP-128",
+        "COMP-131",
+        "COMP-178",
+        "COMP-181",
+    ]
+    data["source"]["shu_t2_rt820_technical_successor"] = {
+        "contract": validator.V02_SHU_T2_SUCCESSOR_CONTRACT,
+        "parent": copy.deepcopy(validator.V02_SHU_T2_PARENT),
+        "human_decision": copy.deepcopy(validator.V02_SHU_T2_DECISION),
+        "technical_projection": {
+            "row_ids": [
+                "ROW-DRAFT-0113",
+                "ROW-DRAFT-0114",
+                "ROW-DRAFT-0115",
+                "ROW-DRAFT-0116",
+            ],
+            "evidence_count": 8,
+            "evidence_ids": evidence_ids,
+            "outside_cabinet_membership_asserted": False,
+            "outside_cabinet_count_transition_asserted": False,
+        },
+        "rt820_pricing_provenance_only": {
+            "source_range": "КРН!A19:C19",
+            "material_kzt": 15000,
+            "work_kzt": 900,
+            "pricing_calculation_executed": False,
+            "generic_work_432_prohibited": True,
+            "family_fallback_prohibited": True,
+            "fuzzy_fallback_prohibited": True,
+            "similar_relay_fallback_prohibited": True,
+        },
+        "append_only": True,
+        "scope_expansion": False,
+    }
+    row_bindings = (
+        (
+            "ROW-DRAFT-0113",
+            "TFE-016",
+            "PRICE-POSITION-009",
+            "10",
+            ["COMP-031", "COMP-034"],
+        ),
+        (
+            "ROW-DRAFT-0114",
+            "TFE-041",
+            "PRICE-POSITION-023",
+            "12",
+            ["COMP-085", "COMP-088"],
+        ),
+        (
+            "ROW-DRAFT-0115",
+            "TFE-061",
+            "PRICE-POSITION-035",
+            "14",
+            ["COMP-128", "COMP-131"],
+        ),
+        (
+            "ROW-DRAFT-0116",
+            "TFE-083",
+            "PRICE-POSITION-047",
+            "16",
+            ["COMP-178", "COMP-181"],
+        ),
+    )
+    new_ids = [binding[0] for binding in row_bindings]
+    data["cabinet_groups"][2]["product_name"] = "ШУ-Т2"
+    data["cabinet_groups"][2]["source_cabinet_template"] = "ШУ-Т2"
+    data["cabinet_groups"][2]["row_draft_ids"].extend(new_ids)
+    data["calculator_input_format"]["row_drafts"].extend(
+        {
+            "row_id": row_id,
+            "cabinet_group_id": "CABINET-GROUP-003",
+            "calculator_values": {
+                "product_name": "ШУ-Т2",
+                "cabinet_code": "CAB-KRN-12",
+                "consumables_factor": 1.2,
+                "component_code": "EKF-RT-820",
+                "component_qty": 1,
+                "install_type": "temperature_relay_din_2mod",
+            },
+            "source_quantity": {
+                "decision_id": "IGOR-SHU-T2-RT820-SCOPE-2024-086-001",
+                "decision_kind": "DIRECT_PER_CABINET_COMPLETE_SET",
+                "technical_position_id": technical_position_id,
+                "pricing_position_id": pricing_position_id,
+                "section": section,
+                "quantity_per_individual_cabinet": 1,
+                "physical_multiplicity": 1,
+                "applies_once_per_cabinet": True,
+                "multiply_by_member_count": False,
+                "scope_expansion": False,
+            },
+            "source_component_evidence_ids": evidence_ids,
+            "approved_signature": {
+                "manufacturer": "EKF",
+                "product": "Реле температуры RT-820 EKF PROxima",
+                "manufacturer_article": "RT-820",
+                "supply_form": (
+                    "ONE_TEMPERATURE_RELAY_WITH_ONE_EXTERNAL_TEMPERATURE_SENSOR"
+                ),
+                "module_width_din": 2,
+                "TST05_evidence_included_as_provenance_only": True,
+                "TST05_separate_component_row": False,
+            },
+            "mapping_status": validator.V02_COMPLETED_MAPPING_STATUS,
+            "component_label": "Реле температуры RT-820 EKF PROxima с внешним датчиком",
+        }
+        for (
+            row_id,
+            technical_position_id,
+            pricing_position_id,
+            section,
+            evidence_ids,
+        ) in row_bindings
+    )
+    data["coverage"] = {"pricing_row_draft_count": 116, "cabinet_group_count": 15}
+    data["completion"]["scope"] = {
+        "component_groups": 35,
+        "rows": "116/116",
+        "cabinet_groups": "15/15",
+        "duplicate_component_membership": 0,
+        "duplicate_cabinet_membership": 0,
+        "scope_expansion": False,
+    }
+    data["completion"]["shu_t2_rt820_technical_successor"] = {
+        "contract": validator.V02_SHU_T2_SUCCESSOR_CONTRACT,
+        "decision_application": "PROJECTED_TO_TECHNICAL_SUCCESSOR_ONLY",
+        "pricing_calculation_executed": False,
+        "calculator_authorized": False,
+        "successor_publication_requires_separate_exact_igor_authorization": True,
+    }
+    return data
+
+
+def test_exact_shu_t2_116_row_envelope_passes(tmp_path: Path) -> None:
+    result = validator.validate_completed_price_calculator_input_draft(
+        write_json(tmp_path, valid_shu_t2_v02_data())
+    )
+    assert result.status == "PASS"
+    assert result.red_flags == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda data: data["source"]["shu_t2_rt820_technical_successor"][
+            "human_decision"
+        ].__setitem__("sha256", "0" * 64),
+        lambda data: data["source"]["shu_t2_rt820_technical_successor"][
+            "technical_projection"
+        ]["evidence_ids"].pop(),
+        lambda data: data["source"]["shu_t2_rt820_technical_successor"][
+            "technical_projection"
+        ].__setitem__("outside_cabinet_membership_asserted", True),
+        lambda data: data["calculator_input_format"]["row_drafts"][-1][
+            "calculator_values"
+        ].__setitem__("component_code", "TST05"),
+        lambda data: data["calculator_input_format"]["row_drafts"][-1][
+            "approved_signature"
+        ].__setitem__("module_width_din", 1),
+        lambda data: data["cabinet_groups"][-1]["row_draft_ids"].append(
+            "ROW-DRAFT-0113"
+        ),
+        lambda data: data["completion"]["scope"].__setitem__("rows", "115/116"),
+    ],
+)
+def test_shu_t2_contract_drift_fails(tmp_path: Path, mutation: Any) -> None:
+    data = valid_shu_t2_v02_data()
+    mutation(data)
+    result = validator.validate_completed_price_calculator_input_draft(
+        write_json(tmp_path, data)
+    )
+    assert result.status == "FAIL"
+    assert result.red_flags
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda rows: rows[0]["source_component_evidence_ids"].pop(),
+        lambda rows: rows[0]["source_component_evidence_ids"].__setitem__(
+            1, "COMP-031"
+        ),
+        lambda rows: (
+            rows[0]["source_component_evidence_ids"].__setitem__(1, "COMP-088"),
+            rows[1]["source_component_evidence_ids"].__setitem__(1, "COMP-034"),
+        ),
+        lambda rows: rows[0]["source_quantity"].__setitem__(
+            "technical_position_id", "TFE-041"
+        ),
+        lambda rows: rows[0]["source_quantity"].__setitem__(
+            "pricing_position_id", "PRICE-POSITION-023"
+        ),
+        lambda rows: rows[0]["source_quantity"].__setitem__("section", "12"),
+        lambda rows: rows[0]["source_quantity"].update({"physical_multiplicity": 2}),
+        lambda rows: rows[0]["source_quantity"].__setitem__(
+            "multiply_by_member_count", True
+        ),
+        lambda rows: rows[0]["approved_signature"].update({"manufacturer": "OTHER"}),
+        lambda rows: rows[0].__setitem__("mapping_status", "WRONG"),
+        lambda rows: rows[0].__setitem__("component_label", "wrong"),
+        lambda rows: rows[0].__setitem__("extra", True),
+    ],
+)
+def test_shu_t2_appended_row_full_envelope_drift_fails(
+    tmp_path: Path, mutation: Any
+) -> None:
+    data = valid_shu_t2_v02_data()
+    rows = data["calculator_input_format"]["row_drafts"][-4:]
+    mutation(rows)
+    result = validator.validate_completed_price_calculator_input_draft(
+        write_json(tmp_path, data)
+    )
+    assert result.status == "FAIL"
+    assert "v0.2 SHU-T2 appended-row contract mismatch" in result.red_flags
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -49,6 +49,16 @@ TECHNICAL_CALCULATOR_COLUMNS = CALCULATOR_COLUMNS + (
     "component_label",
     "cabinet_label",
 )
+SHU_T2_RT820_BINDING_COLUMNS = (
+    "technical_successor_contract",
+    "technical_successor_sha256",
+    "pricing_profile_contract",
+    "pricing_profile_sha256",
+    "human_decision_sha256",
+)
+SHU_T2_TECHNICAL_CALCULATOR_COLUMNS = (
+    TECHNICAL_CALCULATOR_COLUMNS + SHU_T2_RT820_BINDING_COLUMNS
+)
 V02_SCHEMA_VERSION = "price_calculator_input_draft.v0.2"
 CUSTOM_SCHE_CABINET_CODE = "CAB-SCHE-BI-900X900X120-M12"
 CUSTOM_SCHE_PRODUCT_NAMES = ("ЩЭ-3кв", "ЩЭ-4кв", "ЩЭ-5кв", "ЩЭ-6кв")
@@ -103,6 +113,42 @@ ADDITIVE_PROFILE_COVERAGE = {
 }
 ADDITIVE_PROFILE_PRODUCTS = [*EXPECTED_PROFILE_PRODUCTS, "ШУ-Т1"]
 SHU_T1_FINGERPRINT = "4b5cf23236653dfd33e27eefa8034ad2a779b5e2b40f0adc972ee49912dbc0ec"
+SHU_T2_RT820_PROFILE_CONTRACT = "controlled_shu_t2_rt820_pricing_profile_successor.v0.1"
+SHU_T2_RT820_TECHNICAL_CONTRACT = "controlled_shu_t2_rt820_technical_successor.v0.1"
+SHU_T2_RT820_PROFILE_SHA256 = (
+    "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
+)
+SHU_T2_RT820_PROFILE_COVERAGE = {
+    "technical_cabinet_groups": 15,
+    "section_aware_pricing_positions": 55,
+    "physical_cabinets": 137,
+    "composition_fingerprints": 11,
+}
+SHU_T2_RT820_PARENT_PROFILE_PATH = Path(
+    r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-"
+    "SHU-T1-PRICING-PROFILE-SUCCESSOR-20260820-001\\"
+    "invoice519-pricing-profile-additive-successor.json"
+)
+SHU_T2_RT820_PARENT_PROFILE_SHA256 = (
+    "10d4301923b1ae141ae228c319f38e7281810e40c6990f0b2d533e9e20763424"
+)
+SHU_T2_RT820_TECHNICAL_PATH = Path(
+    r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-"
+    "SHU-T2-RT820-TECHNICAL-SUCCESSOR-20260824-001\\"
+    "price-calculator-input-v0.2-completed-shu-t2-rt820-successor.json"
+)
+SHU_T2_RT820_TECHNICAL_SHA256 = (
+    "c27c2c3032699cb07c981aeb4af429b27ec18180225319f45ce65ab77fedee44"
+)
+SHU_T2_RT820_DECISION_PATH = Path(
+    r"C:\Users\IgorN\Documents\production_ai_cases\CASE-QF-PROJECT-2024-086-"
+    "SHU-T2-RT820-SCOPE-DECISION-20260820-001\\"
+    "technical-shu-t2-rt820-scope-human-decision-v0.1.json"
+)
+SHU_T2_RT820_DECISION_SHA256 = (
+    "92a79401591fa6202af493848dd979a227ae20da8e66b8dea6e8084fc80c2ac6"
+)
+SHU_T2_RT820_DECISION_ID = "IGOR-SHU-T2-RT820-SCOPE-2024-086-001"
 ADDITIVE_DECISION_BINDINGS = [
     {
         "role": "technical_composition_human_decision",
@@ -474,12 +520,20 @@ def load_pricing_profile(
     if not isinstance(data, Mapping):
         add_red_flag(result, "pricing profile root must be an object")
         return None
-    additive = isinstance(data.get("additive_successor"), Mapping)
+    additive = isinstance(data.get("additive_successor"), Mapping) or isinstance(
+        data.get("shu_t2_rt820_pricing_profile_successor"), Mapping
+    )
     if not additive and (
         path != resolved(PRICING_PROFILE_PATH)
         or expected_sha256 != PRICING_PROFILE_SHA256
     ):
         add_red_flag(result, "pricing profile path/SHA is not the canonical exact base")
+        return None
+    if (
+        isinstance(data.get("shu_t2_rt820_pricing_profile_successor"), Mapping)
+        and expected_sha256 != SHU_T2_RT820_PROFILE_SHA256
+    ):
+        add_red_flag(result, "SHU-T2 pricing profile exact frozen SHA-256 mismatch")
         return None
     return cast(Mapping[str, Any], data)
 
@@ -500,6 +554,108 @@ def additive_profile_metadata(
 ) -> Mapping[str, Any] | None:
     metadata = profile.get("additive_successor")
     return cast(Mapping[str, Any], metadata) if isinstance(metadata, Mapping) else None
+
+
+def shu_t2_profile_metadata(
+    profile: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    metadata = profile.get("shu_t2_rt820_pricing_profile_successor")
+    return cast(Mapping[str, Any], metadata) if isinstance(metadata, Mapping) else None
+
+
+def has_additive_scope(profile: Mapping[str, Any]) -> bool:
+    return (
+        additive_profile_metadata(profile) is not None
+        or shu_t2_profile_metadata(profile) is not None
+    )
+
+
+def validate_shu_t2_profile_envelope(
+    profile: Mapping[str, Any], result: CheckedRunResult
+) -> bool:
+    metadata = shu_t2_profile_metadata(profile)
+    if metadata is None:
+        return True
+    parent = metadata.get("parent_pricing_profile")
+    technical = metadata.get("technical_successor")
+    decision = metadata.get("human_decision")
+    workbook = metadata.get("pricing_workbook")
+    invariants = metadata.get("preliminary_not_approved_invariants")
+    valid = all(
+        (
+            metadata.get("contract") == SHU_T2_RT820_PROFILE_CONTRACT,
+            metadata.get("project_id") == PRICING_PROFILE_PROJECT_ID,
+            parent
+            == {
+                "path": str(resolved(SHU_T2_RT820_PARENT_PROFILE_PATH)),
+                "sha256": SHU_T2_RT820_PARENT_PROFILE_SHA256,
+                "schema_or_type": PRICING_PROFILE_SCHEMA,
+            },
+            isinstance(technical, Mapping),
+            isinstance(technical, Mapping)
+            and technical.get("path") == str(resolved(SHU_T2_RT820_TECHNICAL_PATH)),
+            isinstance(technical, Mapping)
+            and technical.get("sha256") == SHU_T2_RT820_TECHNICAL_SHA256,
+            isinstance(technical, Mapping)
+            and technical.get("contract") == SHU_T2_RT820_TECHNICAL_CONTRACT,
+            isinstance(decision, Mapping),
+            isinstance(decision, Mapping)
+            and decision.get("path") == str(resolved(SHU_T2_RT820_DECISION_PATH)),
+            isinstance(decision, Mapping)
+            and decision.get("sha256") == SHU_T2_RT820_DECISION_SHA256,
+            isinstance(decision, Mapping)
+            and decision.get("decision_id") == SHU_T2_RT820_DECISION_ID,
+            isinstance(decision, Mapping)
+            and decision.get("authority") == "IGOR_DIRECT_HUMAN_APPROVAL",
+            isinstance(decision, Mapping)
+            and decision.get("application_status") == "NOT_APPLIED",
+            isinstance(workbook, Mapping),
+            isinstance(workbook, Mapping)
+            and workbook.get("path")
+            == str(resolved(Path(EXPECTED_PROFILE_INPUTS[1][1]))),
+            isinstance(workbook, Mapping)
+            and workbook.get("sha256") == EXPECTED_PROFILE_INPUTS[1][2],
+            isinstance(workbook, Mapping)
+            and workbook.get("source_range") == "КРН!A19:C19",
+            isinstance(workbook, Mapping) and workbook.get("material_kzt") == 15000,
+            isinstance(workbook, Mapping) and workbook.get("work_kzt") == 900,
+            metadata.get("controlled_replacement") is True,
+            metadata.get("append_only") is False,
+            metadata.get("scope_expansion") is False,
+            metadata.get("coverage_transition")
+            == {
+                "cabinet_groups": "15->15",
+                "pricing_positions": "55->55",
+                "physical_cabinets": "137->137",
+                "technical_rows": "112->116",
+                "composition_fingerprints": "12->11",
+            },
+            metadata.get("old_fingerprint_removed")
+            == "99db78a5c3c7688a9e2cebbbe57f41489af797bbc61f2b1fa38492a42329cb79",
+            metadata.get("merged_fingerprint") == SHU_T1_FINGERPRINT,
+            metadata.get("tst05_provenance_only") is True,
+            metadata.get("generic_work_432_prohibited") is True,
+            metadata.get("fallback_prohibited") is True,
+            metadata.get("pricing_calculation_executed") is False,
+            metadata.get("approved_unit_price_kzt") is None,
+            metadata.get("application_status") == "NOT_APPLIED",
+            metadata.get("price_approval_status") == PROFILE_APPROVAL_STATUS,
+            isinstance(invariants, Mapping),
+            isinstance(invariants, Mapping)
+            and invariants.get("status") == "NOT_CALCULATED_NOT_APPROVED",
+            isinstance(invariants, Mapping)
+            and invariants.get("unit_candidate_kzt") == 53763,
+            isinstance(invariants, Mapping)
+            and invariants.get("four_position_candidate_kzt") == 215052,
+            isinstance(invariants, Mapping)
+            and invariants.get("delta_from_prior_checked_candidate_kzt") == 122276,
+            isinstance(invariants, Mapping)
+            and invariants.get("preliminary_project_candidate_kzt") == 11963792,
+            isinstance(invariants, Mapping) and invariants.get("approved") is False,
+            isinstance(invariants, Mapping) and invariants.get("applied") is False,
+        )
+    )
+    return profile_check(result, valid, "SHU-T2 RT-820 successor envelope mismatch")
 
 
 def validate_additive_profile_envelope(
@@ -589,7 +745,8 @@ def validate_pricing_profile_contract(
             "scope expansion is forbidden",
         ),
     ]
-    additive = additive_profile_metadata(profile) is not None
+    additive = has_additive_scope(profile)
+    shu_t2 = shu_t2_profile_metadata(profile) is not None
     actual_inputs = profile.get("authoritative_inputs")
     input_projection: tuple[tuple[Any, Any, Any, Any], ...] = ()
     if isinstance(actual_inputs, list):
@@ -604,7 +761,7 @@ def validate_pricing_profile_contract(
             if isinstance(item, Mapping)
         )
     inputs_valid = input_projection == EXPECTED_PROFILE_INPUTS
-    if additive and isinstance(actual_inputs, list):
+    if additive and not shu_t2 and isinstance(actual_inputs, list):
         extra_inputs = actual_inputs[len(EXPECTED_PROFILE_INPUTS) :]
         metadata = cast(Mapping[str, Any], profile["additive_successor"])
         completed = cast(Mapping[str, Any], metadata["completed_input_successor"])
@@ -621,9 +778,75 @@ def validate_pricing_profile_contract(
             }
             and extra_inputs[1:] == ADDITIVE_DECISION_BINDINGS
         )
+    if shu_t2 and isinstance(actual_inputs, list):
+        parent_profile = cast(Mapping[str, Any], profile["additive_successor"])
+        parent_completed = cast(
+            Mapping[str, Any], parent_profile["completed_input_successor"]
+        )
+        old_extra = [
+            {
+                "role": "completed_technical_input_additive_successor",
+                "path": parent_completed["path"],
+                "sha256": parent_completed["sha256"],
+                "schema_or_type": V02_SCHEMA_VERSION,
+                "purpose": "exact 15-group/112-row additive technical authority",
+            },
+            *ADDITIVE_DECISION_BINDINGS,
+        ]
+        metadata = cast(
+            Mapping[str, Any], profile["shu_t2_rt820_pricing_profile_successor"]
+        )
+        new_extra = [
+            {
+                "role": "parent_pricing_profile_successor",
+                **cast(Mapping[str, Any], metadata["parent_pricing_profile"]),
+            },
+            {
+                "role": "completed_technical_input_shu_t2_rt820_successor",
+                "path": cast(Mapping[str, Any], metadata["technical_successor"])[
+                    "path"
+                ],
+                "sha256": cast(Mapping[str, Any], metadata["technical_successor"])[
+                    "sha256"
+                ],
+                "schema_or_type": V02_SCHEMA_VERSION,
+                "purpose": "exact 15-group/116-row SHU-T2 RT-820 technical authority",
+            },
+            {
+                "role": "shu_t2_rt820_scope_human_decision",
+                **cast(Mapping[str, Any], metadata["human_decision"]),
+            },
+            {
+                "role": "main_price_workbook_shu_t2_rt820_revalidated",
+                "path": cast(Mapping[str, Any], metadata["pricing_workbook"])["path"],
+                "sha256": cast(Mapping[str, Any], metadata["pricing_workbook"])[
+                    "sha256"
+                ],
+                "schema_or_type": cast(Mapping[str, Any], metadata["pricing_workbook"])[
+                    "schema_or_type"
+                ],
+                "source_range": "КРН!A19:C19",
+            },
+        ]
+        inputs_valid = input_projection[
+            : len(EXPECTED_PROFILE_INPUTS)
+        ] == EXPECTED_PROFILE_INPUTS and actual_inputs[
+            len(EXPECTED_PROFILE_INPUTS) :
+        ] == [
+            *old_extra,
+            *new_extra,
+        ]
     checks.append(profile_check(result, inputs_valid, "authoritative inputs mismatch"))
     checks.append(validate_additive_profile_envelope(profile, result))
-    checks.extend(validate_profile_policy_contract(profile, result, additive=additive))
+    checks.append(validate_shu_t2_profile_envelope(profile, result))
+    checks.extend(
+        validate_profile_policy_contract(
+            profile,
+            result,
+            additive=additive or shu_t2,
+            coverage=(SHU_T2_RT820_PROFILE_COVERAGE if shu_t2 else None),
+        )
+    )
     return all(checks)
 
 
@@ -632,14 +855,19 @@ def validate_profile_policy_contract(
     result: CheckedRunResult,
     *,
     additive: bool = False,
+    coverage: Mapping[str, int] | None = None,
 ) -> list[bool]:
-    coverage = ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE
+    expected_coverage = (
+        coverage
+        if coverage is not None
+        else (ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE)
+    )
     expected_scope_partition = {
         "current_completed_technical_scope": {
             "technical_scope_status": "CURRENT_COMPLETED_INPUT_SCOPE",
             "pricing_profile_decision_status": "APPROVED_NOT_APPLIED",
             "pricing_calculation_status": "NOT_EXECUTED",
-            "coverage": coverage,
+            "coverage": expected_coverage,
         },
         "reserved_case_level_formula_rules": {
             "formula_rule_status": "HUMAN_APPROVED_CASE_LEVEL_RULE_NOT_APPLIED",
@@ -1010,7 +1238,7 @@ def validate_profile_formula_contract(
     profile: Mapping[str, Any],
     result: CheckedRunResult,
 ) -> bool:
-    additive = additive_profile_metadata(profile) is not None
+    additive = has_additive_scope(profile)
     modular = current_scope.get("modular_formula_family")
     sche = current_scope.get("sche_formula_family")
     expected_modular = {
@@ -1021,7 +1249,7 @@ def validate_profile_formula_contract(
         ],
         "material_factor": "1.2",
         "approved_formula": (
-            "ROUND_HALF_UP((X + I + G*1.2 + H)*1.25*1.15*1.08765/1.16*1.2, " "1 KZT)"
+            "ROUND_HALF_UP((X + I + G*1.2 + H)*1.25*1.15*1.08765/1.16*1.2, 1 KZT)"
         ),
         "symbols": {
             "X": "exact cabinet base for the position",
@@ -1212,10 +1440,13 @@ def profile_row_index(
         return None
     rows = calculator_format.get("row_drafts")
     source = data.get("source")
+    shu_t2 = isinstance(source, Mapping) and isinstance(
+        source.get("shu_t2_rt820_technical_successor"), Mapping
+    )
     additive = isinstance(source, Mapping) and isinstance(
         source.get("additive_completed_input_successor"), Mapping
     )
-    expected_rows = 112 if additive else 109
+    expected_rows = 116 if shu_t2 else (112 if additive else 109)
     if not isinstance(rows, list) or len(rows) != expected_rows:
         add_red_flag(
             result, f"profile requires exact {expected_rows} completed row drafts"
@@ -1236,6 +1467,129 @@ def profile_row_index(
     return typed_rows, indexed
 
 
+def validate_exact_shu_t2_replacement(
+    current_scope: Mapping[str, Any], result: CheckedRunResult
+) -> bool:
+    groups = current_scope.get("cabinet_groups")
+    positions = current_scope.get("pricing_positions")
+    fingerprints = current_scope.get("composition_fingerprints")
+    if not (
+        isinstance(groups, list)
+        and len(groups) == 15
+        and isinstance(positions, list)
+        and len(positions) == 55
+        and isinstance(fingerprints, list)
+        and len(fingerprints) == 11
+    ):
+        return profile_check(result, False, "SHU-T2 replacement inventory mismatch")
+    expected = (
+        ("PRICE-POSITION-009", "TFE-016", "ROW-DRAFT-0113", 112),
+        ("PRICE-POSITION-023", "TFE-041", "ROW-DRAFT-0114", 113),
+        ("PRICE-POSITION-035", "TFE-061", "ROW-DRAFT-0115", 114),
+        ("PRICE-POSITION-047", "TFE-083", "ROW-DRAFT-0116", 115),
+    )
+    by_position = {
+        item.get("pricing_position_id"): item
+        for item in positions
+        if isinstance(item, Mapping)
+    }
+    target_ids = {item[0] for item in expected}
+    new_rows = {item[2] for item in expected}
+    valid = all(
+        (
+            current_scope.get("coverage") == SHU_T2_RT820_PROFILE_COVERAGE,
+            sum(
+                item.get("physical_multiplicity", 0)
+                for item in positions
+                if isinstance(item, Mapping)
+            )
+            == 137,
+            groups[2].get("cabinet_group_id") == "CABINET-GROUP-003",
+            groups[2].get("product_name") == "ШУ-Т2",
+            groups[2].get("row_draft_ids")[-4:] == [item[2] for item in expected],
+            len(groups[2].get("row_draft_ids", [])) == 12,
+            all(
+                isinstance(by_position.get(position_id), Mapping)
+                and by_position[position_id].get("source_position_id") == source_id
+                and by_position[position_id].get("cabinet_group_id")
+                == "CABINET-GROUP-003"
+                and by_position[position_id].get("product_name") == "ШУ-Т2"
+                and by_position[position_id].get("row_draft_ids")[-1] == row_id
+                and by_position[position_id].get("row_draft_json_paths")[-1]
+                == f"$.calculator_input_format.row_drafts[{row_index}]"
+                and by_position[position_id].get("composition_fingerprint_sha256")
+                == SHU_T1_FINGERPRINT
+                and by_position[position_id].get("approved_unit_price_kzt") is None
+                and by_position[position_id].get("approved_unit_price_decision_status")
+                == "NOT_CALCULATED_NOT_APPROVED"
+                for position_id, source_id, row_id, row_index in expected
+            ),
+            all(
+                not new_rows.intersection(item.get("row_draft_ids", []))
+                for item in positions
+                if isinstance(item, Mapping)
+                and item.get("pricing_position_id") not in target_ids
+            ),
+        )
+    )
+    old_fingerprint = "99db78a5c3c7688a9e2cebbbe57f41489af797bbc61f2b1fa38492a42329cb79"
+    fingerprint_ids = [
+        item.get("fingerprint_sha256")
+        for item in fingerprints
+        if isinstance(item, Mapping)
+    ]
+    merged = next(
+        (
+            item
+            for item in fingerprints
+            if isinstance(item, Mapping)
+            and item.get("fingerprint_sha256") == SHU_T1_FINGERPRINT
+        ),
+        None,
+    )
+    valid = valid and all(
+        (
+            old_fingerprint not in fingerprint_ids,
+            fingerprint_ids.count(SHU_T1_FINGERPRINT) == 1,
+            isinstance(merged, Mapping),
+            isinstance(merged, Mapping)
+            and merged.get("source_position_ids")
+            == [
+                "TFE-016",
+                "TFE-041",
+                "TFE-061",
+                "TFE-083",
+                "TFE-006",
+                "TFE-029",
+                "TFE-052",
+                "TFE-074",
+            ],
+            isinstance(merged, Mapping)
+            and merged.get("pricing_position_ids")
+            == [
+                "PRICE-POSITION-009",
+                "PRICE-POSITION-023",
+                "PRICE-POSITION-035",
+                "PRICE-POSITION-047",
+                "PRICE-POSITION-052",
+                "PRICE-POSITION-053",
+                "PRICE-POSITION-054",
+                "PRICE-POSITION-055",
+            ],
+        )
+    )
+    candidate = current_scope.get("shu_t2_rt820_preliminary_candidate")
+    valid = valid and candidate == {
+        "status": "NOT_CALCULATED_NOT_APPROVED",
+        "approved_unit_price_kzt": None,
+        "application_status": "NOT_APPLIED",
+        "unit_candidate_kzt": 53763,
+        "four_position_candidate_kzt": 215052,
+        "preliminary_project_candidate_kzt": 11963792,
+    }
+    return profile_check(result, valid, "exact SHU-T2 controlled replacement mismatch")
+
+
 def validate_and_build_profile_positions(
     data: Mapping[str, Any],
     profile: Mapping[str, Any],
@@ -1245,8 +1599,48 @@ def validate_and_build_profile_positions(
         add_red_flag(result, "Invoice 519 profile requires completed v0.2 input")
         return []
     additive_metadata = additive_profile_metadata(profile)
-    additive = additive_metadata is not None
-    if additive:
+    shu_t2_metadata = shu_t2_profile_metadata(profile)
+    additive = additive_metadata is not None or shu_t2_metadata is not None
+    if shu_t2_metadata is not None:
+        source = data.get("source")
+        technical_metadata = (
+            source.get("shu_t2_rt820_technical_successor")
+            if isinstance(source, Mapping)
+            else None
+        )
+        completed_binding = shu_t2_metadata.get("technical_successor")
+        human_binding = (
+            technical_metadata.get("human_decision")
+            if isinstance(technical_metadata, Mapping)
+            else None
+        )
+        bindings_ok = all(
+            (
+                isinstance(technical_metadata, Mapping),
+                isinstance(technical_metadata, Mapping)
+                and technical_metadata.get("contract")
+                == SHU_T2_RT820_TECHNICAL_CONTRACT,
+                isinstance(technical_metadata, Mapping)
+                and technical_metadata.get("scope_expansion") is False,
+                isinstance(human_binding, Mapping),
+                isinstance(human_binding, Mapping)
+                and human_binding.get("sha256") == SHU_T2_RT820_DECISION_SHA256,
+                isinstance(completed_binding, Mapping),
+                isinstance(completed_binding, Mapping)
+                and resolved(Path(cast(str, completed_binding.get("path", ""))))
+                == result.completed_input_json,
+                isinstance(completed_binding, Mapping)
+                and completed_binding.get("sha256") == SHU_T2_RT820_TECHNICAL_SHA256,
+                isinstance(completed_binding, Mapping)
+                and completed_binding.get("contract")
+                == SHU_T2_RT820_TECHNICAL_CONTRACT,
+            )
+        )
+        if not profile_check(
+            result, bindings_ok, "SHU-T2 technical/profile successor binding mismatch"
+        ):
+            return []
+    elif additive_metadata is not None:
         source = data.get("source")
         technical_metadata = (
             source.get("additive_completed_input_successor")
@@ -1295,15 +1689,23 @@ def validate_and_build_profile_positions(
     ):
         add_red_flag(result, "profile inventory lists are invalid")
         return []
+    if shu_t2_metadata is not None and not validate_exact_shu_t2_replacement(
+        current_scope, result
+    ):
+        return []
     expected_coverage = (
-        ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE
+        SHU_T2_RT820_PROFILE_COVERAGE
+        if shu_t2_metadata is not None
+        else (ADDITIVE_PROFILE_COVERAGE if additive else EXPECTED_PROFILE_COVERAGE)
     )
     expected_products = (
         ADDITIVE_PROFILE_PRODUCTS if additive else EXPECTED_PROFILE_PRODUCTS
     )
     expected_groups = 15 if additive else 14
     expected_positions = 55 if additive else 51
-    expected_fingerprints_count = 12 if additive else 11
+    expected_fingerprints_count = (
+        11 if shu_t2_metadata is not None else (12 if additive else 11)
+    )
     expected_multiplicity = 137 if additive else 133
     inventory_ok = all(
         (
@@ -1315,7 +1717,11 @@ def validate_and_build_profile_positions(
             len(fingerprints) == expected_fingerprints_count,
         )
     )
-    inventory_label = "15/55/137/12" if additive else "14/51/133/11"
+    inventory_label = (
+        "15/55/137/11"
+        if shu_t2_metadata is not None
+        else ("15/55/137/12" if additive else "14/51/133/11")
+    )
     if not profile_check(result, inventory_ok, f"{inventory_label} inventory mismatch"):
         return []
     if not validate_profile_formula_contract(current_scope, profile, result):
@@ -1538,6 +1944,18 @@ def validate_and_build_profile_positions(
             enhanced = {column: values[column] for column in CALCULATOR_COLUMNS}
             enhanced["component_label"] = row["component_label"]
             enhanced["cabinet_label"] = completed_group["cabinet_label"]
+            if shu_t2_metadata is not None:
+                enhanced.update(
+                    {
+                        "technical_successor_contract": (
+                            SHU_T2_RT820_TECHNICAL_CONTRACT
+                        ),
+                        "technical_successor_sha256": (SHU_T2_RT820_TECHNICAL_SHA256),
+                        "pricing_profile_contract": SHU_T2_RT820_PROFILE_CONTRACT,
+                        "pricing_profile_sha256": SHU_T2_RT820_PROFILE_SHA256,
+                        "human_decision_sha256": SHU_T2_RT820_DECISION_SHA256,
+                    }
+                )
             enhanced_rows.append(enhanced)
         position_inputs.append(
             ProfilePositionInput(
@@ -1617,19 +2035,23 @@ def create_csv_bridge(
             return None
 
         with temp_handle:
+            columns = (
+                SHU_T2_TECHNICAL_CALCULATOR_COLUMNS
+                if item_input.rows
+                and all(
+                    column in item_input.rows[0]
+                    for column in SHU_T2_RT820_BINDING_COLUMNS
+                )
+                else TECHNICAL_CALCULATOR_COLUMNS
+            )
             writer = csv.writer(
                 temp_handle,
                 delimiter=CSV_DELIMITER,
                 lineterminator="\n",
             )
-            writer.writerow(TECHNICAL_CALCULATOR_COLUMNS)
+            writer.writerow(columns)
             for row in item_input.rows:
-                writer.writerow(
-                    [
-                        string_for_csv(row[column])
-                        for column in TECHNICAL_CALCULATOR_COLUMNS
-                    ]
-                )
+                writer.writerow([string_for_csv(row[column]) for column in columns])
     except OSError:
         add_red_flag(result, "temporary CSV bridge could not be written")
         return None
@@ -1747,11 +2169,16 @@ def capture_profile_input_shas(
         return None
     if pricing_profile_sha256 is None:
         pricing_profile_sha256 = PRICING_PROFILE_SHA256
-    additive = additive_profile_metadata(profile) is not None
+    shu_t2 = shu_t2_profile_metadata(profile) is not None
+    additive = additive_profile_metadata(profile) is not None and not shu_t2
     completed_role = (
-        "completed_technical_input_additive_successor"
-        if additive
-        else "completed_technical_input"
+        "completed_technical_input_shu_t2_rt820_successor"
+        if shu_t2
+        else (
+            "completed_technical_input_additive_successor"
+            if additive
+            else "completed_technical_input"
+        )
     )
     requested = {
         "pricing_profile": (
@@ -1777,6 +2204,16 @@ def capture_profile_input_shas(
             requested[role] = (
                 resolved(Path(cast(str, binding["path"]))),
                 cast(str, binding["sha256"]),
+            )
+    if shu_t2:
+        for role in (
+            "parent_pricing_profile_successor",
+            "shu_t2_rt820_scope_human_decision",
+            "main_price_workbook_shu_t2_rt820_revalidated",
+        ):
+            requested[role] = (
+                resolved(Path(cast(str, roles.get(role, {}).get("path", "")))),
+                roles.get(role, {}).get("sha256"),
             )
     for role, (path, expected_sha) in requested.items():
         expected_path = (
@@ -2215,9 +2652,7 @@ def run_profile_checked_calculation(
                 break
         if len(result.temp_csv_paths) == len(position_inputs):
             result.checks["CSV bridge"] = "pass"
-        expected_position_count = (
-            55 if additive_profile_metadata(profile) is not None else 51
-        )
+        expected_position_count = 55 if has_additive_scope(profile) else 51
         if (
             all_calculators_passed
             and len(result.position_calculations) == expected_position_count
@@ -2229,7 +2664,39 @@ def run_profile_checked_calculation(
             )
             result.preliminary_project_total = result.overall_preliminary_total
             metadata = additive_profile_metadata(profile)
-            if metadata is not None and (
+            shu_t2_metadata = shu_t2_profile_metadata(profile)
+            if shu_t2_metadata is not None:
+                target_calculations = [
+                    calculation
+                    for calculation in result.position_calculations
+                    if calculation.pricing_position_id
+                    in {
+                        "PRICE-POSITION-009",
+                        "PRICE-POSITION-023",
+                        "PRICE-POSITION-035",
+                        "PRICE-POSITION-047",
+                    }
+                ]
+                if (
+                    result.overall_preliminary_total != 11963792
+                    or len(target_calculations) != 4
+                    or [
+                        calculation.rounded_unit_price_kzt
+                        for calculation in target_calculations
+                    ]
+                    != [53763, 53763, 53763, 53763]
+                    or sum(
+                        calculation.position_total_kzt
+                        for calculation in target_calculations
+                    )
+                    != 215052
+                ):
+                    result.checks["calculator execution"] = "fail"
+                    add_red_flag(
+                        result,
+                        "SHU-T2 RT-820 successor preliminary total contract mismatch",
+                    )
+            elif metadata is not None and (
                 result.overall_preliminary_total
                 != metadata.get("candidate_project_total_kzt")
                 or [

@@ -292,3 +292,29 @@ or КП until Igor reviews and approves the price in a later explicit step.
 
 Do not create persistent XLSX, CSV, client, generated or temporary files in the
 repository from this phase. Do not commit or push without separate Igor approval.
+# SHU-T2 RT-820 exact successor pair
+
+Runner поддерживает две successor-пары без общего разрешения произвольной
+длины:
+
+- legacy `112`-row SHU-T1 technical successor + legacy additive pricing profile;
+- exact `116`-row SHU-T2 RT-820 technical successor + exact controlled-replacement
+  pricing-profile successor.
+
+Cross-pair combinations fail closed. Для новой пары runner проверяет exact
+technical/profile/Human Decision SHA bindings, coverage `15/55/137/116/11`,
+неизменность 51 positions и 14 cabinet groups вне scope, объединённый fingerprint
+восьми positions и non-approval state. После validation временный CSV получает
+отдельные contract-binding columns. Calculator разрешает RT-820 для ШУ-Т2 только
+с этим exact header; legacy ШУ-Т1 header остаётся действующим. Для нового
+pricing-profile contract actual file SHA, CLI expected SHA и frozen SHA
+`7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701`
+обязаны быть равны. Любой другой синтаксически корректный 64-hex SHA, uppercase
+SHA, missing SHA или изменённый profile fail closed до calculator invocation.
+
+RT-820 всегда читается только из `КРН!A19:C19` как `15000/900`. Generic work
+`432`, family/fuzzy fallback и отдельный TST05 row/charge запрещены.
+
+Значения `53763`, `215052` и `11963792` являются preliminary candidates со
+статусом `NOT CALCULATED / NOT APPROVED`; runner не утверждает и не применяет
+цену.

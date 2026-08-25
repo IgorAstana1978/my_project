@@ -26,6 +26,14 @@ REQUIRED_COLUMNS = (
     "install_type",
 )
 TECHNICAL_COLUMNS = REQUIRED_COLUMNS + ("component_label", "cabinet_label")
+SHU_T2_RT820_BINDING_COLUMNS = (
+    "technical_successor_contract",
+    "technical_successor_sha256",
+    "pricing_profile_contract",
+    "pricing_profile_sha256",
+    "human_decision_sha256",
+)
+SHU_T2_TECHNICAL_COLUMNS = TECHNICAL_COLUMNS + SHU_T2_RT820_BINDING_COLUMNS
 POSITIVE_INTEGER_RE = re.compile(r"[1-9][0-9]*\Z")
 POSITIVE_DECIMAL_RE = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\Z")
 MATERIAL_MULTIPLIER = Decimal("1.25")
@@ -356,10 +364,22 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
 )
 RT820_COMPONENT_CODE = "EKF-RT-820"
 RT820_PRODUCT_NAME = "ШУ-Т1"
+RT820_SHU_T2_PRODUCT_NAME = "ШУ-Т2"
 RT820_INSTALL_TYPE = "temperature_relay_din_2mod"
 RT820_COMPONENT_LABEL = "Реле температуры RT-820 EKF PROxima с внешним датчиком"
 RT820_CABINET_CODE = "CAB-KRN-12"
 RT820_APPROVED_MAPPING = APPROVED_COMPONENT_PRICE_MAPPINGS[-1]
+SHU_T2_RT820_TECHNICAL_CONTRACT = "controlled_shu_t2_rt820_technical_successor.v0.1"
+SHU_T2_RT820_TECHNICAL_SHA256 = (
+    "c27c2c3032699cb07c981aeb4af429b27ec18180225319f45ce65ab77fedee44"
+)
+SHU_T2_RT820_PROFILE_CONTRACT = "controlled_shu_t2_rt820_pricing_profile_successor.v0.1"
+SHU_T2_RT820_PROFILE_SHA256 = (
+    "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
+)
+SHU_T2_RT820_HUMAN_DECISION_SHA256 = (
+    "92a79401591fa6202af493848dd979a227ae20da8e66b8dea6e8084fc80c2ac6"
+)
 
 APPROVED_CABINET_PRICE_MAPPINGS = (
     ApprovedCabinetPriceMapping(
@@ -527,7 +547,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--custom-cabinet-base-cost",
         type=int,
-        help=("Checked positive integer base cost for " "CAB-SCHE-BI-900X900X120-M12"),
+        help=("Checked positive integer base cost for CAB-SCHE-BI-900X900X120-M12"),
     )
     return parser.parse_args(argv)
 
@@ -757,15 +777,27 @@ def resolve_component_mapping(
 def resolve_case_scoped_rt820_mapping(
     row: Mapping[str, str],
 ) -> ApprovedComponentPriceMapping | None:
-    """Resolve RT-820 only for the exact project-2024/086 ШУ-Т1 row contract."""
+    """Resolve RT-820 only for one of the two exact project contracts."""
     if row.get("component_code") != RT820_COMPONENT_CODE:
         return None
-    if (
+    legacy_shu_t1 = (
         row.get("product_name") == RT820_PRODUCT_NAME
         and row.get("cabinet_code") == RT820_CABINET_CODE
         and row.get("install_type") == RT820_INSTALL_TYPE
         and row.get("component_label") == RT820_COMPONENT_LABEL
-    ):
+    )
+    exact_shu_t2 = (
+        row.get("product_name") == RT820_SHU_T2_PRODUCT_NAME
+        and row.get("cabinet_code") == RT820_CABINET_CODE
+        and row.get("install_type") == RT820_INSTALL_TYPE
+        and row.get("component_label") == RT820_COMPONENT_LABEL
+        and row.get("technical_successor_contract") == SHU_T2_RT820_TECHNICAL_CONTRACT
+        and row.get("technical_successor_sha256") == SHU_T2_RT820_TECHNICAL_SHA256
+        and row.get("pricing_profile_contract") == SHU_T2_RT820_PROFILE_CONTRACT
+        and row.get("pricing_profile_sha256") == SHU_T2_RT820_PROFILE_SHA256
+        and row.get("human_decision_sha256") == SHU_T2_RT820_HUMAN_DECISION_SHA256
+    )
+    if legacy_shu_t1 or exact_shu_t2:
         return RT820_APPROVED_MAPPING
     return None
 
@@ -818,7 +850,11 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
 
     result.input_rows_count = len(raw_rows)
     header_tuple = tuple(header)
-    if header_tuple not in (REQUIRED_COLUMNS, TECHNICAL_COLUMNS):
+    if header_tuple not in (
+        REQUIRED_COLUMNS,
+        TECHNICAL_COLUMNS,
+        SHU_T2_TECHNICAL_COLUMNS,
+    ):
         add_red_flag(
             result,
             "input header must exactly match a supported composition contract",
@@ -869,7 +905,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
         cabinet_mapping: ApprovedCabinetPriceMapping | None = None
         technical_mapping_validated = False
 
-        if header_tuple == TECHNICAL_COLUMNS:
+        if header_tuple in (TECHNICAL_COLUMNS, SHU_T2_TECHNICAL_COLUMNS):
             component_label = row["component_label"]
             cabinet_label = row["cabinet_label"]
             rt820_requested = component_code == RT820_COMPONENT_CODE
@@ -891,7 +927,8 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                     add_red_flag(
                         result,
                         f"row {row_number}: RT-820 is allowed only for the exact "
-                        "project 2024/086 ШУ-Т1 code/install/label contract; ask Igor",
+                        "project 2024/086 ШУ-Т1 or bound ШУ-Т2 "
+                        "code/install/label contract; ask Igor",
                     )
                     continue
                 legacy_definition = COMPONENT_DEFINITIONS.get(component_code)
@@ -1203,8 +1240,7 @@ def read_cabinet_price(
         if not any(cabinet_code in flag for flag in result.red_flags):
             add_red_flag(
                 result,
-                f"cabinet price row was not found in КРН for "
-                f"{cabinet_code}; ask Igor",
+                f"cabinet price row was not found in КРН for {cabinet_code}; ask Igor",
             )
         return None
     if len(found_prices) > 1:

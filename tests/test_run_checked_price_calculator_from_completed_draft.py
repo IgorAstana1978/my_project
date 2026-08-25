@@ -1212,8 +1212,7 @@ def valid_formula_profile() -> tuple[dict[str, Any], dict[str, Any]]:
             ],
             "material_factor": "1.2",
             "approved_formula": (
-                "ROUND_HALF_UP((X + I + G*1.2 + H)*1.25*1.15*1.08765/1.16*"
-                "1.2, 1 KZT)"
+                "ROUND_HALF_UP((X + I + G*1.2 + H)*1.25*1.15*1.08765/1.16*1.2, 1 KZT)"
             ),
             "symbols": {
                 "X": "exact cabinet base for the position",
@@ -1704,6 +1703,397 @@ def synthetic_additive_profile_inventory(
         "additive_successor"
     ]
     return completed, profile
+
+
+def synthetic_shu_t2_profile_inventory(
+    completed_path: Path,
+    *,
+    technical_sha: str = "b" * 64,
+    profile_sha: str = runner.SHU_T2_RT820_PROFILE_SHA256,
+    decision_sha: str = "d" * 64,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    completed, profile = synthetic_additive_profile_inventory(completed_path)
+    completed["source"]["shu_t2_rt820_technical_successor"] = {
+        "contract": runner.SHU_T2_RT820_TECHNICAL_CONTRACT,
+        "human_decision": {"sha256": decision_sha},
+        "scope_expansion": False,
+    }
+    target_position_ids = [
+        "PRICE-POSITION-009",
+        "PRICE-POSITION-023",
+        "PRICE-POSITION-035",
+        "PRICE-POSITION-047",
+    ]
+    source_ids = ["TFE-016", "TFE-041", "TFE-061", "TFE-083"]
+    new_row_ids = [
+        "ROW-DRAFT-0113",
+        "ROW-DRAFT-0114",
+        "ROW-DRAFT-0115",
+        "ROW-DRAFT-0116",
+    ]
+    completed["cabinet_groups"][2]["row_draft_ids"].extend(new_row_ids)
+    new_values = {
+        "product_name": "ШУ-Т2",
+        "cabinet_code": "CAB-KRN-12",
+        "consumables_factor": 1.2,
+        "component_code": "EKF-RT-820",
+        "component_qty": 1,
+        "install_type": "temperature_relay_din_2mod",
+    }
+    completed["calculator_input_format"]["row_drafts"].extend(
+        {
+            "row_id": row_id,
+            "cabinet_group_id": "CABINET-GROUP-003",
+            "component_label": "Реле температуры RT-820 EKF PROxima с внешним датчиком",
+            "calculator_values": copy.deepcopy(new_values),
+        }
+        for row_id in new_row_ids
+    )
+    current = profile["current_completed_technical_scope"]
+    current["coverage"] = copy.deepcopy(runner.SHU_T2_RT820_PROFILE_COVERAGE)
+    current["cabinet_groups"][2]["row_draft_ids"].extend(new_row_ids)
+    by_position = {
+        position["pricing_position_id"]: position
+        for position in current["pricing_positions"]
+    }
+    old_fingerprint = by_position[target_position_ids[0]][
+        "composition_fingerprint_sha256"
+    ]
+    for position_id, row_id, row_index in zip(
+        target_position_ids, new_row_ids, range(112, 116), strict=True
+    ):
+        position = by_position[position_id]
+        position["row_draft_ids"].append(row_id)
+        position["row_draft_json_paths"].append(
+            f"$.calculator_input_format.row_drafts[{row_index}]"
+        )
+        position["composition_fingerprint_sha256"] = runner.SHU_T1_FINGERPRINT
+    fingerprints = current["composition_fingerprints"]
+    merged = next(
+        item
+        for item in fingerprints
+        if item["fingerprint_sha256"] == runner.SHU_T1_FINGERPRINT
+    )
+    merged["source_position_ids"] = [
+        *source_ids,
+        *merged["source_position_ids"],
+    ]
+    merged["pricing_position_ids"] = [
+        *target_position_ids,
+        *merged["pricing_position_ids"],
+    ]
+    current["composition_fingerprints"] = [
+        item for item in fingerprints if item["fingerprint_sha256"] != old_fingerprint
+    ]
+    profile["shu_t2_rt820_pricing_profile_successor"] = {
+        "contract": runner.SHU_T2_RT820_PROFILE_CONTRACT,
+        "technical_successor": {
+            "path": str(completed_path.resolve()),
+            "sha256": technical_sha,
+            "contract": runner.SHU_T2_RT820_TECHNICAL_CONTRACT,
+        },
+        "human_decision": {"sha256": decision_sha},
+    }
+    profile["_test_profile_sha"] = profile_sha
+    return completed, profile
+
+
+def test_shu_t2_inventory_builds_exact_15_55_137_116_11_and_bound_csv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "SHU_T2_RT820_TECHNICAL_SHA256", "b" * 64)
+    monkeypatch.setattr(runner, "SHU_T2_RT820_DECISION_SHA256", "d" * 64)
+    result = runner.CheckedRunResult(
+        tmp_path / "completed.json", tmp_path / "prices.xlsx"
+    )
+    result.pricing_profile_provenance["sha256"] = runner.SHU_T2_RT820_PROFILE_SHA256
+    rows = [
+        {
+            "product_name": "ШУ-Т2",
+            "cabinet_code": "CAB-KRN-12",
+            "consumables_factor": 1.2,
+            "component_code": "EKF-RT-820",
+            "component_qty": 1,
+            "install_type": "temperature_relay_din_2mod",
+            "component_label": "Реле температуры RT-820 EKF PROxima с внешним датчиком",
+            "cabinet_label": "Корпус КРН-12 265×330×100 мм, металл",
+            "technical_successor_contract": runner.SHU_T2_RT820_TECHNICAL_CONTRACT,
+            "technical_successor_sha256": "b" * 64,
+            "pricing_profile_contract": runner.SHU_T2_RT820_PROFILE_CONTRACT,
+            "pricing_profile_sha256": runner.SHU_T2_RT820_PROFILE_SHA256,
+            "human_decision_sha256": "d" * 64,
+        }
+    ]
+    item = runner.ItemCalculatorInput("ШУ-Т2", "CAB-KRN-12", rows)
+    csv_path = runner.create_csv_bridge(item, result)
+    assert csv_path is not None
+    with csv_path.open(encoding="utf-8", newline="") as stream:
+        csv_rows: list[list[str]] = list(csv.reader(stream, delimiter=";"))
+    assert csv_rows[0] == list(runner.SHU_T2_TECHNICAL_CALCULATOR_COLUMNS)
+    assert csv_rows[-1][-5:] == [
+        runner.SHU_T2_RT820_TECHNICAL_CONTRACT,
+        "b" * 64,
+        runner.SHU_T2_RT820_PROFILE_CONTRACT,
+        runner.SHU_T2_RT820_PROFILE_SHA256,
+        "d" * 64,
+    ]
+    runner.cleanup_temp_csv(result)
+
+
+def test_cross_pair_old_new_technical_profile_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        runner, "validate_profile_formula_contract", lambda current, root, output: True
+    )
+    completed_path = tmp_path / "completed.json"
+    new_completed, new_profile = synthetic_shu_t2_profile_inventory(completed_path)
+    old_completed, old_profile = synthetic_additive_profile_inventory(completed_path)
+    monkeypatch.setattr(runner, "SHU_T2_RT820_TECHNICAL_SHA256", "b" * 64)
+    monkeypatch.setattr(runner, "SHU_T2_RT820_DECISION_SHA256", "d" * 64)
+    for completed, profile in (
+        (new_completed, old_profile),
+        (old_completed, new_profile),
+    ):
+        result = runner.CheckedRunResult(completed_path, tmp_path / "prices.xlsx")
+        result.pricing_profile_provenance["sha256"] = runner.SHU_T2_RT820_PROFILE_SHA256
+        assert not runner.validate_and_build_profile_positions(
+            completed, profile, result
+        )
+        assert result.red_flags
+
+
+def exact_shu_t2_envelope() -> dict[str, Any]:
+    return {
+        "shu_t2_rt820_pricing_profile_successor": {
+            "contract": runner.SHU_T2_RT820_PROFILE_CONTRACT,
+            "project_id": runner.PRICING_PROFILE_PROJECT_ID,
+            "parent_pricing_profile": {
+                "path": str(runner.resolved(runner.SHU_T2_RT820_PARENT_PROFILE_PATH)),
+                "sha256": runner.SHU_T2_RT820_PARENT_PROFILE_SHA256,
+                "schema_or_type": runner.PRICING_PROFILE_SCHEMA,
+            },
+            "technical_successor": {
+                "path": str(runner.resolved(runner.SHU_T2_RT820_TECHNICAL_PATH)),
+                "sha256": runner.SHU_T2_RT820_TECHNICAL_SHA256,
+                "schema_or_type": runner.V02_SCHEMA_VERSION,
+                "contract": runner.SHU_T2_RT820_TECHNICAL_CONTRACT,
+            },
+            "human_decision": {
+                "path": str(runner.resolved(runner.SHU_T2_RT820_DECISION_PATH)),
+                "sha256": runner.SHU_T2_RT820_DECISION_SHA256,
+                "schema_or_type": "technical_shu_t2_rt820_scope_human_decision.v0.1",
+                "decision_id": runner.SHU_T2_RT820_DECISION_ID,
+                "status": "IGOR_SHU_T2_RT820_SCOPE_APPROVED_NOT_APPLIED",
+                "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+                "application_status": "NOT_APPLIED",
+            },
+            "pricing_workbook": {
+                "path": str(
+                    runner.resolved(Path(runner.EXPECTED_PROFILE_INPUTS[1][1]))
+                ),
+                "sha256": runner.EXPECTED_PROFILE_INPUTS[1][2],
+                "schema_or_type": runner.EXPECTED_PROFILE_INPUTS[1][3],
+                "source_range": "КРН!A19:C19",
+                "source_label": "Терморегулятор RT-820",
+                "material_kzt": 15000,
+                "work_kzt": 900,
+            },
+            "controlled_replacement": True,
+            "append_only": False,
+            "scope_expansion": False,
+            "coverage_transition": {
+                "cabinet_groups": "15->15",
+                "pricing_positions": "55->55",
+                "physical_cabinets": "137->137",
+                "technical_rows": "112->116",
+                "composition_fingerprints": "12->11",
+            },
+            "old_fingerprint_removed": (
+                "99db78a5c3c7688a9e2cebbbe57f41489af797bbc61f2b1fa38492a42329cb79"
+            ),
+            "merged_fingerprint": runner.SHU_T1_FINGERPRINT,
+            "tst05_provenance_only": True,
+            "generic_work_432_prohibited": True,
+            "fallback_prohibited": True,
+            "pricing_calculation_executed": False,
+            "approved_unit_price_kzt": None,
+            "application_status": "NOT_APPLIED",
+            "price_approval_status": runner.PROFILE_APPROVAL_STATUS,
+            "preliminary_not_approved_invariants": {
+                "status": "NOT_CALCULATED_NOT_APPROVED",
+                "unit_candidate_kzt": 53763,
+                "four_position_candidate_kzt": 215052,
+                "delta_from_prior_checked_candidate_kzt": 122276,
+                "preliminary_project_candidate_kzt": 11963792,
+                "approved": False,
+                "applied": False,
+            },
+        }
+    }
+
+
+def test_exact_shu_t2_profile_envelope_passes_and_any_price_approval_fails() -> None:
+    profile = exact_shu_t2_envelope()
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.validate_shu_t2_profile_envelope(profile, result)
+    profile["shu_t2_rt820_pricing_profile_successor"]["approved_unit_price_kzt"] = 53763
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert not runner.validate_shu_t2_profile_envelope(profile, result)
+    assert result.red_flags
+
+
+def test_shu_t2_profile_frozen_sha_constant_is_exact() -> None:
+    assert runner.SHU_T2_RT820_PROFILE_SHA256 == (
+        "7b66d2431e2a323f9c0cd60bdaeff2d5d26ebfc0b430f2f6a5530e3a064dc701"
+    )
+
+
+def test_shu_t2_profile_requires_actual_cli_and_frozen_sha_equality(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile_path = write_json(tmp_path, exact_shu_t2_envelope())
+    actual_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    monkeypatch.setattr(runner, "SHU_T2_RT820_PROFILE_SHA256", actual_sha)
+
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.load_pricing_profile(result, profile_path, actual_sha) is not None
+    assert result.red_flags == []
+
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.load_pricing_profile(result, profile_path, "a" * 64) is None
+    assert "pricing profile SHA-256 mismatch" in result.red_flags
+
+    profile_path.write_bytes(profile_path.read_bytes() + b"\n")
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.load_pricing_profile(result, profile_path, actual_sha) is None
+    assert "pricing profile SHA-256 mismatch" in result.red_flags
+
+
+@pytest.mark.parametrize(
+    "expected_sha",
+    ["a" * 64, "b" * 64, runner.SHU_T2_RT820_PROFILE_SHA256.upper(), ""],
+)
+def test_shu_t2_profile_rejects_non_frozen_cli_sha(
+    tmp_path: Path, expected_sha: str
+) -> None:
+    profile_path = write_json(tmp_path, exact_shu_t2_envelope())
+    actual_sha = hashlib.sha256(profile_path.read_bytes()).hexdigest()
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.load_pricing_profile(result, profile_path, actual_sha) is None
+    assert "SHU-T2 pricing profile exact frozen SHA-256 mismatch" in result.red_flags
+    if expected_sha != actual_sha:
+        result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+        assert runner.load_pricing_profile(result, profile_path, expected_sha) is None
+        assert result.red_flags
+
+
+def exact_shu_t2_replacement_scope() -> dict[str, Any]:
+    groups = [
+        {
+            "cabinet_group_id": f"CABINET-GROUP-{index:03d}",
+            "product_name": "OTHER",
+            "row_draft_ids": [f"ROW-DRAFT-{index:04d}"],
+        }
+        for index in range(1, 16)
+    ]
+    groups[2] = {
+        "cabinet_group_id": "CABINET-GROUP-003",
+        "product_name": "ШУ-Т2",
+        "row_draft_ids": [
+            *(f"ROW-DRAFT-{index:04d}" for index in range(20, 28)),
+            "ROW-DRAFT-0113",
+            "ROW-DRAFT-0114",
+            "ROW-DRAFT-0115",
+            "ROW-DRAFT-0116",
+        ],
+    }
+    positions: list[dict[str, Any]] = [
+        {
+            "pricing_position_id": f"PRICE-POSITION-{index:03d}",
+            "source_position_id": f"TFE-{index:03d}",
+            "cabinet_group_id": "CABINET-GROUP-001",
+            "product_name": "OTHER",
+            "row_draft_ids": [],
+            "row_draft_json_paths": [],
+            "composition_fingerprint_sha256": "e" * 64,
+            "approved_unit_price_kzt": None,
+            "approved_unit_price_decision_status": "NOT_CALCULATED_NOT_APPROVED",
+            "physical_multiplicity": 83 if index == 1 else 1,
+        }
+        for index in range(1, 56)
+    ]
+    for position_id, source_id, row_id, row_index in (
+        (9, "TFE-016", "ROW-DRAFT-0113", 112),
+        (23, "TFE-041", "ROW-DRAFT-0114", 113),
+        (35, "TFE-061", "ROW-DRAFT-0115", 114),
+        (47, "TFE-083", "ROW-DRAFT-0116", 115),
+    ):
+        positions[position_id - 1].update(
+            {
+                "source_position_id": source_id,
+                "cabinet_group_id": "CABINET-GROUP-003",
+                "product_name": "ШУ-Т2",
+                "row_draft_ids": ["ROW-DRAFT-0020", row_id],
+                "row_draft_json_paths": [
+                    "$.calculator_input_format.row_drafts[19]",
+                    f"$.calculator_input_format.row_drafts[{row_index}]",
+                ],
+                "composition_fingerprint_sha256": runner.SHU_T1_FINGERPRINT,
+            }
+        )
+    fingerprints: list[dict[str, Any]] = [
+        {"fingerprint_sha256": f"{index:064x}"} for index in range(1, 11)
+    ]
+    fingerprints.append(
+        {
+            "fingerprint_sha256": runner.SHU_T1_FINGERPRINT,
+            "source_position_ids": [
+                "TFE-016",
+                "TFE-041",
+                "TFE-061",
+                "TFE-083",
+                "TFE-006",
+                "TFE-029",
+                "TFE-052",
+                "TFE-074",
+            ],
+            "pricing_position_ids": [
+                "PRICE-POSITION-009",
+                "PRICE-POSITION-023",
+                "PRICE-POSITION-035",
+                "PRICE-POSITION-047",
+                "PRICE-POSITION-052",
+                "PRICE-POSITION-053",
+                "PRICE-POSITION-054",
+                "PRICE-POSITION-055",
+            ],
+        }
+    )
+    return {
+        "coverage": copy.deepcopy(runner.SHU_T2_RT820_PROFILE_COVERAGE),
+        "cabinet_groups": groups,
+        "pricing_positions": positions,
+        "composition_fingerprints": fingerprints,
+        "shu_t2_rt820_preliminary_candidate": {
+            "status": "NOT_CALCULATED_NOT_APPROVED",
+            "approved_unit_price_kzt": None,
+            "application_status": "NOT_APPLIED",
+            "unit_candidate_kzt": 53763,
+            "four_position_candidate_kzt": 215052,
+            "preliminary_project_candidate_kzt": 11963792,
+        },
+    }
+
+
+def test_exact_shu_t2_replacement_scope_passes_and_outside_change_fails() -> None:
+    scope = exact_shu_t2_replacement_scope()
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert runner.validate_exact_shu_t2_replacement(scope, result)
+    scope["pricing_positions"][0]["row_draft_ids"].append("ROW-DRAFT-0113")
+    result = runner.CheckedRunResult(Path("completed.json"), Path("prices.xlsx"))
+    assert not runner.validate_exact_shu_t2_replacement(scope, result)
+    assert result.red_flags
 
 
 def test_additive_inventory_builds_15_groups_55_positions_137_cabinets_12_hashes(

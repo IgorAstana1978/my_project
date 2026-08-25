@@ -93,6 +93,33 @@ V02_ADDITIVE_SUCCESSOR_CONTRACT = "controlled_additive_completed_input_successor
 V02_ADDITIVE_EXPECTED_COMPONENT_GROUPS = 34
 V02_ADDITIVE_EXPECTED_ROWS = 112
 V02_ADDITIVE_EXPECTED_CABINET_GROUPS = 15
+V02_SHU_T2_SUCCESSOR_CONTRACT = "controlled_shu_t2_rt820_technical_successor.v0.1"
+V02_SHU_T2_EXPECTED_COMPONENT_GROUPS = 35
+V02_SHU_T2_EXPECTED_ROWS = 116
+V02_SHU_T2_EXPECTED_CABINET_GROUPS = 15
+V02_SHU_T2_PARENT = {
+    "path": (
+        "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+        "CASE-QF-PROJECT-2024-086-SHU-T1-TECHNICAL-SUCCESSOR-20260818-001\\"
+        "price-calculator-input-v0.2-completed-additive-successor.json"
+    ),
+    "sha256": "08808d1dfa0f5fa2c5a9b9d4a697a8cb44d9875bd32240d77300a0b3f570205e",
+    "schema_version": SCHEMA_VERSION_V02,
+    "status": V02_COMPLETION_STATUS,
+}
+V02_SHU_T2_DECISION = {
+    "path": (
+        "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
+        "CASE-QF-PROJECT-2024-086-SHU-T2-RT820-SCOPE-DECISION-20260820-001\\"
+        "technical-shu-t2-rt820-scope-human-decision-v0.1.json"
+    ),
+    "sha256": "92a79401591fa6202af493848dd979a227ae20da8e66b8dea6e8084fc80c2ac6",
+    "schema_version": "technical_shu_t2_rt820_scope_human_decision.v0.1",
+    "decision_id": "IGOR-SHU-T2-RT820-SCOPE-2024-086-001",
+    "status": "IGOR_SHU_T2_RT820_SCOPE_APPROVED_NOT_APPLIED",
+    "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+    "application_status": "NOT_APPLIED",
+}
 V02_ADDITIVE_PARENT = {
     "path": (
         "C:\\Users\\IgorN\\Documents\\production_ai_cases\\"
@@ -705,6 +732,232 @@ def validate_v02_additive_envelope(
     return True
 
 
+def validate_v02_shu_t2_envelope(
+    data: Mapping[str, Any], result: ValidationResult
+) -> bool:
+    source = data.get("source")
+    metadata = (
+        source.get("shu_t2_rt820_technical_successor")
+        if isinstance(source, Mapping)
+        else None
+    )
+    if metadata is None:
+        return False
+    valid = isinstance(metadata, Mapping)
+    if not isinstance(metadata, Mapping):
+        add_red_flag(result, "v0.2 SHU-T2 successor metadata must be an object")
+        return True
+    projection = metadata.get("technical_projection")
+    pricing = metadata.get("rt820_pricing_provenance_only")
+    expected_evidence = [
+        "COMP-031",
+        "COMP-034",
+        "COMP-085",
+        "COMP-088",
+        "COMP-128",
+        "COMP-131",
+        "COMP-178",
+        "COMP-181",
+    ]
+    if not all(
+        (
+            metadata.get("contract") == V02_SHU_T2_SUCCESSOR_CONTRACT,
+            metadata.get("parent") == V02_SHU_T2_PARENT,
+            metadata.get("human_decision") == V02_SHU_T2_DECISION,
+            metadata.get("append_only") is True,
+            metadata.get("scope_expansion") is False,
+            isinstance(projection, Mapping),
+            isinstance(projection, Mapping)
+            and projection.get("row_ids")
+            == ["ROW-DRAFT-0113", "ROW-DRAFT-0114", "ROW-DRAFT-0115", "ROW-DRAFT-0116"],
+            isinstance(projection, Mapping) and projection.get("evidence_count") == 8,
+            isinstance(projection, Mapping)
+            and projection.get("evidence_ids") == expected_evidence,
+            isinstance(projection, Mapping)
+            and projection.get("outside_cabinet_membership_asserted") is False,
+            isinstance(projection, Mapping)
+            and projection.get("outside_cabinet_count_transition_asserted") is False,
+            isinstance(pricing, Mapping),
+            isinstance(pricing, Mapping)
+            and pricing.get("source_range") == "КРН!A19:C19",
+            isinstance(pricing, Mapping) and pricing.get("material_kzt") == 15000,
+            isinstance(pricing, Mapping) and pricing.get("work_kzt") == 900,
+            isinstance(pricing, Mapping)
+            and pricing.get("pricing_calculation_executed") is False,
+            isinstance(pricing, Mapping)
+            and pricing.get("generic_work_432_prohibited") is True,
+            isinstance(pricing, Mapping)
+            and pricing.get("family_fallback_prohibited") is True,
+            isinstance(pricing, Mapping)
+            and pricing.get("fuzzy_fallback_prohibited") is True,
+            isinstance(pricing, Mapping)
+            and pricing.get("similar_relay_fallback_prohibited") is True,
+        )
+    ):
+        valid = False
+        add_red_flag(result, "v0.2 SHU-T2 successor exact bindings mismatch")
+    completion = data.get("completion")
+    successor_completion = (
+        completion.get("shu_t2_rt820_technical_successor")
+        if isinstance(completion, Mapping)
+        else None
+    )
+    if successor_completion != {
+        "contract": V02_SHU_T2_SUCCESSOR_CONTRACT,
+        "decision_application": "PROJECTED_TO_TECHNICAL_SUCCESSOR_ONLY",
+        "pricing_calculation_executed": False,
+        "calculator_authorized": False,
+        "successor_publication_requires_separate_exact_igor_authorization": True,
+    }:
+        valid = False
+        add_red_flag(result, "v0.2 SHU-T2 completion envelope mismatch")
+    if isinstance(completion, Mapping) and completion.get("scope") != {
+        "component_groups": V02_SHU_T2_EXPECTED_COMPONENT_GROUPS,
+        "rows": "116/116",
+        "cabinet_groups": "15/15",
+        "duplicate_component_membership": 0,
+        "duplicate_cabinet_membership": 0,
+        "scope_expansion": False,
+    }:
+        valid = False
+        add_red_flag(result, "v0.2 SHU-T2 completion scope mismatch")
+    groups = data.get("cabinet_groups")
+    calculator_format = data.get("calculator_input_format")
+    rows = (
+        calculator_format.get("row_drafts")
+        if isinstance(calculator_format, Mapping)
+        else None
+    )
+    expected_rows = [
+        {
+            "row_id": row_id,
+            "cabinet_group_id": "CABINET-GROUP-003",
+            "calculator_values": {
+                "product_name": "ШУ-Т2",
+                "cabinet_code": "CAB-KRN-12",
+                "consumables_factor": 1.2,
+                "component_code": "EKF-RT-820",
+                "component_qty": 1,
+                "install_type": "temperature_relay_din_2mod",
+            },
+            "source_quantity": {
+                "decision_id": "IGOR-SHU-T2-RT820-SCOPE-2024-086-001",
+                "decision_kind": "DIRECT_PER_CABINET_COMPLETE_SET",
+                "technical_position_id": technical_position_id,
+                "pricing_position_id": pricing_position_id,
+                "section": section,
+                "quantity_per_individual_cabinet": 1,
+                "physical_multiplicity": 1,
+                "applies_once_per_cabinet": True,
+                "multiply_by_member_count": False,
+                "scope_expansion": False,
+            },
+            "source_component_evidence_ids": list(evidence_ids),
+            "approved_signature": {
+                "manufacturer": "EKF",
+                "product": "Реле температуры RT-820 EKF PROxima",
+                "manufacturer_article": "RT-820",
+                "supply_form": (
+                    "ONE_TEMPERATURE_RELAY_WITH_ONE_EXTERNAL_TEMPERATURE_SENSOR"
+                ),
+                "module_width_din": 2,
+                "TST05_evidence_included_as_provenance_only": True,
+                "TST05_separate_component_row": False,
+            },
+            "mapping_status": "APPROVED_HUMAN_DECISIONS_APPLIED",
+            "component_label": (
+                "Реле температуры RT-820 EKF PROxima с внешним датчиком"
+            ),
+        }
+        for (
+            row_id,
+            technical_position_id,
+            pricing_position_id,
+            section,
+            evidence_ids,
+        ) in (
+            (
+                "ROW-DRAFT-0113",
+                "TFE-016",
+                "PRICE-POSITION-009",
+                "10",
+                ("COMP-031", "COMP-034"),
+            ),
+            (
+                "ROW-DRAFT-0114",
+                "TFE-041",
+                "PRICE-POSITION-023",
+                "12",
+                ("COMP-085", "COMP-088"),
+            ),
+            (
+                "ROW-DRAFT-0115",
+                "TFE-061",
+                "PRICE-POSITION-035",
+                "14",
+                ("COMP-128", "COMP-131"),
+            ),
+            (
+                "ROW-DRAFT-0116",
+                "TFE-083",
+                "PRICE-POSITION-047",
+                "16",
+                ("COMP-178", "COMP-181"),
+            ),
+        )
+    ]
+    appended_evidence = (
+        [
+            evidence_id
+            for row in rows[-4:]
+            for evidence_id in row.get("source_component_evidence_ids", [])
+        ]
+        if isinstance(rows, list) and all(isinstance(row, Mapping) for row in rows[-4:])
+        else []
+    )
+    if not (
+        isinstance(groups, list)
+        and len(groups) == V02_SHU_T2_EXPECTED_CABINET_GROUPS
+        and isinstance(groups[2], Mapping)
+        and groups[2].get("cabinet_group_id") == "CABINET-GROUP-003"
+        and groups[2].get("product_name") == "ШУ-Т2"
+        and groups[2].get("row_draft_ids")[-4:]
+        == ["ROW-DRAFT-0113", "ROW-DRAFT-0114", "ROW-DRAFT-0115", "ROW-DRAFT-0116"]
+        and len(groups[2].get("row_draft_ids", [])) == 12
+        and isinstance(groups[-1], Mapping)
+        and groups[-1].get("cabinet_group_id") == "CABINET-GROUP-015"
+        and groups[-1].get("row_draft_ids")
+        == ["ROW-DRAFT-0110", "ROW-DRAFT-0111", "ROW-DRAFT-0112"]
+    ):
+        valid = False
+        add_red_flag(result, "v0.2 SHU-T2/SHU-T1 cabinet-group integrity mismatch")
+    if not (
+        isinstance(rows, list)
+        and len(rows) == V02_SHU_T2_EXPECTED_ROWS
+        and all(isinstance(row, Mapping) for row in rows[-4:])
+        and rows[-4:] == expected_rows
+        and appended_evidence == expected_evidence
+        and len(appended_evidence) == len(set(appended_evidence)) == 8
+        and sum(
+            row.get("calculator_values", {}).get("component_code") == "EKF-RT-820"
+            for row in rows
+            if isinstance(row, Mapping)
+        )
+        == 5
+        and all(
+            "TST05"
+            not in str(row.get("calculator_values", {}).get("component_code", ""))
+            for row in rows
+            if isinstance(row, Mapping)
+        )
+    ):
+        valid = False
+        add_red_flag(result, "v0.2 SHU-T2 appended-row contract mismatch")
+    if not valid:
+        result.checks["schema constants"] = "fail"
+    return True
+
+
 def validate_v02_completed_payload(
     data: Mapping[str, Any],
     result: ValidationResult,
@@ -740,7 +993,13 @@ def validate_v02_completed_payload(
     ):
         valid_schema = False
         add_red_flag(result, "v0.2 completion contract mismatch")
-    additive_successor = validate_v02_additive_envelope(data, result)
+    envelope_red_flags_before = len(result.red_flags)
+    shu_t2_successor = validate_v02_shu_t2_envelope(data, result)
+    additive_successor = (
+        False if shu_t2_successor else validate_v02_additive_envelope(data, result)
+    )
+    if len(result.red_flags) != envelope_red_flags_before:
+        valid_schema = False
     result.checks["schema constants"] = "pass" if valid_schema else "fail"
 
     safety = data.get("safety")
@@ -778,12 +1037,18 @@ def validate_v02_completed_payload(
 
     cabinet_groups = data.get("cabinet_groups")
     expected_groups = (
-        V02_ADDITIVE_EXPECTED_CABINET_GROUPS
-        if additive_successor
-        else V02_EXPECTED_CABINET_GROUPS
+        V02_SHU_T2_EXPECTED_CABINET_GROUPS
+        if shu_t2_successor
+        else (
+            V02_ADDITIVE_EXPECTED_CABINET_GROUPS
+            if additive_successor
+            else V02_EXPECTED_CABINET_GROUPS
+        )
     )
     expected_rows = (
-        V02_ADDITIVE_EXPECTED_ROWS if additive_successor else V02_EXPECTED_ROWS
+        V02_SHU_T2_EXPECTED_ROWS
+        if shu_t2_successor
+        else (V02_ADDITIVE_EXPECTED_ROWS if additive_successor else V02_EXPECTED_ROWS)
     )
     rows_valid = (
         isinstance(cabinet_groups, list)

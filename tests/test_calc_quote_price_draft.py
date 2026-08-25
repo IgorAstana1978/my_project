@@ -79,6 +79,13 @@ def write_technical_csv(path: Path, rows: list[list[str]]) -> None:
         writer.writerows(rows)
 
 
+def write_shu_t2_bound_csv(path: Path, rows: list[list[str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file, delimiter=";", lineterminator="\n")
+        writer.writerow(calculator.SHU_T2_TECHNICAL_COLUMNS)
+        writer.writerows(rows)
+
+
 def write_workbook(
     path: Path,
     *,
@@ -855,6 +862,20 @@ def shu_t1_rows() -> list[list[str]]:
     ]
 
 
+def shu_t2_rows() -> list[list[str]]:
+    bindings = [
+        calculator.SHU_T2_RT820_TECHNICAL_CONTRACT,
+        calculator.SHU_T2_RT820_TECHNICAL_SHA256,
+        calculator.SHU_T2_RT820_PROFILE_CONTRACT,
+        calculator.SHU_T2_RT820_PROFILE_SHA256,
+        calculator.SHU_T2_RT820_HUMAN_DECISION_SHA256,
+    ]
+    rows = shu_t1_rows()
+    for row in rows:
+        row[0] = "ШУ-Т2"
+    return [[*row, *bindings] for row in rows]
+
+
 def test_exact_shu_t1_rt820_mapping_preserves_exact_material_and_work(
     tmp_path: Path,
 ) -> None:
@@ -872,6 +893,65 @@ def test_exact_shu_t1_rt820_mapping_preserves_exact_material_and_work(
     # The standalone calculator reports its internal pre-tail draft. Invoice 519
     # applies the case tail and approved 53,763 KZT anchor in the checked runner.
     assert result.total_preliminary_price == 47783
+
+
+def test_exact_bound_shu_t2_rt820_mapping_preserves_15000_and_900(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    write_shu_t2_bound_csv(csv_path, shu_t2_rows())
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "PASS"
+    assert result.component_material_total == 20450
+    assert result.work_total == 1764
+
+
+@pytest.mark.parametrize("binding_index", [8, 9, 10, 11, 12])
+def test_shu_t2_rt820_requires_every_exact_contract_binding(
+    tmp_path: Path, binding_index: int
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    rows = shu_t2_rows()
+    rows[0][binding_index] = "not-an-exact-binding"
+    write_shu_t2_bound_csv(csv_path, rows)
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert result.red_flags
+
+
+@pytest.mark.parametrize(
+    "profile_sha",
+    ["a" * 64, "b" * 64, calculator.SHU_T2_RT820_PROFILE_SHA256.upper(), ""],
+)
+def test_standalone_calculator_rejects_every_non_frozen_profile_sha(
+    tmp_path: Path, profile_sha: str
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    rows = shu_t2_rows()
+    rows[0][11] = profile_sha
+    write_shu_t2_bound_csv(csv_path, rows)
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
+    assert result.red_flags
+
+
+def test_rt820_remains_forbidden_for_other_product_even_with_new_bindings(
+    tmp_path: Path,
+) -> None:
+    workbook_path = tmp_path / "price.xlsx"
+    csv_path = tmp_path / "composition.csv"
+    write_shu_t1_workbook(workbook_path)
+    rows = shu_t2_rows()
+    rows[0][0] = "OTHER-PRODUCT"
+    write_shu_t2_bound_csv(csv_path, rows)
+    result = calculate(workbook_path, csv_path)
+    assert result.status == "FAIL"
 
 
 @pytest.mark.parametrize(
