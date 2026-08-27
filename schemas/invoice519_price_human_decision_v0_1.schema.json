@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/invoice519_price_human_decision_v0_1.schema.json",
+  "title": "Project 2024/086 Invoice 519 price-only Human Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "project_id",
+    "invoice_number",
+    "decision_id",
+    "status",
+    "authority",
+    "approval_scope",
+    "application_status",
+    "created_at_utc",
+    "input_bindings",
+    "price_approval",
+    "reconciliation",
+    "safety",
+    "publication_control"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "invoice519_price_human_decision.v0.1"
+    },
+    "artifact_type": {
+      "const": "IMMUTABLE_HUMAN_DECISION_CAPTURE"
+    },
+    "project_id": {
+      "const": "2024/086"
+    },
+    "invoice_number": {
+      "const": 519
+    },
+    "decision_id": {
+      "const": "IGOR-INVOICE519-PRICE-2024-086-001"
+    },
+    "status": {
+      "const": "IGOR_INVOICE519_PRICE_APPROVED_NOT_APPLIED"
+    },
+    "authority": {
+      "const": "IGOR_DIRECT_HUMAN_APPROVAL"
+    },
+    "approval_scope": {
+      "const": "PRICE_ONLY"
+    },
+    "application_status": {
+      "const": "NOT_APPLIED"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "input_bindings": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "path",
+          "expected_sha256",
+          "actual_sha256",
+          "media_type"
+        ],
+        "properties": {
+          "role": {
+            "enum": [
+              "completed_technical_input",
+              "main_price_workbook",
+              "custom_sche_metal_workbook",
+              "pricing_profile",
+              "canonical_invoice_519",
+              "ukrm_price_workbook",
+              "yarv100_price_workbook"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "actual_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "price_approval": {
+      "const": {
+        "approved_price_kzt": 19499186,
+        "currency": "KZT",
+        "approval_scope": "PRICE_ONLY",
+        "authority": "IGOR_DIRECT_HUMAN_APPROVAL",
+        "application_status": "NOT_APPLIED"
+      }
+    },
+    "reconciliation": {
+      "const": {
+        "status": "CHECKED_RECONCILIATION_PASS",
+        "frozen_55": {
+          "position_count": 55,
+          "subtotal_kzt": 11963792,
+          "invoice_position_numbers": [
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            16,
+            17,
+            18,
+            19,
+            20,
+            27,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            39,
+            40,
+            41,
+            42,
+            43,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            59,
+            60,
+            61,
+            62,
+            63,
+            70,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            81,
+            82,
+            83,
+            84,
+            85,
+            88
+          ]
+        },
+        "checked_missing_33": {
+          "position_count": 33,
+          "subtotal_kzt": 7535394,
+          "invoice_position_numbers": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            15,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            28,
+            29,
+            38,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            58,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            71,
+            72,
+            80,
+            86,
+            87
+          ],
+          "family_subtotals": [
+            {
+              "family": "VSHZH_VRU",
+              "positions": [1, 22, 45, 65],
+              "subtotal_kzt": 1583790
+            },
+            {
+              "family": "RSHZH",
+              "positions": [2, 23, 46, 66],
+              "subtotal_kzt": 1020560
+            },
+            {
+              "family": "AVR",
+              "positions": [3, 24, 47, 67],
+              "subtotal_kzt": 2069624
+            },
+            {
+              "family": "SHCHSP",
+              "positions": [4, 25, 48, 68],
+              "subtotal_kzt": 931420
+            },
+            {
+              "family": "UKRM",
+              "positions": [5, 26, 49, 69],
+              "subtotal_kzt": 538880
+            },
+            {
+              "family": "YARV100",
+              "positions": [15, 21, 38, 44, 58, 64, 80, 86],
+              "subtotal_kzt": 517872
+            },
+            {
+              "family": "VSHCHO",
+              "positions": [28, 71],
+              "subtotal_kzt": 466928
+            },
+            {
+              "family": "RSHCHO",
+              "positions": [29, 72],
+              "subtotal_kzt": 326574
+            },
+            {
+              "family": "YAUO9601_3474",
+              "positions": [87],
+              "subtotal_kzt": 79746
+            }
+          ]
+        },
+        "coverage": {
+          "covered": 88,
+          "total": 88,
+          "overlap": 0,
+          "uncovered": 0
+        },
+        "combined_total_kzt": 19499186,
+        "frozen_55_recalculated": false,
+        "evidence": {
+          "frozen_55": "REAL_CHECKED_CALCULATOR_RUN_PASS",
+          "checked_missing_33": "NINE_FAMILY_READ_ONLY_CHECKS_PASS",
+          "membership": "CANONICAL_INVOICE_AND_PRICING_PROFILE_PARTITION_PASS"
+        }
+      }
+    },
+    "safety": {
+      "const": {
+        "human_decision_recorded": true,
+        "price_approved": true,
+        "price_application_authorized": false,
+        "price_applied": false,
+        "quote_generation_authorized": false,
+        "invoice_generation_authorized": false,
+        "quote_or_invoice_publication_authorized": false,
+        "client_send_authorized": false,
+        "lead_time_approved": false,
+        "procurement_authorized": false,
+        "reserve_authorized": false,
+        "prepayment_authorized": false,
+        "production_authorized": false,
+        "downstream_authorized": false
+      }
+    },
+    "publication_control": {
+      "const": {
+        "immutable": true,
+        "no_overwrite": true,
+        "atomic_publication": true,
+        "input_toctou_recheck_required": true,
+        "final_strict_json_reread_required": true,
+        "authorization_token_required": true
+      }
+    }
+  }
+}

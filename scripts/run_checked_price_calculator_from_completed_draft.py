@@ -209,7 +209,7 @@ EXPECTED_PROFILE_INPUTS = (
             Path(r"C:\Users\IgorN\Documents\invoice_quote_filler_data\prices\current")
             / "Таблица 05.01.2026 верная.xlsx"
         ),
-        "f8bd69da1f61612d3853e608333486dcd3b6ecd572cd98beb2247c6accb31b5f",
+        "79b3ace77e84b87c46eb708f1c3b2ae63b5c6d75c5ebf6889c12b99624112ba1",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ),
     (
