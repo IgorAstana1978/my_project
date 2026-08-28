@@ -1,0 +1,303 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/invoice519_commercial_pricing_ledger_v0_1.schema.json",
+  "title": "Project 2024/086 Invoice 519 commercial pricing ledger successor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "project_id",
+    "invoice_number",
+    "ledger_id",
+    "status",
+    "authority",
+    "pricing_scope",
+    "application_status",
+    "created_at_utc",
+    "predecessor",
+    "source_input_bindings",
+    "price_grain",
+    "positions",
+    "ledger_summary",
+    "reconciliation",
+    "technical_composition",
+    "safety",
+    "publication_control"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "invoice519_commercial_pricing_ledger.v0.1"
+    },
+    "artifact_type": {
+      "const": "IMMUTABLE_COMMERCIAL_PRICING_LEDGER_SUCCESSOR"
+    },
+    "project_id": {
+      "const": "2024/086"
+    },
+    "invoice_number": {
+      "const": 519
+    },
+    "ledger_id": {
+      "const": "IGOR-INVOICE519-COMMERCIAL-PRICING-LEDGER-2024-086-001"
+    },
+    "status": {
+      "const": "IGOR_INVOICE519_88_POSITION_PRICING_LEDGER_READY_QUOTE_NOT_GENERATED"
+    },
+    "authority": {
+      "const": "IGOR_DIRECT_HUMAN_APPROVAL"
+    },
+    "pricing_scope": {
+      "const": "PRICE_ONLY_88_POSITIONS"
+    },
+    "application_status": {
+      "const": "APPLIED"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "predecessor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "expected_sha256",
+        "actual_sha256",
+        "schema_version",
+        "application_id",
+        "status",
+        "application_status"
+      ],
+      "properties": {
+        "role": {
+          "const": "price_application"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actual_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "schema_version": {
+          "const": "invoice519_price_application.v0.1"
+        },
+        "application_id": {
+          "const": "IGOR-INVOICE519-PRICE-APPLICATION-2024-086-001"
+        },
+        "status": {
+          "const": "IGOR_INVOICE519_PRICE_APPLIED_QUOTE_NOT_GENERATED"
+        },
+        "application_status": {
+          "const": "APPLIED"
+        }
+      }
+    },
+    "source_input_bindings": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "path",
+          "expected_sha256",
+          "actual_sha256",
+          "media_type"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "actual_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "price_grain": {
+      "const": {
+        "unit_price_rounding_mode": "ROUND_HALF_UP",
+        "unit_price_rounding_stage": "AFTER_FULL_UNIT_PRICE_FORMULA",
+        "position_total_grain": "APPROVED_UNIT_PRICE_TIMES_CANONICAL_QUANTITY",
+        "unit_prices_recalculated": false,
+        "arbitrary_allocation_used": false
+      }
+    },
+    "positions": {
+      "type": "array",
+      "minItems": 88,
+      "maxItems": 88,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "invoice_position_number",
+          "quantity",
+          "approved_unit_price_kzt",
+          "approved_position_total_kzt",
+          "currency",
+          "pricing_provenance",
+          "technical_description_reference"
+        ],
+        "properties": {
+          "invoice_position_number": {
+            "type": "integer"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "approved_unit_price_kzt": {
+            "type": "integer"
+          },
+          "approved_position_total_kzt": {
+            "type": "integer"
+          },
+          "currency": {
+            "const": "KZT"
+          },
+          "pricing_provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "partition",
+              "evidence_role",
+              "source_binding_role",
+              "source_reference",
+              "allocation_method",
+              "price_recalculated"
+            ],
+            "properties": {
+              "partition": {
+                "enum": [
+                  "FROZEN_55",
+                  "CHECKED_MISSING_33"
+                ]
+              },
+              "evidence_role": {
+                "enum": [
+                  "REAL_CHECKED_CALCULATOR_RUN_PASS",
+                  "NINE_FAMILY_READ_ONLY_CHECKS_PASS"
+                ]
+              },
+              "source_binding_role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_reference": {
+                "type": "string",
+                "minLength": 1
+              },
+              "allocation_method": {
+                "enum": [
+                  "DIRECT_CHECKED_POSITION_PRICE",
+                  "DIRECT_CHECKED_FAMILY_POSITION_PRICE"
+                ]
+              },
+              "price_recalculated": {
+                "const": false
+              }
+            }
+          },
+          "technical_description_reference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_binding_role",
+              "worksheet",
+              "row",
+              "composition_status"
+            ],
+            "properties": {
+              "source_binding_role": {
+                "const": "canonical_invoice_519"
+              },
+              "worksheet": {
+                "const": "Лист1"
+              },
+              "row": {
+                "type": "integer"
+              },
+              "composition_status": {
+                "const": "UNCHANGED_FROM_PRICE_APPLICATION_PREDECESSOR"
+              }
+            }
+          }
+        }
+      }
+    },
+    "ledger_summary": {
+      "const": {
+        "currency": "KZT",
+        "position_count": 88,
+        "approved_total_kzt": 19499186,
+        "derived_line_total_kzt": 19499186,
+        "frozen_55_subtotal_kzt": 11963792,
+        "checked_missing_33_subtotal_kzt": 7535394,
+        "duplicates": 0,
+        "missing": 0,
+        "extra": 0,
+        "unit_price_allocation_used": false,
+        "price_recalculation_used": false,
+        "technical_composition_changed": false
+      }
+    },
+    "reconciliation": {
+      "type": "object"
+    },
+    "technical_composition": {
+      "type": "object"
+    },
+    "safety": {
+      "const": {
+        "human_decision_recorded": true,
+        "price_approved": true,
+        "price_application_authorized": true,
+        "price_applied": true,
+        "commercial_pricing_ledger_recorded": true,
+        "quote_generation_authorized": false,
+        "invoice_generation_authorized": false,
+        "quote_or_invoice_publication_authorized": false,
+        "client_send_authorized": false,
+        "procurement_authorized": false,
+        "reserve_authorized": false,
+        "prepayment_authorized": false,
+        "production_authorized": false,
+        "downstream_authorized": false
+      }
+    },
+    "publication_control": {
+      "const": {
+        "immutable": true,
+        "no_overwrite": true,
+        "atomic_publication": true,
+        "input_toctou_recheck_required": true,
+        "final_strict_json_reread_required": true,
+        "authorization_token_required": true
+      }
+    }
+  }
+}
