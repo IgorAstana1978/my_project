@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/invoice519_yauo_enclosure_human_decision_v0_1.schema.json",
+  "title": "Project 2024/086 Invoice 519 YAUO enclosure Human Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "project_id",
+    "invoice_number",
+    "decision_id",
+    "status",
+    "authority",
+    "approval_scope",
+    "quote_application_status",
+    "created_at_utc",
+    "source_binding",
+    "technical_decision",
+    "safety",
+    "publication_control"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "invoice519_yauo_enclosure_human_decision.v0.1"
+    },
+    "artifact_type": {
+      "const": "IMMUTABLE_HUMAN_DECISION_CAPTURE"
+    },
+    "project_id": {
+      "const": "2024/086"
+    },
+    "invoice_number": {
+      "const": 519
+    },
+    "decision_id": {
+      "const": "IGOR-INVOICE519-YAUO-ENCLOSURE-2024-086-001"
+    },
+    "status": {
+      "const": "IGOR_INVOICE519_YAUO_ENCLOSURE_APPROVED_NOT_APPLIED_TO_QUOTE"
+    },
+    "authority": {
+      "const": "IGOR_DIRECT_HUMAN_APPROVAL"
+    },
+    "approval_scope": {
+      "const": "ENCLOSURE_DIMENSIONS_ONLY"
+    },
+    "quote_application_status": {
+      "const": "NOT_APPLIED"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "path",
+        "expected_sha256",
+        "actual_sha256",
+        "media_type",
+        "worksheet",
+        "cell",
+        "canonical_cell_value"
+      ],
+      "properties": {
+        "role": {
+          "const": "canonical_invoice_519"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actual_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "media_type": {
+          "const": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        "worksheet": {
+          "const": "Лист1"
+        },
+        "cell": {
+          "const": "G111"
+        },
+        "canonical_cell_value": {
+          "const": "Накладной 450х300х250 металл 1,2мм"
+        }
+      }
+    },
+    "technical_decision": {
+      "const": {
+        "invoice_position_number": 87,
+        "product_identity": "YAUO9601_3474",
+        "field": "enclosure_dimensions",
+        "previous_value": "450×300×250 mm",
+        "approved_value": "400×300×250 mm",
+        "change_scope": "POSITION_87_ENCLOSURE_ONLY",
+        "quote_application_status": "NOT_APPLIED"
+      }
+    },
+    "safety": {
+      "const": {
+        "human_decision_recorded": true,
+        "technical_decision_recorded": true,
+        "quote_application_authorized": false,
+        "quote_generation_authorized": false,
+        "invoice_generation_authorized": false,
+        "quote_publication_authorized": false,
+        "invoice_publication_authorized": false,
+        "client_send_authorized": false,
+        "procurement_authorized": false,
+        "reserve_authorized": false,
+        "prepayment_authorized": false,
+        "production_authorized": false,
+        "downstream_authorized": false
+      }
+    },
+    "publication_control": {
+      "const": {
+        "immutable": true,
+        "no_overwrite": true,
+        "new_directory_required": true,
+        "atomic_publication": true,
+        "input_toctou_recheck_required": true,
+        "final_strict_json_reread_required": true,
+        "rollback_on_failure": true,
+        "authorization_token_required": true
+      }
+    }
+  }
+}
