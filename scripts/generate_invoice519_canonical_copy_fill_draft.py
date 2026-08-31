@@ -163,6 +163,7 @@ POSITION_ROWS = (
     112,
 )
 SECTION_ROWS = (32, 39, 57, 64, 79, 86, 103, 110)
+CALC_CHAIN_PART = "xl/calcChain.xml"
 
 
 class GeneratorError(ValueError):
@@ -657,10 +658,135 @@ def _strict_xml_parts(parts: Mapping[str, bytes]) -> None:
                 raise GeneratorError(f"output XML part invalid: {name}: {exc}") from exc
 
 
+def _worksheet_sheet_id(parts: Mapping[str, bytes], worksheet_part: str) -> str:
+    try:
+        workbook = ElementTree.fromstring(parts[patcher.WORKBOOK_PART])
+        relationships = ElementTree.fromstring(parts[patcher.WORKBOOK_RELS_PART])
+    except (KeyError, ElementTree.ParseError) as exc:
+        raise GeneratorError(f"workbook sheet identity invalid: {exc}") from exc
+    targets = {
+        relationship.get("Id"): patcher.normalize_workbook_target(
+            relationship.get("Target", "")
+        )
+        for relationship in relationships.findall(
+            f"{{{patcher.PACKAGE_REL_NS}}}Relationship"
+        )
+    }
+    matches: list[str] = []
+    for sheet in workbook.findall("main:sheets/main:sheet", patcher.NS):
+        relationship_id = sheet.get(f"{{{patcher.OFFICE_REL_NS}}}id")
+        if (
+            sheet.get("name") == WORKSHEET
+            and targets.get(relationship_id) == worksheet_part
+        ):
+            sheet_id = sheet.get("sheetId")
+            require(sheet_id is not None, "worksheet sheetId missing")
+            matches.append(sheet_id)
+    require(len(matches) == 1, "worksheet calcChain identity mismatch")
+    return matches[0]
+
+
+def _formula_coordinates(worksheet_xml: bytes) -> set[str]:
+    try:
+        root = ElementTree.fromstring(worksheet_xml)
+    except ElementTree.ParseError as exc:
+        raise GeneratorError(f"worksheet formula XML invalid: {exc}") from exc
+    formulas: set[str] = set()
+    for cell in root.findall(".//main:c", patcher.NS):
+        if cell.find("main:f", patcher.NS) is None:
+            continue
+        coordinate = cell.get("r")
+        require(coordinate is not None, "formula cell coordinate missing")
+        require(coordinate not in formulas, f"duplicate formula cell: {coordinate}")
+        formulas.add(coordinate)
+    return formulas
+
+
+def _calculation_chain_root(parts: Mapping[str, bytes]) -> ElementTree.Element:
+    require(CALC_CHAIN_PART in parts, "canonical calcChain part missing")
+    try:
+        return ElementTree.fromstring(parts[CALC_CHAIN_PART])
+    except ElementTree.ParseError as exc:
+        raise GeneratorError(f"calcChain XML invalid: {exc}") from exc
+
+
+def validate_calculation_chain(
+    parts: Mapping[str, bytes], worksheet_part: str, worksheet_xml: bytes
+) -> None:
+    sheet_id = _worksheet_sheet_id(parts, worksheet_part)
+    formulas = _formula_coordinates(worksheet_xml)
+    root = _calculation_chain_root(parts)
+    current_sheet_id: str | None = None
+    seen: set[str] = set()
+    for entry in root.findall("main:c", patcher.NS):
+        current_sheet_id = entry.get("i", current_sheet_id)
+        require(current_sheet_id is not None, "calcChain sheet identity missing")
+        coordinate = entry.get("r")
+        require(coordinate is not None, "calcChain coordinate missing")
+        if current_sheet_id != sheet_id:
+            continue
+        require(
+            coordinate not in seen,
+            f"duplicate calcChain formula reference: {coordinate}",
+        )
+        seen.add(coordinate)
+        require(
+            coordinate in formulas,
+            f"stale calcChain formula reference: {coordinate}",
+        )
+
+
+def expected_package_parts(
+    canonical: LoadedCanonical,
+    expected_worksheet: bytes,
+    updates: Mapping[str, object],
+) -> dict[str, bytes]:
+    validate_calculation_chain(
+        canonical.parts, canonical.worksheet_part, canonical.worksheet_xml
+    )
+    before_formulas = _formula_coordinates(canonical.worksheet_xml)
+    after_formulas = _formula_coordinates(expected_worksheet)
+    removed_formulas = before_formulas - after_formulas
+    require(removed_formulas, "worksheet formula removal set is empty")
+    require(
+        removed_formulas <= set(updates),
+        "formula removal escaped modified-cell allowlist",
+    )
+
+    root = _calculation_chain_root(canonical.parts)
+    sheet_id = _worksheet_sheet_id(canonical.parts, canonical.worksheet_part)
+    current_sheet_id: str | None = None
+    removed_references: set[str] = set()
+    for entry in list(root.findall("main:c", patcher.NS)):
+        current_sheet_id = entry.get("i", current_sheet_id)
+        require(current_sheet_id is not None, "calcChain sheet identity missing")
+        coordinate = entry.get("r")
+        require(coordinate is not None, "calcChain coordinate missing")
+        if current_sheet_id == sheet_id and coordinate in removed_formulas:
+            root.remove(entry)
+            removed_references.add(coordinate)
+    require(
+        removed_references == removed_formulas,
+        "removed worksheet formulas and calcChain references mismatch",
+    )
+    require(
+        bool(root.findall("main:c", patcher.NS)),
+        "calcChain unexpectedly empty; relationship metadata update required",
+    )
+    expected_calc_chain = ElementTree.tostring(
+        root, encoding="utf-8", xml_declaration=True
+    )
+    parts = dict(canonical.parts)
+    parts[canonical.worksheet_part] = expected_worksheet
+    parts[CALC_CHAIN_PART] = expected_calc_chain
+    validate_calculation_chain(parts, canonical.worksheet_part, expected_worksheet)
+    return parts
+
+
 def validate_candidate(
     candidate: Path,
     canonical: LoadedCanonical,
-    expected_worksheet: bytes,
+    expected_parts: Mapping[str, bytes],
     updates: Mapping[str, object],
 ) -> bytes:
     try:
@@ -668,12 +794,19 @@ def validate_candidate(
     except OSError as exc:
         raise GeneratorError(f"draft candidate could not be read: {exc}") from exc
     parts = _zip_parts(raw, "draft candidate")
-    require(set(parts) == set(canonical.parts), "draft ZIP part membership mismatch")
-    for name, content in canonical.parts.items():
-        if name != canonical.worksheet_part:
-            require(parts[name] == content, f"unexpected draft ZIP part change: {name}")
+    require(set(parts) == set(expected_parts), "draft ZIP part membership mismatch")
     actual_worksheet = parts.get(canonical.worksheet_part)
-    require(actual_worksheet == expected_worksheet, "draft worksheet patch mismatch")
+    require(actual_worksheet is not None, "draft worksheet part missing")
+    validate_calculation_chain(parts, canonical.worksheet_part, actual_worksheet)
+    for name, content in expected_parts.items():
+        require(parts[name] == content, f"unexpected draft ZIP part change: {name}")
+    changed_parts = {
+        name for name, content in canonical.parts.items() if parts[name] != content
+    }
+    require(
+        changed_parts == {canonical.worksheet_part, CALC_CHAIN_PART},
+        "draft OOXML compatibility part allowlist mismatch",
+    )
     _strict_xml_parts(parts)
     before_cells = _cell_xml_map(canonical.worksheet_xml)
     after_cells = _cell_xml_map(cast(bytes, actual_worksheet))
@@ -780,6 +913,7 @@ def generate_draft(
     validate_canonical_map(canonical, lines)
     updates = build_updates(lines)
     expected_worksheet = expected_patched_worksheet(canonical, updates)
+    expected_parts = expected_package_parts(canonical, expected_worksheet, updates)
     inputs = (
         (ledger.path, ledger.raw, "commercial pricing ledger"),
         (yauo.path, yauo.raw, "YAUO enclosure Human Decision"),
@@ -802,14 +936,14 @@ def generate_draft(
         descriptor = -1
         staging = Path(staging_name)
         patcher.write_patched_package(
-            canonical.parts,
+            expected_parts,
             canonical.worksheet_part,
             expected_worksheet,
             staging,
         )
         with staging.open("rb+") as stream:
             os.fsync(stream.fileno())
-        staged_raw = validate_candidate(staging, canonical, expected_worksheet, updates)
+        staged_raw = validate_candidate(staging, canonical, expected_parts, updates)
         require(
             set(output_path.parent.iterdir()) == {staging},
             "output directory contains unexpected entries before generation",
@@ -828,9 +962,7 @@ def generate_draft(
             _path_identity(output_path) == staged_identity,
             "generated output identity mismatch",
         )
-        final_raw = validate_candidate(
-            output_path, canonical, expected_worksheet, updates
-        )
+        final_raw = validate_candidate(output_path, canonical, expected_parts, updates)
         require(final_raw == staged_raw, "generated output bytes mismatch")
         staging.unlink()
         staging = None

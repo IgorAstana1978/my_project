@@ -201,7 +201,72 @@ def write_canonical(path: Path) -> None:
                 fill_type="solid", fgColor="FFF2CC"
             )
     sheet[writer.YAUO_CELL] = writer.CANONICAL_YAUO_VALUE
+    sheet["E126"] = "=1+1"
     workbook.save(path)
+    add_calc_chain(path)
+
+
+def add_calc_chain(path: Path) -> None:
+    parts = zip_parts(path)
+    relationships_part = "xl/_rels/workbook.xml.rels"
+    relationships = ElementTree.fromstring(parts[relationships_part])
+    ElementTree.SubElement(
+        relationships,
+        f"{{{writer.patcher.PACKAGE_REL_NS}}}Relationship",
+        {
+            "Id": "rIdCalcChain",
+            "Type": (
+                "http://schemas.openxmlformats.org/officeDocument/2006/"
+                "relationships/calcChain"
+            ),
+            "Target": "calcChain.xml",
+        },
+    )
+    parts[relationships_part] = ElementTree.tostring(
+        relationships, encoding="utf-8", xml_declaration=True
+    )
+
+    content_types_part = "[Content_Types].xml"
+    content_types = ElementTree.fromstring(parts[content_types_part])
+    content_types_namespace = (
+        "http://schemas.openxmlformats.org/package/2006/content-types"
+    )
+    ElementTree.SubElement(
+        content_types,
+        f"{{{content_types_namespace}}}Override",
+        {
+            "PartName": "/xl/calcChain.xml",
+            "ContentType": (
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.calcChain+xml"
+            ),
+        },
+    )
+    parts[content_types_part] = ElementTree.tostring(
+        content_types, encoding="utf-8", xml_declaration=True
+    )
+
+    namespace = writer.patcher.SPREADSHEET_NS
+    chain = ElementTree.Element(f"{{{namespace}}}calcChain")
+    for coordinate in (
+        *(f"I{row}" for row in writer.POSITION_ROWS),
+        writer.TOTAL_CELL,
+        "E126",
+    ):
+        ElementTree.SubElement(
+            chain,
+            f"{{{namespace}}}c",
+            {"r": coordinate, "i": "1"},
+        )
+    parts[writer.CALC_CHAIN_PART] = ElementTree.tostring(
+        chain, encoding="utf-8", xml_declaration=True
+    )
+
+    temporary = path.with_name(f"{path.stem}.calc-chain.xlsx")
+    with ZipFile(temporary, "w", ZIP_DEFLATED) as archive:
+        for name, raw in parts.items():
+            archive.writestr(name, raw)
+    temporary.replace(path)
 
 
 def prepare_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SyntheticCase:
@@ -276,6 +341,14 @@ def worksheet_xml(path: Path) -> bytes:
         return cast(bytes, archive.read(part))
 
 
+def calc_chain_references(path: Path) -> list[tuple[str, str | None]]:
+    root = ElementTree.fromstring(zip_parts(path)[writer.CALC_CHAIN_PART])
+    return [
+        (cast(str, entry.get("r")), entry.get("i"))
+        for entry in root.findall("main:c", writer.patcher.NS)
+    ]
+
+
 def masked_cells(raw: bytes, coordinates: set[str]) -> bytes:
     masked = bytearray(raw)
     ranges = writer.patcher.cell_ranges(raw)
@@ -336,9 +409,12 @@ def test_positive_copy_fill_preserves_canonical_package_and_styles(
         case.canonical, case.canonical_sha
     ).worksheet_part
     assert set(after_parts) == set(before_parts)
+    permitted_parts = {changed_part, writer.CALC_CHAIN_PART}
     for name, raw in before_parts.items():
-        if name != changed_part:
+        if name not in permitted_parts:
             assert after_parts[name] == raw, name
+    assert after_parts[writer.CALC_CHAIN_PART] != before_parts[writer.CALC_CHAIN_PART]
+    assert calc_chain_references(output) == [("E126", "1")]
     assert masked_cells(before_parts[changed_part], allowlist) == masked_cells(
         after_parts[changed_part], allowlist
     )
@@ -375,6 +451,52 @@ def test_exact_cell_map_allowlist_and_amount_words() -> None:
     assert updates["G10"] == "Срок изготовления 30–40 рабочих дней"
     assert updates["G111"] == "Накладной 400х300х250 металл 1,2мм"
     assert "Девятнадцать миллионов" in cast(str, updates["C115"])
+
+
+def test_calc_chain_removes_target_literals_and_preserves_valid_formula(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = prepare_case(tmp_path, monkeypatch)
+    output = output_path(case)
+    before = calc_chain_references(case.canonical)
+    assert len(before) == 90
+    assert ("I17", "1") in before
+    assert ("E126", "1") in before
+
+    writer.generate_draft(
+        ledger_path=case.ledger,
+        ledger_sha256=case.ledger_sha,
+        yauo_decision_path=case.yauo,
+        yauo_decision_sha256=case.yauo_sha,
+        canonical_workbook=case.canonical,
+        canonical_workbook_sha256=case.canonical_sha,
+        output=output,
+    )
+
+    assert calc_chain_references(output) == [("E126", "1")]
+    formulas = writer._formula_coordinates(worksheet_xml(output))
+    assert formulas == {"E126"}
+
+
+def test_candidate_rejects_stale_calc_chain_formula_reference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = prepare_case(tmp_path, monkeypatch)
+    canonical = writer.load_canonical(case.canonical, case.canonical_sha)
+    updates = writer.build_updates(writer.ledger_lines(ledger_payload()))
+    expected_worksheet = writer.expected_patched_worksheet(canonical, updates)
+    expected_parts = writer.expected_package_parts(
+        canonical, expected_worksheet, updates
+    )
+    stale = tmp_path / "stale-calc-chain.xlsx"
+    writer.patcher.write_patched_package(
+        canonical.parts, canonical.worksheet_part, expected_worksheet, stale
+    )
+
+    with pytest.raises(
+        writer.GeneratorError, match="stale calcChain formula reference"
+    ):
+        writer.validate_candidate(stale, canonical, expected_parts, updates)
 
 
 def test_authorization_fails_before_generation(
@@ -779,9 +901,10 @@ def test_candidate_rejects_unexpected_part_and_style_change(
     canonical = writer.load_canonical(case.canonical, case.canonical_sha)
     updates = writer.build_updates(writer.ledger_lines(ledger_payload()))
     expected = writer.expected_patched_worksheet(canonical, updates)
+    expected_parts = writer.expected_package_parts(canonical, expected, updates)
     candidate = tmp_path / "candidate.xlsx"
     writer.patcher.write_patched_package(
-        canonical.parts, canonical.worksheet_part, expected, candidate
+        expected_parts, canonical.worksheet_part, expected, candidate
     )
     rewritten = tmp_path / "rewritten.xlsx"
     with ZipFile(candidate) as source, ZipFile(rewritten, "w", ZIP_DEFLATED) as target:
@@ -789,7 +912,7 @@ def test_candidate_rejects_unexpected_part_and_style_change(
             target.writestr(name, source.read(name))
         target.writestr("unexpected.xml", "<unexpected/>")
     with pytest.raises(writer.GeneratorError, match="part membership"):
-        writer.validate_candidate(rewritten, canonical, expected, updates)
+        writer.validate_candidate(rewritten, canonical, expected_parts, updates)
 
     cells = writer.patcher.cell_ranges(expected)
     target_cell = cells["H17"][0]
@@ -799,10 +922,10 @@ def test_candidate_rejects_unexpected_part_and_style_change(
         + expected[target_cell.end :]
     )
     writer.patcher.write_patched_package(
-        canonical.parts, canonical.worksheet_part, changed, candidate
+        expected_parts, canonical.worksheet_part, changed, candidate
     )
-    with pytest.raises(writer.GeneratorError, match="worksheet patch"):
-        writer.validate_candidate(candidate, canonical, expected, updates)
+    with pytest.raises(writer.GeneratorError, match="unexpected draft ZIP part change"):
+        writer.validate_candidate(candidate, canonical, expected_parts, updates)
 
 
 def test_verify_inputs_unchanged_reports_missing_file(tmp_path: Path) -> None:

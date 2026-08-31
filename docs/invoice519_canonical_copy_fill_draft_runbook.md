@@ -52,8 +52,18 @@ The only permitted cell changes are:
 This is an exact 180-cell allowlist. Canonical position/description/quantity
 cells, all section rows, merged cells, styles, row/column dimensions, drawings,
 print settings, page setup, formulas outside the allowlist, and every other
-OOXML part must remain byte-identical. Target-cell style ids must also remain
-unchanged. The generator writes ledger values, not Excel price formulas.
+business/layout OOXML part must remain byte-identical. Target-cell style ids
+must also remain unchanged. The generator writes ledger values, not Excel price
+formulas.
+
+The canonical `xl/calcChain.xml` references every formula removed from the 88
+position-total cells and `I113`. The generator therefore removes only those
+stale calculation-chain entries and preserves the unaffected valid entries.
+For the exact canonical Invoice 519 workbook, `E126` remains a formula and its
+chain entry remains present, so workbook relationships and content types stay
+byte-identical. The only permitted OOXML part changes are
+`xl/worksheets/sheet1.xml` and `xl/calcChain.xml`; a stale calcChain reference
+causes fail-closed candidate rejection.
 
 ## Safety and publication semantics
 
@@ -61,8 +71,9 @@ The output filename is exactly
 `invoice519-canonical-copy-fill-draft.xlsx`. Its new case directory must not
 exist, its owner directory must exist, and the output must be outside Git. The
 generator performs strict input path/SHA/contract checks, two input byte rereads,
-in-memory OOXML patch planning, staged reopen/CRC/XML/value/style validation,
-hard-link no-overwrite publication, final reopen validation, and rollback.
+in-memory OOXML/calcChain patch planning, staged reopen/CRC/XML/value/style and
+cross-part formula validation, hard-link no-overwrite publication, final reopen
+validation, and rollback.
 
 The exact future one-run authorization token is:
 
