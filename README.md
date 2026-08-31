@@ -4,56 +4,77 @@
 
 # my_project
 
-A small Python CLI calculator project with clean structure, automated checks, strict typing, full test coverage, and GitHub Actions CI.
+`my_project` — Python-репозиторий детерминированных, fail-closed процессов для
+извлечения проектных данных, подготовки технического состава, проверки цен и
+создания локальных черновиков КП/счётов. Исходный CLI-калькулятор сохранён как
+отдельный legacy-компонент.
 
-## Features
+Репозиторий не объявляет автоматически полученный результат production-ready:
+существенные технические и коммерческие решения, real publication, создание
+клиентского документа, отправка и downstream-действия остаются за отдельными
+Human Approval.
 
-- CLI calculator built with `argparse`
-- subcommands and short aliases
-- interactive mode
-- command history and history reset
-- function tests and CLI tests
-- clean project structure for learning and practice
+## Основные контуры
 
-## Quality
+- извлечение и строгая валидация данных из проектных источников;
+- формирование и проверка technical composition и связанных successor-
+  артефактов;
+- immutable Human Decision, pricing и price-application contracts с точными
+  path/SHA bindings, no-overwrite и закрытыми downstream-флагами;
+- invoice/quote workflows: CSV/XLSX preflight, генерация и инспекция локальных
+  DRAFT-документов, включая canonical copy-and-fill для Invoice 519;
+- схемы, runbooks и тесты для воспроизводимой проверки каждого этапа;
+- CLI-калькулятор с batch- и interactive-режимами.
 
-- formatting with `black`
-- linting with `ruff`
-- type checking with `mypy`
-- testing with `pytest`
-- coverage with `pytest-cov`
-- enforced **100% coverage**
-- pre-commit hooks
-- GitHub Actions on `push` and `pull_request`
+Подробные правила автономной работы Codex и границы разрешений находятся в
+`AGENTS.md`; конкретные контракты и команды — в `docs/`.
 
-### Checks on Windows
+## Структура
 
-Run project checks through the local virtual environment:
+- `scripts/` — builders, validators, publishers, checked launchers и document
+  generators;
+- `schemas/` — закрытые JSON Schema для case-scoped артефактов;
+- `tests/` — unit, integration, contract и safety regressions;
+- `docs/` — runbooks, design/acceptance notes и handoff-документы;
+- `src/` — исходный CLI-калькулятор.
+
+## Quality gates
+
+Основные проверки: `pytest` с обязательным покрытием `100%`, Ruff,
+Black `--check`, MyPy, `git diff --check`, pre-commit hooks и GitHub Actions.
+
+На Windows канонический локальный runner:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m black --check .
-.\.venv\Scripts\python.exe -m mypy src tests
+# Быстрые статические проверки без pytest
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode fast
+
+# Полный gate: pytest, MyPy, Ruff, Black --check и git diff --check
+.\.venv\Scripts\python.exe .\scripts\run_codex_finish_checks.py --mode full
 ```
 
-## Usage
+Для узкой проверки конкретного контура используется targeted pytest; перед
+commit/push для code changes применяется полный gate согласно `AGENTS.md` и
+соответствующему runbook.
 
-### Help
+## Legacy CLI-калькулятор
+
+### Справка
 
 ```bash
 python -m src.main --help
 ```
 
-### Batch Mode
+### Batch mode
 
 ```bash
 python -m src.main batch <file>
 ```
 
-Run operations from a file (one per line: `op a b`). Blank lines and lines starting with `#` are ignored. Stops on first invalid line with exit code 1.
+Файл содержит по одной операции `op a b` в строке. Пустые строки и строки с
+`#` игнорируются; первая некорректная операция завершает команду с кодом 1.
 
-**Example input file (`commands.txt`):**
+Пример `commands.txt`:
 ```text
 add 10 5
 mul 3 7
@@ -61,19 +82,20 @@ mul 3 7
 div 20 4
 ```
 
-**Expected output:**
+Ожидаемый вывод:
 ```text
 add 10 5 = 15
 multiply 3 7 = 21
 divide 20 4 = 5
 ```
 
-### Interactive Mode
+### Interactive mode
 
 ```bash
 python -m src.main interactive
 ```
 
-Commands: `add`, `sub`, `mul`, `div`, `pow`, `mod`, `history`, `history export <filepath>`, `clear`, `help`, `exit`
+Команды: `add`, `sub`, `mul`, `div`, `pow`, `mod`, `history`,
+`history export <filepath>`, `clear`, `help`, `exit`.
 
-Invalid input (unknown command, invalid number, division by zero) prints an error and continues, not exit.
+Некорректный ввод выводит ошибку, но не завершает interactive-режим.
