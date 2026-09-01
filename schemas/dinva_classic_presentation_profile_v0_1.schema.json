@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/dinva_classic_presentation_profile_v0_1.schema.json",
+  "title": "DINVA classic quote or invoice presentation profile v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "document_family",
+    "artifact_status",
+    "reference_provenance",
+    "presentation_contract",
+    "presentation_contract_fingerprint",
+    "approval_provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "dinva_classic_presentation_profile.v0.1"
+    },
+    "profile_id": {
+      "const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
+    },
+    "document_family": {
+      "const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
+    },
+    "artifact_status": {
+      "enum": ["DRAFT_PROFILE_CANDIDATE", "IMMUTABLE_APPROVED_PROFILE"]
+    },
+    "reference_provenance": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "expected_sha256", "actual_sha256", "role"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "expected_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "actual_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "role": {
+            "enum": [
+              "CLASSIC_FAMILY_EVIDENCE",
+              "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE"
+            ]
+          }
+        }
+      }
+    },
+    "presentation_contract": {"$ref": "#/$defs/presentation_contract"},
+    "presentation_contract_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "approval_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "authority",
+        "approval_id",
+        "approved_at",
+        "approved_contract_fingerprint"
+      ],
+      "properties": {
+        "status": {"enum": ["DRAFT_UNAPPROVED", "APPROVED"]},
+        "authority": {"type": ["string", "null"]},
+        "approval_id": {"type": ["string", "null"]},
+        "approved_at": {"type": ["string", "null"]},
+        "approved_contract_fingerprint": {
+          "anyOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["type", "value", "tint"],
+      "properties": {
+        "type": {"enum": ["rgb", "indexed", "theme"]},
+        "value": {"type": ["string", "integer"]},
+        "tint": {"type": "number"}
+      }
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["font", "fill", "border", "alignment", "number_format"],
+      "properties": {
+        "font": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "size", "bold", "italic", "underline", "color"],
+          "properties": {
+            "name": {"const": "Times New Roman"},
+            "size": {"type": "number", "exclusiveMinimum": 0},
+            "bold": {"type": "boolean"},
+            "italic": {"type": "boolean"},
+            "underline": {"type": ["string", "null"]},
+            "color": {"$ref": "#/$defs/color"}
+          }
+        },
+        "fill": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "foreground"],
+          "properties": {
+            "type": {"type": ["string", "null"]},
+            "foreground": {"$ref": "#/$defs/color"}
+          }
+        },
+        "border": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["left", "right", "top", "bottom"],
+          "properties": {
+            "left": {"type": ["string", "null"]},
+            "right": {"type": ["string", "null"]},
+            "top": {"type": ["string", "null"]},
+            "bottom": {"type": ["string", "null"]}
+          }
+        },
+        "alignment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["horizontal", "vertical", "wrap_text", "shrink_to_fit"],
+          "properties": {
+            "horizontal": {"type": ["string", "null"]},
+            "vertical": {"type": ["string", "null"]},
+            "wrap_text": {"type": "boolean"},
+            "shrink_to_fit": {"type": "boolean"}
+          }
+        },
+        "number_format": {"type": "string"}
+      }
+    },
+    "presentation_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "workbook",
+        "layout",
+        "styles",
+        "fixed_blocks",
+        "assets",
+        "print",
+        "formulas",
+        "package",
+        "variable_elements",
+        "optional_elements"
+      ],
+      "properties": {
+        "contract_version": {"const": "dinva_classic_presentation_contract.v0.1"},
+        "workbook": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sheets", "active_sheet_index", "extra_sheets_allowed"],
+          "properties": {
+            "sheets": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "role"],
+                "properties": {
+                  "name": {"type": "string", "minLength": 1},
+                  "role": {"const": "PRIMARY_DOCUMENT"}
+                }
+              }
+            },
+            "active_sheet_index": {"const": 0},
+            "extra_sheets_allowed": {"const": false}
+          }
+        },
+        "layout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "table_columns",
+            "column_widths",
+            "company_rows",
+            "metadata_rows",
+            "table_header_row",
+            "first_item_row",
+            "family_evidence_first_item_rows",
+            "section_row",
+            "item_capacity",
+            "total_row",
+            "vat_row",
+            "amount_words_row",
+            "terms_rows",
+            "signature_rows",
+            "final_row",
+            "item_height_rule",
+            "merged_cells"
+          ],
+          "properties": {
+            "table_columns": {
+              "const": {
+                "position": "B",
+                "name": "C",
+                "unit": "D",
+                "quantity": "E",
+                "technical_composition": "F",
+                "enclosure": "G",
+                "unit_price": "H",
+                "line_total": "I"
+              }
+            },
+            "column_widths": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["B", "C", "D", "E", "F", "G", "H", "I"],
+              "properties": {
+                "B": {"type": "number"}, "C": {"type": "number"},
+                "D": {"type": "number"}, "E": {"type": "number"},
+                "F": {"type": "number"}, "G": {"type": "number"},
+                "H": {"type": "number"}, "I": {"type": "number"}
+              }
+            },
+            "company_rows": {"const": [2, 3, 4, 5, 6]},
+            "metadata_rows": {"const": [9, 10, 11, 12, 13]},
+            "table_header_row": {"const": 15},
+            "first_item_row": {"type": "integer", "minimum": 1},
+            "family_evidence_first_item_rows": {
+              "type": "array",
+              "minItems": 2,
+              "items": {"type": "integer", "minimum": 1}
+            },
+            "section_row": {"type": "integer", "minimum": 1},
+            "item_capacity": {"type": "integer", "minimum": 1},
+            "total_row": {"type": "integer", "minimum": 1},
+            "vat_row": {"type": "integer", "minimum": 1},
+            "amount_words_row": {"type": "integer", "minimum": 1},
+            "terms_rows": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "items": {"type": "integer", "minimum": 1}
+            },
+            "signature_rows": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {"type": "integer", "minimum": 1}
+            },
+            "final_row": {"type": "integer", "minimum": 1},
+            "item_height_rule": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["base", "characters_per_increment", "increment", "maximum"],
+              "properties": {
+                "base": {"type": "number"},
+                "characters_per_increment": {"type": "integer", "minimum": 1},
+                "increment": {"type": "number"},
+                "maximum": {"type": "number"}
+              }
+            },
+            "merged_cells": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mode", "ranges"],
+              "properties": {
+                "mode": {"const": "EXACT"},
+                "ranges": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "styles": {
+          "type": "object",
+          "minProperties": 8,
+          "additionalProperties": {"$ref": "#/$defs/style"}
+        },
+        "fixed_blocks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "company", "warning", "metadata_anchors", "table_headers",
+            "section_label_prefix", "total_label", "guard_lines"
+          ],
+          "properties": {
+            "company": {"type": "object", "additionalProperties": {"type": "string"}},
+            "warning": {"const": {"G9": "ВНИМАНИЕ!"}},
+            "metadata_anchors": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["left", "right"],
+              "properties": {
+                "left": {
+                  "const": ["B9", "B10", "B11", "B12", "B13"]
+                },
+                "right": {
+                  "const": ["G9", "G10", "G11", "G12", "G13"]
+                }
+              }
+            },
+            "table_headers": {"type": "object", "minProperties": 8},
+            "section_label_prefix": {"type": "string", "minLength": 1},
+            "total_label": {"const": "ИТОГО"},
+            "guard_lines": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["specification", "no_send", "review_date"],
+              "properties": {
+                "specification": {"type": "string", "minLength": 1},
+                "no_send": {"type": "string", "minLength": 1},
+                "review_date": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        },
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "asset_id", "media_type", "sha256", "data_base64",
+              "source_reference_sha256s", "placement"
+            ],
+            "properties": {
+              "asset_id": {"const": "DINVA_CLASSIC_LOGO_V0_1"},
+              "media_type": {"const": "image/png"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "data_base64": {"type": "string", "minLength": 1},
+              "source_reference_sha256s": {
+                "type": "array", "minItems": 1,
+                "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              },
+              "placement": {
+                "type": "object", "additionalProperties": false,
+                "required": ["anchor_type", "from", "extent"],
+                "properties": {
+                  "anchor_type": {"const": "ONE_CELL"},
+                  "from": {"$ref": "#/$defs/anchor"},
+                  "extent": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["cx", "cy"],
+                    "properties": {
+                      "cx": {"type": "integer", "minimum": 1},
+                      "cy": {"type": "integer", "minimum": 1}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "print": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "paper_size", "orientation", "scale", "fit_to_page",
+            "fit_to_height", "margins", "print_area_columns"
+          ],
+          "properties": {
+            "paper_size": {"const": "9"},
+            "orientation": {"const": "portrait"},
+            "scale": {"type": "integer"},
+            "fit_to_page": {"type": "boolean"},
+            "fit_to_height": {"type": "integer"},
+            "margins": {
+              "type": "object", "additionalProperties": false,
+              "required": ["left", "right", "top", "bottom", "header", "footer"],
+              "properties": {
+                "left": {"type": "number"}, "right": {"type": "number"},
+                "top": {"type": "number"}, "bottom": {"type": "number"},
+                "header": {"type": "number"}, "footer": {"type": "number"}
+              }
+            },
+            "print_area_columns": {"const": "B:I"}
+          }
+        },
+        "formulas": {
+          "type": "object", "additionalProperties": false,
+          "required": ["line_total_template", "grand_total_template", "calc_chain_policy"],
+          "properties": {
+            "line_total_template": {"type": "string", "minLength": 1},
+            "grand_total_template": {"type": "string", "minLength": 1},
+            "calc_chain_policy": {"const": "OPTIONAL_BUT_MUST_BE_CONSISTENT"}
+          }
+        },
+        "package": {
+          "type": "object", "additionalProperties": false,
+          "required": ["forbidden_part_prefixes", "forbidden_part_suffixes", "external_relationships_allowed"],
+          "properties": {
+            "forbidden_part_prefixes": {"type": "array", "items": {"type": "string"}},
+            "forbidden_part_suffixes": {"type": "array", "items": {"type": "string"}},
+            "external_relationships_allowed": {"const": false}
+          }
+        },
+        "variable_elements": {"type": "array", "items": {"type": "string"}},
+        "optional_elements": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["column", "column_offset", "row", "row_offset"],
+      "properties": {
+        "column": {"type": "integer", "minimum": 0},
+        "column_offset": {"type": "integer", "minimum": 0},
+        "row": {"type": "integer", "minimum": 0},
+        "row_offset": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
