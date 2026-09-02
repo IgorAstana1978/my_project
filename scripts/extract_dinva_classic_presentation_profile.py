@@ -24,6 +24,55 @@ PROFILE_SCHEMA_VERSION = "dinva_classic_presentation_profile.v0.1"
 PROFILE_ID = "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
 CONTRACT_VERSION = "dinva_classic_presentation_contract.v0.1"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+UTC_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
+DECISION_SCHEMA_VERSION = "dinva_classic_canonical_logo_human_decision.v0.1"
+DECISION_ARTIFACT_TYPE = "IMMUTABLE_HUMAN_DECISION_CAPTURE"
+DECISION_ID = "IGOR-DINVA-CLASSIC-CANONICAL-LOGO-20260901-001"
+DECISION_STATUS = "IGOR_DINVA_CLASSIC_CANONICAL_LOGO_APPROVED_NOT_APPLIED"
+DECISION_AUTHORITY = "IGOR_DIRECT_HUMAN_APPROVAL"
+DECISION_SCOPE = "BRAND_LOGO_ONLY"
+DECISION_APPLICATION_STATUS = "NOT_APPLIED_TO_PROFILE"
+APPROVED_CANONICAL_LOGO_DECISION_SHA256 = (
+    "e7c043f19b7eb8606f59dd8e7de06b29ca4305cc1fe2362ecb93767dd589f63b"
+)
+CANONICAL_LOGO_RAW_SHA256 = (
+    "28a6a59ae0a5ca274c206c70545f70b333cac0276a7c4dcbebbf9156f88e0fa8"
+)
+CANONICAL_LOGO_PIXEL_FINGERPRINT = (
+    "81d979c4c158452cca8e3b40d23a4fd321538dfcef238b6f8133beb33a122846"
+)
+RUNTIME_DIFFERING_LOGO_RAW_SHA256 = (
+    "18e0f9446c72f8aa80ea833df07c2e42eb830770a0186decc476c5f948987301"
+)
+DECISION_SAFETY = {
+    "human_decision_recorded": True,
+    "canonical_logo_approved": True,
+    "profile_approval_authorized": False,
+    "profile_generation_authorized": False,
+    "profile_publication_authorized": False,
+    "runtime_template_modification_authorized": False,
+    "quote_generation_authorized": False,
+    "invoice_generation_authorized": False,
+    "xlsx_generation_authorized": False,
+    "pdf_generation_authorized": False,
+    "client_send_authorized": False,
+    "procurement_authorized": False,
+    "reserve_authorized": False,
+    "prepayment_authorized": False,
+    "payment_authorized": False,
+    "production_authorized": False,
+    "downstream_authorized": False,
+}
+DECISION_PUBLICATION_CONTROL = {
+    "immutable": True,
+    "no_overwrite": True,
+    "new_directory_required": True,
+    "atomic_publication": True,
+    "input_toctou_recheck_required": True,
+    "final_strict_json_reread_required": True,
+    "rollback_on_failure": True,
+    "authorization_token_required": True,
+}
 SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
 NS = {"main": SPREADSHEET_NS, "xdr": DRAWING_NS}
@@ -55,6 +104,7 @@ class FamilyEvidence:
     header_row: int
     first_item_row: int
     logo_sha256: str
+    logo_raw: bytes
 
 
 @dataclass(frozen=True)
@@ -62,6 +112,13 @@ class RuntimeEvidence:
     path: Path
     sha256: str
     contract: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CanonicalLogoDecisionEvidence:
+    path: Path
+    sha256: str
+    payload: Mapping[str, Any]
 
 
 def fail(message: str) -> NoReturn:
@@ -93,6 +150,34 @@ def canonical_json(value: object) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        require(key not in result, f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> None:
+    require(set(value) == expected, f"{label} fields mismatch")
+
+
+def mapping(value: object, label: str) -> Mapping[str, Any]:
+    require(isinstance(value, Mapping), f"{label} must be an object")
+    return cast(Mapping[str, Any], value)
+
+
+def load_strict_json(raw: bytes, label: str) -> Mapping[str, Any]:
+    try:
+        text = raw.decode("utf-8")
+        value = json.loads(text, object_pairs_hook=reject_duplicate_keys)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProfileExtractionError(
+            f"{label} is not strict UTF-8 JSON: {exc}"
+        ) from exc
+    return mapping(value, label)
 
 
 def contract_fingerprint(contract: Mapping[str, Any]) -> str:
@@ -281,7 +366,9 @@ def load_family_evidence(reference: ReferenceInput) -> FamilyEvidence:
         workbook.close()
     logo, _ = exact_asset(path)
     require(sha256_bytes(path.read_bytes()) == digest, "classic reference changed")
-    return FamilyEvidence(path, digest, table_header, first_item, sha256_bytes(logo))
+    return FamilyEvidence(
+        path, digest, table_header, first_item, sha256_bytes(logo), logo
+    )
 
 
 def find_label_row(worksheet: Any, column: str, label: str) -> int:
@@ -517,9 +604,282 @@ def load_runtime_evidence(reference: ReferenceInput) -> RuntimeEvidence:
     return RuntimeEvidence(path, digest, runtime_contract(path, digest))
 
 
+def validate_decision_source_binding_shape(binding: Mapping[str, Any]) -> None:
+    exact_keys(
+        binding,
+        {
+            "label",
+            "role",
+            "path",
+            "expected_workbook_sha256",
+            "actual_workbook_sha256",
+            "media_part_path",
+            "expected_logo_raw_sha256",
+            "actual_logo_raw_sha256",
+            "normalized_pixel_fingerprint",
+            "native_dimensions",
+            "decoded_mode",
+        },
+        "canonical-logo decision source binding",
+    )
+    require(
+        isinstance(binding["label"], str) and bool(binding["label"]),
+        "canonical-logo decision source label mismatch",
+    )
+    require(
+        binding["role"]
+        in {"CLASSIC_FAMILY_EVIDENCE", "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE"},
+        "canonical-logo decision source role mismatch",
+    )
+    require(
+        isinstance(binding["path"], str) and bool(binding["path"]),
+        "canonical-logo decision source path mismatch",
+    )
+    for name in (
+        "expected_workbook_sha256",
+        "actual_workbook_sha256",
+        "expected_logo_raw_sha256",
+        "actual_logo_raw_sha256",
+        "normalized_pixel_fingerprint",
+    ):
+        require(
+            isinstance(binding[name], str)
+            and SHA256_RE.fullmatch(cast(str, binding[name])) is not None,
+            f"canonical-logo decision {name} mismatch",
+        )
+    require(
+        binding["expected_workbook_sha256"] == binding["actual_workbook_sha256"],
+        "canonical-logo decision workbook SHA binding mismatch",
+    )
+    require(
+        binding["expected_logo_raw_sha256"] == binding["actual_logo_raw_sha256"],
+        "canonical-logo decision logo SHA binding mismatch",
+    )
+    require(
+        binding["media_part_path"] == "xl/media/image1.png",
+        "canonical-logo decision media part mismatch",
+    )
+    dimensions = binding["native_dimensions"]
+    require(
+        isinstance(dimensions, list)
+        and len(dimensions) == 2
+        and all(type(value) is int and value > 0 for value in dimensions),
+        "canonical-logo decision dimensions mismatch",
+    )
+    require(
+        binding["decoded_mode"] in {"RGB", "RGBA"},
+        "canonical-logo decision decoded mode mismatch",
+    )
+
+
+def validate_decision_payload(payload: Mapping[str, Any]) -> None:
+    exact_keys(
+        payload,
+        {
+            "schema_version",
+            "artifact_type",
+            "decision_id",
+            "status",
+            "authority",
+            "approval_scope",
+            "canonical_logo_application_status",
+            "created_at_utc",
+            "source_bindings",
+            "canonical_logo_decision",
+            "runtime_template_policy",
+            "safety",
+            "publication_control",
+        },
+        "canonical-logo Human Decision",
+    )
+    exact_top_level = {
+        "schema_version": DECISION_SCHEMA_VERSION,
+        "artifact_type": DECISION_ARTIFACT_TYPE,
+        "decision_id": DECISION_ID,
+        "status": DECISION_STATUS,
+        "authority": DECISION_AUTHORITY,
+        "approval_scope": DECISION_SCOPE,
+        "canonical_logo_application_status": DECISION_APPLICATION_STATUS,
+    }
+    for name, expected in exact_top_level.items():
+        require(
+            payload[name] == expected,
+            f"canonical-logo Human Decision {name} mismatch",
+        )
+    require(
+        isinstance(payload["created_at_utc"], str)
+        and UTC_TIMESTAMP_RE.fullmatch(cast(str, payload["created_at_utc"]))
+        is not None,
+        "canonical-logo Human Decision created_at_utc mismatch",
+    )
+    canonical = mapping(payload["canonical_logo_decision"], "canonical logo decision")
+    require(
+        canonical
+        == {
+            "approved_variant": "A_FAMILY_INVOICE519",
+            "authoritative_brand_source": "CLASSIC_FAMILY_EMBEDDED_LOGO",
+            "media_part_path": "xl/media/image1.png",
+            "raw_sha256": CANONICAL_LOGO_RAW_SHA256,
+            "normalized_pixel_fingerprint": CANONICAL_LOGO_PIXEL_FINGERPRINT,
+            "native_dimensions": [200, 68],
+            "decoded_mode": "RGB",
+        },
+        "canonical logo decision mismatch",
+    )
+    runtime_policy = mapping(
+        payload["runtime_template_policy"], "runtime template policy"
+    )
+    require(
+        runtime_policy
+        == {
+            "template_id": "capacity100_tuned_v4",
+            "permitted_role": "RUNTIME_GEOMETRY_STYLE_LAYOUT_SOURCE_ONLY",
+            "authoritative_brand_logo_source": False,
+            "differing_logo_raw_sha256": RUNTIME_DIFFERING_LOGO_RAW_SHA256,
+        },
+        "canonical-logo Human Decision runtime policy mismatch",
+    )
+    require(
+        mapping(payload["safety"], "canonical-logo decision safety") == DECISION_SAFETY,
+        "canonical-logo Human Decision safety mismatch",
+    )
+    require(
+        mapping(payload["publication_control"], "decision publication control")
+        == DECISION_PUBLICATION_CONTROL,
+        "canonical-logo Human Decision publication control mismatch",
+    )
+    bindings = payload["source_bindings"]
+    require(
+        isinstance(bindings, list) and len(bindings) == 4,
+        "canonical-logo Human Decision source binding count mismatch",
+    )
+    normalized_bindings = [
+        mapping(item, "canonical-logo decision source binding")
+        for item in cast(list[object], bindings)
+    ]
+    for binding in normalized_bindings:
+        validate_decision_source_binding_shape(binding)
+    require(
+        len({cast(str, item["label"]) for item in normalized_bindings}) == 4,
+        "canonical-logo Human Decision source labels are not unique",
+    )
+    roles = [item["role"] for item in normalized_bindings]
+    require(
+        roles.count("CLASSIC_FAMILY_EVIDENCE") == 3
+        and roles.count("CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE") == 1,
+        "canonical-logo Human Decision evidence role set mismatch",
+    )
+
+
+def load_canonical_logo_decision(
+    reference: ReferenceInput,
+) -> CanonicalLogoDecisionEvidence:
+    path = reference.path.resolve(strict=True)
+    require(
+        not is_inside_project(path), "canonical-logo Human Decision must be outside Git"
+    )
+    require(
+        SHA256_RE.fullmatch(reference.expected_sha256) is not None,
+        "invalid canonical-logo Human Decision expected SHA-256",
+    )
+    require(
+        reference.expected_sha256 == APPROVED_CANONICAL_LOGO_DECISION_SHA256,
+        "canonical-logo Human Decision SHA-256 is not the approved artifact SHA-256",
+    )
+    raw = path.read_bytes()
+    digest = sha256_bytes(raw)
+    require(
+        digest == reference.expected_sha256,
+        "canonical-logo Human Decision SHA-256 mismatch",
+    )
+    payload = load_strict_json(raw, "canonical-logo Human Decision")
+    validate_decision_payload(payload)
+    require(path.read_bytes() == raw, "canonical-logo Human Decision changed")
+    return CanonicalLogoDecisionEvidence(path, digest, payload)
+
+
+def validate_decision_source_bindings(
+    decision: CanonicalLogoDecisionEvidence,
+    family: Sequence[FamilyEvidence],
+    runtime: Sequence[RuntimeEvidence],
+) -> None:
+    bindings = cast(list[Mapping[str, Any]], decision.payload["source_bindings"])
+
+    def identity(binding: Mapping[str, Any]) -> tuple[str, str, str, str, str, str]:
+        return (
+            cast(str, binding["role"]),
+            cast(str, binding["path"]),
+            cast(str, binding["expected_workbook_sha256"]),
+            cast(str, binding["actual_workbook_sha256"]),
+            cast(str, binding["expected_logo_raw_sha256"]),
+            cast(str, binding["actual_logo_raw_sha256"]),
+        )
+
+    actual = sorted(identity(binding) for binding in bindings)
+    expected = sorted(
+        [
+            (
+                "CLASSIC_FAMILY_EVIDENCE",
+                str(item.path),
+                item.sha256,
+                item.sha256,
+                item.logo_sha256,
+                item.logo_sha256,
+            )
+            for item in family
+        ]
+        + [
+            (
+                "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE",
+                str(item.path),
+                item.sha256,
+                item.sha256,
+                cast(str, item.contract["assets"][0]["sha256"]),
+                cast(str, item.contract["assets"][0]["sha256"]),
+            )
+            for item in runtime
+        ]
+    )
+    require(actual == expected, "canonical-logo Human Decision source binding mismatch")
+    canonical = mapping(
+        decision.payload["canonical_logo_decision"], "canonical logo decision"
+    )
+    runtime_policy = mapping(
+        decision.payload["runtime_template_policy"], "runtime template policy"
+    )
+    for binding in bindings:
+        if binding["role"] == "CLASSIC_FAMILY_EVIDENCE":
+            require(
+                binding["actual_logo_raw_sha256"] == canonical["raw_sha256"]
+                and binding["normalized_pixel_fingerprint"]
+                == canonical["normalized_pixel_fingerprint"]
+                and binding["native_dimensions"] == canonical["native_dimensions"]
+                and binding["decoded_mode"] == canonical["decoded_mode"],
+                "canonical-logo Human Decision family logo binding mismatch",
+            )
+        else:
+            require(
+                binding["actual_logo_raw_sha256"]
+                == runtime_policy["differing_logo_raw_sha256"],
+                "canonical-logo Human Decision runtime logo binding mismatch",
+            )
+
+
+def contract_with_family_logo(
+    contract: Mapping[str, Any], logo_raw: bytes, family_sha256s: Sequence[str]
+) -> dict[str, Any]:
+    result = cast(dict[str, Any], json.loads(canonical_json(contract).decode("utf-8")))
+    asset = cast(dict[str, Any], result["assets"][0])
+    asset["sha256"] = sha256_bytes(logo_raw)
+    asset["data_base64"] = base64.b64encode(logo_raw).decode("ascii")
+    asset["source_reference_sha256s"] = sorted(family_sha256s)
+    return result
+
+
 def extract_profile(
     references: Sequence[ReferenceInput],
     runtime_templates: Sequence[ReferenceInput],
+    canonical_logo_human_decision: ReferenceInput | None = None,
 ) -> dict[str, Any]:
     require(len(references) >= 2, "at least two classic family references are required")
     require(bool(runtime_templates), "certified runtime template evidence is required")
@@ -529,19 +889,43 @@ def extract_profile(
         "classic family header geometry lacks consensus",
     )
     require(
-        len({item.logo_sha256 for item in family}) == 1,
+        len({item.logo_raw for item in family}) == 1,
         "classic family logo evidence lacks consensus",
     )
     family_logo_sha256 = family[0].logo_sha256
+    family_logo_raw = family[0].logo_raw
     runtime = [load_runtime_evidence(reference) for reference in runtime_templates]
-    require(
-        all(
-            item.contract["assets"][0]["sha256"] == family_logo_sha256
-            for item in runtime
-        ),
-        "certified runtime template logo differs from classic family logo evidence",
+    logo_mismatch = any(
+        item.contract["assets"][0]["sha256"] != family_logo_sha256 for item in runtime
     )
-    contracts = {canonical_json(item.contract) for item in runtime}
+    decision = (
+        load_canonical_logo_decision(canonical_logo_human_decision)
+        if canonical_logo_human_decision is not None
+        else None
+    )
+    if logo_mismatch:
+        require(
+            decision is not None,
+            "runtime logo differs from classic family logo evidence; "
+            "canonical-logo Human Decision is required",
+        )
+    if decision is not None:
+        validate_decision_source_bindings(decision, family, runtime)
+        require(
+            family_logo_sha256 == CANONICAL_LOGO_RAW_SHA256,
+            "classic family logo does not match approved canonical logo",
+        )
+        candidate_contracts = [
+            contract_with_family_logo(
+                item.contract,
+                family_logo_raw,
+                [evidence.sha256 for evidence in family],
+            )
+            for item in runtime
+        ]
+    else:
+        candidate_contracts = [item.contract for item in runtime]
+    contracts = {canonical_json(item) for item in candidate_contracts}
     require(
         len(contracts) == 1,
         "certified runtime template geometry/style lacks consensus",
@@ -568,6 +952,19 @@ def extract_profile(
         }
         for item in runtime
     ]
+    if decision is not None:
+        require(
+            sha256_bytes(decision.path.read_bytes()) == decision.sha256,
+            "canonical-logo Human Decision changed",
+        )
+        provenance.append(
+            {
+                "path": str(decision.path),
+                "expected_sha256": decision.sha256,
+                "actual_sha256": decision.sha256,
+                "role": "CANONICAL_LOGO_HUMAN_DECISION",
+            }
+        )
     provenance.sort(
         key=lambda item: (item["role"], item["actual_sha256"], item["path"])
     )
@@ -625,6 +1022,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reference-sha256", action="append", required=True)
     parser.add_argument("--runtime-template", action="append", type=Path, required=True)
     parser.add_argument("--runtime-template-sha256", action="append", required=True)
+    parser.add_argument("--canonical-logo-human-decision", type=Path)
+    parser.add_argument("--canonical-logo-human-decision-sha256")
     parser.add_argument("--output-profile", type=Path, required=True)
     return parser.parse_args(argv)
 
@@ -634,6 +1033,18 @@ def paired(paths: list[Path], hashes: list[str], label: str) -> list[ReferenceIn
     return [
         ReferenceInput(path, digest) for path, digest in zip(paths, hashes, strict=True)
     ]
+
+
+def optional_reference(
+    path: Path | None, digest: str | None, label: str
+) -> ReferenceInput | None:
+    require(
+        (path is None) == (digest is None),
+        f"{label} path and SHA-256 must be supplied together",
+    )
+    if path is None:
+        return None
+    return ReferenceInput(path, cast(str, digest))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -649,6 +1060,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cast(list[Path], args.runtime_template),
                 cast(list[str], args.runtime_template_sha256),
                 "runtime template",
+            ),
+            optional_reference(
+                cast(Path | None, args.canonical_logo_human_decision),
+                cast(str | None, args.canonical_logo_human_decision_sha256),
+                "canonical-logo Human Decision",
             ),
         )
         output = publish_profile(profile, cast(Path, args.output_profile))

@@ -18,9 +18,19 @@ Invoice/КП №637 и любое неизвестное семейство не
   Classic references доказывают принадлежность семейству и общие признаки;
   runtime template является единственным источником exact runtime geometry,
   styles, fixed blocks, formulas, merges, print contract и logo placement.
-  Runtime logo bytes принимаются только при exact SHA-256 совпадении с
-  consensus logo classic-family references; mismatch означает `HOLD` без
-  замены или нормализации asset. Эти роли не взаимозаменяемы. Результат всегда
+  При exact совпадении runtime logo SHA с consensus logo classic-family
+  references действует прежний путь без Human Decision. В v0.1 mismatch
+  разрешается только exact content-addressed published canonical-logo Human
+  Decision с SHA-256
+  `e7c043f19b7eb8606f59dd8e7de06b29ca4305cc1fe2362ecb93767dd589f63b`
+  и статусом
+  `IGOR_DINVA_CLASSIC_CANONICAL_LOGO_APPROVED_NOT_APPLIED`, который полностью
+  связан с фактически переданными family/runtime evidence. FAMILY остаётся
+  источником exact logo bytes; runtime template остаётся источником geometry,
+  styles, fixed blocks, formulas, merges, print contract и неизменённого logo
+  placement. PNG не resize/re-encode/re-save/reconstruct. Human Decision
+  остаётся `NOT_APPLIED_TO_PROFILE` source artifact и не является approval
+  presentation profile. Результат всегда
   `DRAFT_PROFILE_CANDIDATE / DRAFT_UNAPPROVED`.
 - Human Approval presentation profile выполняется отдельным будущим процессом,
   которого в v0.1 нет. Нельзя вручную подменять approval-поля.
@@ -50,19 +60,33 @@ directory уже существует, находится вне Git, а output-
   --reference-sha256 '<EXACT_SHA256_2>' `
   --runtime-template '<CERTIFIED_RUNTIME_TEMPLATE.xlsx>' `
   --runtime-template-sha256 '<EXACT_RUNTIME_TEMPLATE_SHA256>' `
+  --canonical-logo-human-decision '<IMMUTABLE_LOGO_DECISION.json>' `
+  --canonical-logo-human-decision-sha256 'e7c043f19b7eb8606f59dd8e7de06b29ca4305cc1fe2362ecb93767dd589f63b' `
   --output-profile '<NEW_OUTSIDE_GIT_PROFILE.json>'
 ```
 
-Успех означает только deterministic DRAFT candidate. Он не разрешает render,
-публикацию, изменение Excel, PDF или downstream.
+Оба `--canonical-logo-human-decision*` аргумента передаются вместе и нужны
+только для разрешения явно связанного logo mismatch; при exact logo match оба
+опускаются. Missing, invalid, substituted или не покрывающий весь exact набор
+evidence decision означает `HOLD`. Caller-supplied SHA от изменённого, пусть
+даже structurally/semantically valid JSON, не является approval provenance:
+supplied и actual SHA обязаны совпасть с указанным approved published SHA.
+Hardcoded filesystem path не требуется — одинаковые immutable bytes допустимы
+по другому path, который и записывается в provenance.
+
+Успех означает только deterministic DRAFT candidate. Реальная публикация даже
+такого DRAFT profile требует отдельного exact решения Игоря. Успех не разрешает
+approval presentation profile, render, изменение Excel, XLSX/PDF, client send
+или downstream.
 
 Read-only evidence для текущего v0.1 показал first item rows `16, 16, 17` у
 трёх classic-family references. Поэтому extractor не угадывает общий item row
 из family evidence. Certified runtime template `capacity100_tuned_v4` задаёт
 sheet `Счёт-КП шаблон`, header row `15`, section row `16`, first item row `17`,
 capacity `100`, exact `31` merged ranges и one-cell logo anchor. При нескольких
-runtime templates их канонические contracts должны полностью совпадать, иначе
-результат — `HOLD`.
+runtime templates после только явно разрешённой замены asset на FAMILY bytes
+их geometry/style/layout/formula/merge/print/placement contracts должны exact
+совпадать; любое иное различие или не связанный decision означает `HOLD`.
 
 ## Будущий controlled render
 

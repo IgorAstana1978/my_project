@@ -41,7 +41,8 @@
           "role": {
             "enum": [
               "CLASSIC_FAMILY_EVIDENCE",
-              "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE"
+              "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE",
+              "CANONICAL_LOGO_HUMAN_DECISION"
             ]
           }
         }
