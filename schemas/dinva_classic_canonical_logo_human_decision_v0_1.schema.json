@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/dinva_classic_canonical_logo_human_decision_v0_1.schema.json",
+  "title": "DINVA classic canonical logo Human Decision v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "decision_id",
+    "status",
+    "authority",
+    "approval_scope",
+    "canonical_logo_application_status",
+    "created_at_utc",
+    "source_bindings",
+    "canonical_logo_decision",
+    "runtime_template_policy",
+    "safety",
+    "publication_control"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "dinva_classic_canonical_logo_human_decision.v0.1"
+    },
+    "artifact_type": {
+      "const": "IMMUTABLE_HUMAN_DECISION_CAPTURE"
+    },
+    "decision_id": {
+      "const": "IGOR-DINVA-CLASSIC-CANONICAL-LOGO-20260901-001"
+    },
+    "status": {
+      "const": "IGOR_DINVA_CLASSIC_CANONICAL_LOGO_APPROVED_NOT_APPLIED"
+    },
+    "authority": {
+      "const": "IGOR_DIRECT_HUMAN_APPROVAL"
+    },
+    "approval_scope": {
+      "const": "BRAND_LOGO_ONLY"
+    },
+    "canonical_logo_application_status": {
+      "const": "NOT_APPLIED_TO_PROFILE"
+    },
+    "created_at_utc": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "source_bindings": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": {
+        "$ref": "#/$defs/source_binding"
+      }
+    },
+    "canonical_logo_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approved_variant",
+        "authoritative_brand_source",
+        "media_part_path",
+        "raw_sha256",
+        "normalized_pixel_fingerprint",
+        "native_dimensions",
+        "decoded_mode"
+      ],
+      "properties": {
+        "approved_variant": {
+          "const": "A_FAMILY_INVOICE519"
+        },
+        "authoritative_brand_source": {
+          "const": "CLASSIC_FAMILY_EMBEDDED_LOGO"
+        },
+        "media_part_path": {
+          "const": "xl/media/image1.png"
+        },
+        "raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "normalized_pixel_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "native_dimensions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "integer"}
+        },
+        "decoded_mode": {
+          "enum": ["RGB", "RGBA"]
+        }
+      }
+    },
+    "runtime_template_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "template_id",
+        "permitted_role",
+        "authoritative_brand_logo_source",
+        "differing_logo_raw_sha256"
+      ],
+      "properties": {
+        "template_id": {
+          "const": "capacity100_tuned_v4"
+        },
+        "permitted_role": {
+          "const": "RUNTIME_GEOMETRY_STYLE_LAYOUT_SOURCE_ONLY"
+        },
+        "authoritative_brand_logo_source": {
+          "const": false
+        },
+        "differing_logo_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "human_decision_recorded",
+        "canonical_logo_approved",
+        "profile_approval_authorized",
+        "profile_generation_authorized",
+        "profile_publication_authorized",
+        "runtime_template_modification_authorized",
+        "quote_generation_authorized",
+        "invoice_generation_authorized",
+        "xlsx_generation_authorized",
+        "pdf_generation_authorized",
+        "client_send_authorized",
+        "procurement_authorized",
+        "reserve_authorized",
+        "prepayment_authorized",
+        "payment_authorized",
+        "production_authorized",
+        "downstream_authorized"
+      ],
+      "properties": {
+        "human_decision_recorded": {"const": true},
+        "canonical_logo_approved": {"const": true},
+        "profile_approval_authorized": {"const": false},
+        "profile_generation_authorized": {"const": false},
+        "profile_publication_authorized": {"const": false},
+        "runtime_template_modification_authorized": {"const": false},
+        "quote_generation_authorized": {"const": false},
+        "invoice_generation_authorized": {"const": false},
+        "xlsx_generation_authorized": {"const": false},
+        "pdf_generation_authorized": {"const": false},
+        "client_send_authorized": {"const": false},
+        "procurement_authorized": {"const": false},
+        "reserve_authorized": {"const": false},
+        "prepayment_authorized": {"const": false},
+        "payment_authorized": {"const": false},
+        "production_authorized": {"const": false},
+        "downstream_authorized": {"const": false}
+      }
+    },
+    "publication_control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "immutable",
+        "no_overwrite",
+        "new_directory_required",
+        "atomic_publication",
+        "input_toctou_recheck_required",
+        "final_strict_json_reread_required",
+        "rollback_on_failure",
+        "authorization_token_required"
+      ],
+      "properties": {
+        "immutable": {"const": true},
+        "no_overwrite": {"const": true},
+        "new_directory_required": {"const": true},
+        "atomic_publication": {"const": true},
+        "input_toctou_recheck_required": {"const": true},
+        "final_strict_json_reread_required": {"const": true},
+        "rollback_on_failure": {"const": true},
+        "authorization_token_required": {"const": true}
+      }
+    }
+  },
+  "$defs": {
+    "source_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "role",
+        "path",
+        "expected_workbook_sha256",
+        "actual_workbook_sha256",
+        "media_part_path",
+        "expected_logo_raw_sha256",
+        "actual_logo_raw_sha256",
+        "normalized_pixel_fingerprint",
+        "native_dimensions",
+        "decoded_mode"
+      ],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "role": {
+          "enum": [
+            "CLASSIC_FAMILY_EVIDENCE",
+            "CERTIFIED_RUNTIME_TEMPLATE_EVIDENCE"
+          ]
+        },
+        "path": {"type": "string", "minLength": 1},
+        "expected_workbook_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actual_workbook_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "media_part_path": {"const": "xl/media/image1.png"},
+        "expected_logo_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "actual_logo_raw_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "normalized_pixel_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "native_dimensions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "integer"}
+        },
+        "decoded_mode": {"enum": ["RGB", "RGBA"]}
+      }
+    }
+  }
+}
