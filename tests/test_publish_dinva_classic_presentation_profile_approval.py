@@ -33,22 +33,34 @@ def publisher() -> ModuleType:
 
 
 def synthetic_case(tmp_path: Path, publisher: ModuleType) -> dict[str, Any]:
-    helpers = load_file(
-        "dinva_profile_approval_render_helpers",
-        ROOT / "tests" / "test_render_dinva_classic_quote_invoice.py",
+    extractor = load_file(
+        "dinva_profile_approval_extractor",
+        ROOT / "scripts" / "extract_dinva_classic_presentation_profile.py",
     )
-    case = helpers.make_case(tmp_path)
-    draft_path = case["profile_path"]
-    draft_raw = draft_path.read_bytes()
-    draft_sha = hashlib.sha256(draft_raw).hexdigest()
-    publisher.__dict__["REPO_ROOT"] = tmp_path / "synthetic-repo"
+    renderer = load_file(
+        "dinva_profile_approval_renderer",
+        ROOT / "scripts" / "render_dinva_classic_quote_invoice.py",
+    )
+    helpers = load_file(
+        "dinva_profile_approval_extractor_helpers",
+        ROOT / "tests" / "test_extract_dinva_classic_presentation_profile.py",
+    )
+    synthetic_repo = tmp_path / "synthetic-repo"
+    synthetic_repo.mkdir()
+    extractor.__dict__["PROJECT_ROOT"] = synthetic_repo
+    family, runtime = helpers.synthetic_inputs(tmp_path, extractor, renderer)
+    profile = extractor.extract_profile(family, runtime)
+    draft_path = tmp_path / "draft-profile.json"
+    draft_raw, draft_sha = write_payload(draft_path, profile)
+    publisher.__dict__["REPO_ROOT"] = synthetic_repo
     publisher.__dict__["DRAFT_PROFILE_SHA256"] = draft_sha
-    publisher.__dict__["APPROVED_CONTRACT_FINGERPRINT"] = case["profile"][
+    publisher.__dict__["APPROVED_CONTRACT_FINGERPRINT"] = profile[
         "presentation_contract_fingerprint"
     ]
     publisher.__dict__["utc_now"] = lambda: FIXED_APPROVED_AT
     return {
-        **case,
+        "profile": profile,
+        "renderer": renderer,
         "draft_path": draft_path,
         "draft_raw": draft_raw,
         "draft_sha": draft_sha,
@@ -77,7 +89,7 @@ def write_payload(path: Path, payload: dict[str, Any]) -> tuple[bytes, str]:
     return raw, hashlib.sha256(raw).hexdigest()
 
 
-def test_exact_draft_publishes_only_approved_state_and_renderer_accepts(
+def test_exact_draft_publishes_only_approved_state_and_successor_renderer_rejects_v01(
     tmp_path: Path, publisher: ModuleType
 ) -> None:
     assert (
@@ -133,10 +145,8 @@ def test_exact_draft_publishes_only_approved_state_and_renderer_accepts(
         path.suffix.casefold() in {".xlsx", ".pdf"} for path in output.parent.iterdir()
     )
     publisher.validate_against_schema(approved, publisher.load_profile_schema())
-    assert (
+    with pytest.raises(case["renderer"].RendererError, match="profile schema mismatch"):
         case["renderer"].validate_profile(approved, allow_test_profile=False)
-        == approved["presentation_contract"]
-    )
 
 
 def test_draft_sha_is_an_exact_content_addressed_boundary(

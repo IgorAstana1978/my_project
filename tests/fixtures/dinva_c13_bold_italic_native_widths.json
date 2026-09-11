@@ -1,0 +1,2143 @@
+{
+  "schema_version": "dinva_native_horizontal_text_measurements.v0.1",
+  "font": {
+    "name": "Times New Roman",
+    "size": 14,
+    "bold": true,
+    "italic": true
+  },
+  "font_source": {
+    "path": "C:\\Windows\\Fonts\\timesbi.ttf",
+    "sha256": "3a29d114cb5229e8dbda5bef6c69be4a210a13b7277de4d66e9fc86963226f6c"
+  },
+  "engine": {
+    "name": "Microsoft Excel",
+    "version": "16.0",
+    "build": 4678,
+    "method": "COLUMN_AUTOFIT_DIFFERENCE_20_60_WITH_0_75_PT_QUANTIZATION_UPPER_BOUND",
+    "quantization_pt": 0.75
+  },
+  "normal_font": {
+    "name": "Calibri",
+    "size": 11,
+    "maximum_digit_width_px": 7
+  },
+  "horizontal_padding_px": 5,
+  "line_break_display": "ZERO_ADVANCE_SINGLE_LINE",
+  "glyph_measurements": {
+    "41": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "88": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1263": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1220": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "8211": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1178": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1042": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1110": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "38": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "107": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "86": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1327": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1135": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1236": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1062": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "79": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1107": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1093": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1054": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1080": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1027": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "8226": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "82": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1112": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1175": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1053": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1237": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "8224": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1124": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1277": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "53": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "122": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1071": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "125": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "91": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1293": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1304": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1041": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "50": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1292": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1146": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1199": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1092": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1186": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "8208": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "54": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1030": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1310": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1294": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1318": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1280": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1273": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1285": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "74": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "8216": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1288": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1029": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1065": {
+      "width60_pt": 1014.75,
+      "upper_advance_pt": 16.33125,
+      "width20_pt": 362.25
+    },
+    "60": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "59": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1189": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "76": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "8209": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1223": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1241": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1102": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "78": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "69": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1122": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "8210": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1032": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1038": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1303": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1130": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1278": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1162": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1286": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1151": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1098": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1040": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "33": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1181": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "171": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1208": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1043": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "92": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1319": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1243": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1073": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1058": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "120": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1168": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "44": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "55": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1170": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1147": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1214": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "108": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1121": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1266": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1326": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "71": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1228": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1226": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1275": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "8222": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "8212": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "51": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "48": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1307": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "87": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "116": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1308": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "93": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "8213": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1119": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "75": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1306": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "45": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1066": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1142": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1235": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1125": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "40": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1056": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1050": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1298": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1299": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1095": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1229": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1260": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1196": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1129": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1287": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1245": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1254": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1077": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1176": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1197": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1324": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1244": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1281": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "58": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1156": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1203": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1284": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "97": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "100": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1060": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1137": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1039": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1212": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "8225": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "37": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1036": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "104": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1104": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1067": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "121": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1209": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1180": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1031": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1182": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1025": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "90": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1126": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1282": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "83": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1174": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1295": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1157": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1113": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "49": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1097": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1272": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1078": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1240": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "8215": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "66": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "94": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1219": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1048": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1210": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1155": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1127": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "8223": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1153": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1265": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "110": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1055": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "113": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1255": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "72": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "46": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1160": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1026": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1057": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1231": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1234": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1305": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1096": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1309": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "62": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1224": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "105": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1105": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1123": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "187": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "124": {
+      "width60_pt": 222.0,
+      "upper_advance_pt": 3.1125,
+      "width20_pt": 98.25
+    },
+    "1108": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1217": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1088": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1232": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "115": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "84": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "102": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1024": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1089": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1166": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1154": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1037": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1314": {
+      "width60_pt": 1014.75,
+      "upper_advance_pt": 16.33125,
+      "width20_pt": 362.25
+    },
+    "1274": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1323": {
+      "width60_pt": 968.25,
+      "upper_advance_pt": 15.5625,
+      "width20_pt": 346.5
+    },
+    "1264": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "65": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1271": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1276": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1315": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1239": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1246": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1248": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1194": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1316": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1259": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1261": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "106": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1289": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1204": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "101": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1249": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1106": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "63": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1325": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1084": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "89": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "117": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "98": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "8218": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1115": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1061": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1242": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "111": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1085": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1173": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "126": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1205": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "77": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1141": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1221": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1320": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "32": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1206": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1187": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1028": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1145": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1291": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1049": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1143": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1167": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1081": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1213": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1164": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1082": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "95": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1090": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1138": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1068": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1074": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "8214": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1128": {
+      "width60_pt": 968.25,
+      "upper_advance_pt": 15.5625,
+      "width20_pt": 346.5
+    },
+    "1120": {
+      "width60_pt": 1061.25,
+      "upper_advance_pt": 17.1,
+      "width20_pt": 378.0
+    },
+    "52": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "114": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1099": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1133": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1103": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1201": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1193": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1132": {
+      "width60_pt": 1200.75,
+      "upper_advance_pt": 19.425,
+      "width20_pt": 424.5
+    },
+    "1117": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "112": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1046": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1238": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "99": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1195": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1300": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1317": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1179": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "85": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1109": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1051": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1256": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1233": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "57": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1091": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "8221": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1202": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1267": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1118": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "119": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1279": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1313": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1190": {
+      "width60_pt": 1014.75,
+      "upper_advance_pt": 16.33125,
+      "width20_pt": 362.25
+    },
+    "1270": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1258": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "64": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1311": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1059": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1171": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "61": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "96": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1169": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1152": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "8219": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1252": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1188": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1086": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1227": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "109": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1087": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1302": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1172": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1064": {
+      "width60_pt": 1014.75,
+      "upper_advance_pt": 16.33125,
+      "width20_pt": 362.25
+    },
+    "1191": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1216": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "8470": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1035": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "39": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1184": {
+      "width60_pt": 781.5,
+      "upper_advance_pt": 12.45,
+      "width20_pt": 284.25
+    },
+    "1144": {
+      "width60_pt": 1014.75,
+      "upper_advance_pt": 16.33125,
+      "width20_pt": 362.25
+    },
+    "1200": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1070": {
+      "width60_pt": 968.25,
+      "upper_advance_pt": 15.5625,
+      "width20_pt": 346.5
+    },
+    "1222": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1100": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1290": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1114": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1131": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1140": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1069": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "1192": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1063": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1269": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1250": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1283": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1072": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1225": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "123": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "80": {
+      "width60_pt": 595.5,
+      "upper_advance_pt": 9.35625,
+      "width20_pt": 222.0
+    },
+    "42": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "43": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1150": {
+      "width60_pt": 1061.25,
+      "upper_advance_pt": 17.1,
+      "width20_pt": 378.0
+    },
+    "1218": {
+      "width60_pt": 874.5,
+      "upper_advance_pt": 13.9875,
+      "width20_pt": 315.75
+    },
+    "1253": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1297": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1211": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1034": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "1268": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1136": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1159": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1198": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1165": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1183": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1101": {
+      "width60_pt": 408.75,
+      "upper_advance_pt": 6.225,
+      "width20_pt": 160.5
+    },
+    "1163": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1185": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "67": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "8217": {
+      "width60_pt": 315.75,
+      "upper_advance_pt": 4.6875,
+      "width20_pt": 129.0
+    },
+    "1257": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "103": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1139": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1247": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "35": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1161": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1321": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1045": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1207": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "36": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1116": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "70": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1262": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "81": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "68": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1215": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1296": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1230": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1076": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1094": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1044": {
+      "width60_pt": 642.0,
+      "upper_advance_pt": 10.125,
+      "width20_pt": 237.75
+    },
+    "1079": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1322": {
+      "width60_pt": 1200.75,
+      "upper_advance_pt": 19.425,
+      "width20_pt": 424.5
+    },
+    "47": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "1148": {
+      "width60_pt": 1061.25,
+      "upper_advance_pt": 17.1,
+      "width20_pt": 378.0
+    },
+    "8220": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "118": {
+      "width60_pt": 455.25,
+      "upper_advance_pt": 7.0125,
+      "width20_pt": 175.5
+    },
+    "1083": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1134": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1251": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1052": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "73": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1033": {
+      "width60_pt": 828.0,
+      "upper_advance_pt": 13.21875,
+      "width20_pt": 300.0
+    },
+    "1149": {
+      "width60_pt": 735.0,
+      "upper_advance_pt": 11.6625,
+      "width20_pt": 269.25
+    },
+    "1075": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1177": {
+      "width60_pt": 362.25,
+      "upper_advance_pt": 5.45625,
+      "width20_pt": 144.75
+    },
+    "1111": {
+      "width60_pt": 269.25,
+      "upper_advance_pt": 3.91875,
+      "width20_pt": 113.25
+    },
+    "34": {
+      "width60_pt": 548.25,
+      "upper_advance_pt": 8.55,
+      "width20_pt": 207.0
+    },
+    "1301": {
+      "width60_pt": 688.5,
+      "upper_advance_pt": 10.89375,
+      "width20_pt": 253.5
+    },
+    "1158": {
+      "width60_pt": 36.75,
+      "upper_advance_pt": 0.01875,
+      "width20_pt": 36.75
+    },
+    "1047": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    },
+    "1312": {
+      "width60_pt": 921.75,
+      "upper_advance_pt": 14.79375,
+      "width20_pt": 330.75
+    },
+    "56": {
+      "width60_pt": 501.75,
+      "upper_advance_pt": 7.78125,
+      "width20_pt": 191.25
+    }
+  },
+  "calibration": {
+    "source": "canonical Invoice519 Лист1!C13:H13",
+    "corridor_width_pt": 804.0,
+    "required_upper_bound_pt": 697.74375,
+    "minimum_margin_pt": 102.50625,
+    "horizontal_padding_pt": 3.75,
+    "available_width_pt": 800.25
+  },
+  "raw_evidence_sha256": "f21cc0c88bbc6f5269e2194245cee578187fe9772ca4473699c08070002773a8"
+}

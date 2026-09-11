@@ -1,0 +1,682 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.local/dinva_classic_presentation_profile_v0_4.schema.json",
+  "title": "DINVA classic reusable dynamic presentation profile v0.4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "document_family",
+    "artifact_status",
+    "reference_provenance",
+    "presentation_contract",
+    "presentation_contract_fingerprint",
+    "approval_provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "dinva_classic_presentation_profile.v0.4"
+    },
+    "profile_id": {
+      "const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1_DYNAMIC_V0_4"
+    },
+    "document_family": {
+      "const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
+    },
+    "artifact_status": {
+      "enum": [
+        "DRAFT_PROFILE_CANDIDATE",
+        "IMMUTABLE_APPROVED_PROFILE"
+      ]
+    },
+    "reference_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "expected_sha256",
+          "actual_sha256",
+          "role"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "actual_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "presentation_contract": {
+      "$ref": "#/$defs/presentation_contract"
+    },
+    "presentation_contract_fingerprint": {
+      "$ref": "#/$defs/sha256"
+    },
+    "approval_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "authority",
+        "approval_id",
+        "approved_at",
+        "approved_contract_fingerprint"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "DRAFT_UNAPPROVED",
+            "APPROVED"
+          ]
+        },
+        "authority": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_contract_fingerprint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/sha256"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "column_rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "preferred",
+        "maximum",
+        "adaptive",
+        "preferred_chars",
+        "maximum_chars"
+      ],
+      "properties": {
+        "minimum": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "preferred": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "maximum": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "adaptive": {
+          "type": "boolean"
+        },
+        "preferred_chars": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maximum_chars": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "presentation_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "workbook",
+        "fixed_blocks",
+        "layout",
+        "styles",
+        "formulas",
+        "assets",
+        "package",
+        "print",
+        "optional_elements",
+        "variable_elements"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "dinva_classic_presentation_contract.v0.4"
+        },
+        "workbook": {
+          "type": "object",
+          "required": [
+            "sheets",
+            "active_sheet_index",
+            "extra_sheets_allowed"
+          ],
+          "properties": {
+            "sheets": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "role"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "role": {
+                    "const": "PRIMARY_DOCUMENT"
+                  }
+                }
+              }
+            },
+            "active_sheet_index": {
+              "const": 0
+            },
+            "extra_sheets_allowed": {
+              "const": false
+            }
+          }
+        },
+        "fixed_blocks": {
+          "type": "object"
+        },
+        "layout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "table_header_row",
+            "first_content_row",
+            "table_columns",
+            "column_width_rules",
+            "maximum_printable_width",
+            "row_height_rule",
+            "bottom_layout",
+            "pagination",
+            "gridlines_visible",
+            "merged_cells",
+            "top_row_heights",
+            "top_block_rules"
+          ],
+          "properties": {
+            "table_header_row": {
+              "const": 15
+            },
+            "first_content_row": {
+              "const": 16
+            },
+            "table_columns": {
+              "const": {
+                "position": "B",
+                "name": "C",
+                "unit": "D",
+                "quantity": "E",
+                "technical_composition": "F",
+                "enclosure": "G",
+                "unit_price": "H",
+                "line_total": "I"
+              }
+            },
+            "column_width_rules": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "B",
+                "C",
+                "D",
+                "E",
+                "F",
+                "G",
+                "H",
+                "I"
+              ],
+              "properties": {
+                "B": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "C": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "D": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "E": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "F": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "G": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "H": {
+                  "$ref": "#/$defs/column_rule"
+                },
+                "I": {
+                  "$ref": "#/$defs/column_rule"
+                }
+              }
+            },
+            "maximum_printable_width": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "row_height_rule": {
+              "type": "object"
+            },
+            "bottom_layout": {
+              "type": "object"
+            },
+            "pagination": {
+              "type": "object"
+            },
+            "gridlines_visible": {
+              "const": true
+            },
+            "merged_cells": {
+              "const": {
+                "mode": "NONE",
+                "ranges": []
+              }
+            },
+            "top_row_heights": {
+              "type": "object"
+            },
+            "top_block_rules": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "object_presentation",
+                "border_xml_by_cell",
+                "border_source_sha256s",
+                "border_source_locator",
+                "country_rich_text"
+              ],
+              "properties": {
+                "object_presentation": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "cell",
+                    "model",
+                    "font",
+                    "row_height_pt",
+                    "stored_alignment",
+                    "effective_alignment",
+                    "line_break_display",
+                    "spill_columns",
+                    "required_empty_cells",
+                    "maximum_digit_width_px",
+                    "horizontal_padding_px",
+                    "glyph_upper_advances_pt",
+                    "measurement_source_sha256",
+                    "font_source_sha256",
+                    "source_sha256s",
+                    "source_locator"
+                  ],
+                  "properties": {
+                    "cell": {
+                      "const": "C13"
+                    },
+                    "model": {
+                      "const": "NATIVE_EXCEL_SINGLE_LINE_SPILL_V1"
+                    },
+                    "font": {
+                      "const": {
+                        "name": "Times New Roman",
+                        "size": 14,
+                        "bold": true,
+                        "italic": true,
+                        "color_indexed": 8
+                      }
+                    },
+                    "row_height_pt": {
+                      "const": 26.1
+                    },
+                    "stored_alignment": {
+                      "const": {
+                        "horizontal": null,
+                        "vertical": null,
+                        "wrap_text": false,
+                        "shrink_to_fit": false
+                      }
+                    },
+                    "effective_alignment": {
+                      "const": {
+                        "horizontal": "general",
+                        "vertical": "bottom"
+                      }
+                    },
+                    "line_break_display": {
+                      "const": "ZERO_ADVANCE_SINGLE_LINE"
+                    },
+                    "spill_columns": {
+                      "const": ["C", "D", "E", "F", "G", "H"]
+                    },
+                    "required_empty_cells": {
+                      "const": ["D13", "E13", "F13", "G13", "H13"]
+                    },
+                    "maximum_digit_width_px": {
+                      "const": 7
+                    },
+                    "horizontal_padding_px": {
+                      "const": 5
+                    },
+                    "glyph_upper_advances_pt": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "propertyNames": {
+                        "pattern": "^[0-9]+$"
+                      },
+                      "additionalProperties": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 100
+                      }
+                    },
+                    "measurement_source_sha256": {
+                      "$ref": "#/$defs/sha256"
+                    },
+                    "font_source_sha256": {
+                      "$ref": "#/$defs/sha256"
+                    },
+                    "source_sha256s": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "uniqueItems": true,
+                      "items": {
+                        "$ref": "#/$defs/sha256"
+                      }
+                    },
+                    "source_locator": {
+                      "const": "Лист1!C13:H13;xl/worksheets/sheet1.xml;xl/styles.xml"
+                    }
+                  }
+                },
+                "border_xml_by_cell": {
+                  "type": "object",
+                  "minProperties": 104,
+                  "maxProperties": 104,
+                  "propertyNames": {
+                    "pattern": "^[B-I]([2-9]|1[0-4])$"
+                  },
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "border_source_sha256s": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/sha256"
+                  }
+                },
+                "border_source_locator": {
+                  "const": "Лист1!B2:I14"
+                },
+                "country_rich_text": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "cell",
+                    "runs",
+                    "space_advance_em",
+                    "font_source_sha256",
+                    "source_sha256s",
+                    "source_locator"
+                  ],
+                  "properties": {
+                    "cell": {
+                      "const": "C3"
+                    },
+                    "runs": {
+                      "type": "array",
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "text",
+                          "font"
+                        ],
+                        "properties": {
+                          "text": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "font": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "size",
+                              "bold",
+                              "family",
+                              "charset",
+                              "color_indexed"
+                            ],
+                            "properties": {
+                              "name": {
+                                "const": "Times New Roman"
+                              },
+                              "size": {
+                                "enum": [
+                                  16,
+                                  20
+                                ]
+                              },
+                              "bold": {
+                                "const": true
+                              },
+                              "family": {
+                                "const": 1
+                              },
+                              "charset": {
+                                "enum": [
+                                  1,
+                                  204
+                                ]
+                              },
+                              "color_indexed": {
+                                "const": 8
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "space_advance_em": {
+                      "const": 0.25
+                    },
+                    "font_source_sha256": {
+                      "$ref": "#/$defs/sha256"
+                    },
+                    "source_sha256s": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "uniqueItems": true,
+                      "items": {
+                        "$ref": "#/$defs/sha256"
+                      }
+                    },
+                    "source_locator": {
+                      "const": "Лист1!C3"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "styles": {
+          "type": "object",
+          "minProperties": 8
+        },
+        "formulas": {
+          "type": "object"
+        },
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "asset_id",
+              "media_type",
+              "sha256",
+              "data_base64",
+              "placement",
+              "drawing_semantics"
+            ],
+            "properties": {
+              "asset_id": {
+                "const": "DINVA_CLASSIC_LOGO_V0_1"
+              },
+              "media_type": {
+                "const": "image/png"
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "data_base64": {
+                "type": "string",
+                "minLength": 1
+              },
+              "drawing_semantics": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "edit_as",
+                  "picture_xml",
+                  "native_width_px",
+                  "native_height_px",
+                  "source_sha256s",
+                  "source_locator",
+                  "normalization"
+                ],
+                "properties": {
+                  "edit_as": {
+                    "const": "absolute"
+                  },
+                  "picture_xml": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "native_width_px": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "native_height_px": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "source_sha256s": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "uniqueItems": true,
+                    "items": {
+                      "$ref": "#/$defs/sha256"
+                    }
+                  },
+                  "source_locator": {
+                    "const": "xl/drawings/drawing1.xml;xl/media/image1.png"
+                  },
+                  "normalization": {
+                    "const": "cNvPr/@id=1 (package-local identity only)"
+                  }
+                }
+              },
+              "placement": {
+                "type": "object",
+                "required": [
+                  "anchor_type",
+                  "relative_to",
+                  "base_cell",
+                  "from",
+                  "to"
+                ],
+                "properties": {
+                  "anchor_type": {
+                    "const": "TWO_CELL"
+                  },
+                  "relative_to": {
+                    "const": "COMPANY_HEADER_BLOCK"
+                  },
+                  "base_cell": {
+                    "const": "B2"
+                  },
+                  "from": {
+                    "type": "object"
+                  },
+                  "to": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "package": {
+          "type": "object"
+        },
+        "print": {
+          "type": "object"
+        },
+        "optional_elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "variable_elements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

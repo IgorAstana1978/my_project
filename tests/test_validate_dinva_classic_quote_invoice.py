@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -53,6 +55,25 @@ def validate(case: dict[str, Any], validator: ModuleType, path: Path) -> None:
     )
 
 
+def refresh_document_fingerprint(document: dict[str, Any]) -> None:
+    governed = {
+        key: value
+        for key, value in document.items()
+        if key not in {"approval_provenance", "document_fingerprint"}
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            governed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    document["document_fingerprint"] = fingerprint
+    document["approval_provenance"]["approved_document_fingerprint"] = fingerprint
+
+
 def rewrite(path: Path, mutate: Any) -> None:
     with ZipFile(path) as archive:
         parts = {name: archive.read(name) for name in archive.namelist()}
@@ -68,7 +89,7 @@ def sheet_mutation(kind: str) -> Any:
     def mutate(parts: dict[str, bytes]) -> None:
         root = ElementTree.fromstring(parts["xl/worksheets/sheet1.xml"])
         if kind in {"cell", "description"}:
-            coordinate = "B10" if kind == "cell" else "F17"
+            coordinate = "C10" if kind == "cell" else "F17"
             cell = root.find(f".//main:c[@r='{coordinate}']", NS)
             assert cell is not None
             text = cell.find(".//main:t", NS)
@@ -92,9 +113,12 @@ def sheet_mutation(kind: str) -> Any:
             assert row is not None
             row.set("ht", "99")
         elif kind == "merge":
-            merge = root.find("main:mergeCells/main:mergeCell", NS)
-            assert merge is not None
-            merge.set("ref", "B2:C2")
+            merge_cells = ElementTree.SubElement(
+                root, f"{{{MAIN}}}mergeCells", {"count": "1"}
+            )
+            ElementTree.SubElement(
+                merge_cells, f"{{{MAIN}}}mergeCell", {"ref": "B2:C2"}
+            )
         elif kind == "print":
             setup = root.find("main:pageSetup", NS)
             assert setup is not None
@@ -117,7 +141,7 @@ def package_mutation(kind: str) -> Any:
             namespace = {
                 "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
             }
-            column = root.find("xdr:oneCellAnchor/xdr:from/xdr:col", namespace)
+            column = root.find("xdr:twoCellAnchor/xdr:from/xdr:col", namespace)
             assert column is not None
             column.text = "7"
             parts["xl/drawings/drawing1.xml"] = ElementTree.tostring(
@@ -142,7 +166,7 @@ def package_mutation(kind: str) -> Any:
             )
         elif kind in {"calc-stale", "calc-duplicate"}:
             refs = (
-                ["I17", "I20", "A1"] if kind == "calc-stale" else ["I17", "I17", "I20"]
+                ["I17", "I18", "A1"] if kind == "calc-stale" else ["I17", "I17", "I18"]
             )
             chain = ElementTree.Element(f"{{{MAIN}}}calcChain")
             for reference in refs:
@@ -239,5 +263,78 @@ def test_validator_rejects_profile_document_mismatch(
     changed = dict(case)
     changed["document"] = copy.deepcopy(case["document"])
     changed["document"]["document_number"] = "OTHER"
+    governed = {
+        key: value
+        for key, value in changed["document"].items()
+        if key not in {"approval_provenance", "document_fingerprint"}
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            governed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    changed["document"]["document_fingerprint"] = fingerprint
+    changed["document"]["approval_provenance"][
+        "approved_document_fingerprint"
+    ] = fingerprint
     with pytest.raises(validator.ValidationError, match="business cell drift"):
+        validate(changed, validator, output)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            lambda document: document["items"][0].update(
+                approved_line_total_kzt=199999
+            ),
+            "arithmetic mismatch",
+        ),
+        (
+            lambda document: document["sections"][0].update(last_position=2),
+            "cover every item",
+        ),
+        (
+            lambda document: document["items"][0]["apparatus"].update(
+                source_role="UNTRUSTED"
+            ),
+            "apparatus source role mismatch",
+        ),
+        (
+            lambda document: document["approval_provenance"].update(approval_scope=""),
+            "approval scope must be non-empty",
+        ),
+        (
+            lambda document: document["approval_provenance"].update(
+                source_sha256s=["2" * 64]
+            ),
+            "do not match bindings",
+        ),
+        (
+            lambda document: document.update(basis=None),
+            "Invoice519 basis mismatch",
+        ),
+        (
+            lambda document: document.update(basis="WRONG"),
+            "Invoice519 basis mismatch",
+        ),
+    ],
+)
+def test_validator_independently_rejects_document_contract_mutations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: Any,
+    message: str,
+) -> None:
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case, validator, output = build_valid(tmp_path)
+    changed = dict(case)
+    changed["document"] = copy.deepcopy(case["document"])
+    mutation(changed["document"])
+    refresh_document_fingerprint(changed["document"])
+    with pytest.raises(validator.ValidationError, match=message):
         validate(changed, validator, output)

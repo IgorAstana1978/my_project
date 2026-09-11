@@ -8,10 +8,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import textwrap
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from math import ceil
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn, cast
@@ -21,6 +23,11 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from openpyxl import Workbook  # type: ignore[import-untyped]
 from openpyxl.cell.cell import Cell  # type: ignore[import-untyped]
+from openpyxl.cell.rich_text import (  # type: ignore[import-untyped]
+    CellRichText,
+    TextBlock,
+)
+from openpyxl.cell.text import InlineFont  # type: ignore[import-untyped]
 from openpyxl.styles import (  # type: ignore[import-untyped]
     Alignment,
     Border,
@@ -29,12 +36,23 @@ from openpyxl.styles import (  # type: ignore[import-untyped]
     PatternFill,
     Side,
 )
+from openpyxl.worksheet.pagebreak import Break  # type: ignore[import-untyped]
+
+try:
+    from dinva_native_text import canonical_spill_fit
+except ModuleNotFoundError:
+    # The CLI puts scripts/ on sys.path; import-by-path test consumers put the
+    # repository root there instead. Both resolve the same stateless helper.
+    canonical_spill_fit = importlib.import_module(
+        "scripts.dinva_native_text"
+    ).canonical_spill_fit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = Path(__file__).with_name("validate_dinva_classic_quote_invoice.py")
-PROFILE_SCHEMA_VERSION = "dinva_classic_presentation_profile.v0.1"
-DOCUMENT_SCHEMA_VERSION = "dinva_quote_invoice_document.v0.1"
+PROFILE_SCHEMA_VERSION = "dinva_classic_presentation_profile.v0.2"
+DOCUMENT_SCHEMA_VERSION = "dinva_quote_invoice_document.v0.2"
 FAMILY = "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
+PROFILE_ID = "DINVA_CLASSIC_QUOTE_INVOICE_V0_1_DYNAMIC_V0_2"
 TEST_MODE_ENV = "DINVA_RENDERER_TEST_MODE"
 SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 OFFICE_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -69,7 +87,9 @@ DOCUMENT_KEYS = {
     "object_name",
     "basis",
     "apparatus_heading",
+    "sections",
     "items",
+    "document_fingerprint",
     "approved_grand_total_kzt",
     "vat",
     "amount_words",
@@ -167,6 +187,25 @@ def integer(value: Any, label: str, *, minimum: int = 0) -> int:
     return cast(int, value)
 
 
+def sha256_text(value: Any, label: str) -> str:
+    require(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value),
+        f"{label} must be a lowercase SHA-256",
+    )
+    return cast(str, value)
+
+
+def document_fingerprint(document: Mapping[str, Any]) -> str:
+    governed = {
+        key: value
+        for key, value in document.items()
+        if key not in {"approval_provenance", "document_fingerprint"}
+    }
+    return sha256_bytes(canonical_json(governed))
+
+
 def test_mode(requested: bool) -> bool:
     return requested and os.environ.get(TEST_MODE_ENV) == "1"
 
@@ -176,10 +215,41 @@ def validate_profile(
 ) -> Mapping[str, Any]:
     exact_keys(profile, PROFILE_KEYS, "profile")
     require(
-        profile.get("schema_version") == PROFILE_SCHEMA_VERSION,
+        profile.get("schema_version")
+        in {
+            PROFILE_SCHEMA_VERSION,
+            "dinva_classic_presentation_profile.v0.3",
+            "dinva_classic_presentation_profile.v0.4",
+            "dinva_classic_presentation_profile.v0.5",
+        },
         "profile schema mismatch",
     )
-    require(profile.get("profile_id") == FAMILY, "profile id mismatch")
+    v05 = profile.get("schema_version") == "dinva_classic_presentation_profile.v0.5"
+    v04 = (
+        v05
+        or profile.get("schema_version") == "dinva_classic_presentation_profile.v0.4"
+    )
+    visual = (
+        v04
+        or profile.get("schema_version") == "dinva_classic_presentation_profile.v0.3"
+    )
+    require(
+        profile.get("profile_id")
+        == (
+            (
+                "DINVA_CLASSIC_QUOTE_INVOICE_V0_1_DYNAMIC_V0_5"
+                if v05
+                else "DINVA_CLASSIC_QUOTE_INVOICE_V0_1_DYNAMIC_V0_4"
+            )
+            if v04
+            else (
+                "DINVA_CLASSIC_QUOTE_INVOICE_V0_1_DYNAMIC_V0_3"
+                if visual
+                else PROFILE_ID
+            )
+        ),
+        "profile id mismatch",
+    )
     require(
         profile.get("document_family") == FAMILY, "unknown/unsupported profile family"
     )
@@ -211,8 +281,38 @@ def validate_profile(
             approval.get("approved_contract_fingerprint") == fingerprint,
             "profile approval fingerprint mismatch",
         )
+    exact_keys(
+        contract,
+        {
+            "contract_version",
+            "workbook",
+            "fixed_blocks",
+            "layout",
+            "styles",
+            "formulas",
+            "assets",
+            "package",
+            "print",
+            "optional_elements",
+            "variable_elements",
+        },
+        "presentation contract",
+    )
     require(
-        contract.get("contract_version") == "dinva_classic_presentation_contract.v0.1",
+        contract.get("contract_version")
+        == (
+            (
+                "dinva_classic_presentation_contract.v0.5"
+                if v05
+                else "dinva_classic_presentation_contract.v0.4"
+            )
+            if v04
+            else (
+                "dinva_classic_presentation_contract.v0.3"
+                if visual
+                else "dinva_classic_presentation_contract.v0.2"
+            )
+        ),
         "presentation contract version mismatch",
     )
     workbook = mapping(contract.get("workbook"), "workbook contract")
@@ -229,14 +329,66 @@ def validate_profile(
         workbook.get("extra_sheets_allowed") is False, "extra sheets must be closed"
     )
     layout = mapping(contract.get("layout"), "layout contract")
+    exact_keys(
+        layout,
+        {
+            "table_header_row",
+            "first_content_row",
+            "table_columns",
+            "column_width_rules",
+            "maximum_printable_width",
+            "row_height_rule",
+            "bottom_layout",
+            "pagination",
+            "gridlines_visible",
+            "merged_cells",
+            "top_row_heights",
+        }
+        | ({"top_block_rules"} if visual else set()),
+        "layout contract",
+    )
     require(
-        layout.get("table_header_row") == 15
-        and type(layout.get("first_item_row")) is int
-        and type(layout.get("section_row")) is int
-        and layout.get("section_row") == cast(int, layout.get("first_item_row")) - 1
-        and type(layout.get("item_capacity")) is int
-        and cast(int, layout.get("item_capacity")) > 0,
-        "classic table geometry mismatch",
+        layout.get("table_header_row") == 15 and layout.get("first_content_row") == 16,
+        "classic structural anchors mismatch",
+    )
+    width_rules = mapping(layout.get("column_width_rules"), "column width rules")
+    require(set(width_rules) == set("BCDEFGHI"), "semantic column rules mismatch")
+    for column, raw_rule in width_rules.items():
+        rule = mapping(raw_rule, f"column {column} rule")
+        exact_keys(
+            rule,
+            {
+                "minimum",
+                "preferred",
+                "maximum",
+                "adaptive",
+                "preferred_chars",
+                "maximum_chars",
+            },
+            f"column {column} rule",
+        )
+        minimum = float(rule["minimum"])
+        preferred = float(rule["preferred"])
+        maximum = float(rule["maximum"])
+        require(0 < minimum <= preferred <= maximum, f"column {column} bounds invalid")
+        require(
+            type(rule["adaptive"]) is bool, f"column {column} adaptive flag invalid"
+        )
+        if not cast(bool, rule["adaptive"]):
+            require(
+                minimum == preferred == maximum,
+                f"fixed column {column} must have one width",
+            )
+        integer(rule["preferred_chars"], f"column {column} preferred chars", minimum=1)
+        integer(rule["maximum_chars"], f"column {column} maximum chars", minimum=1)
+    require(
+        layout.get("gridlines_visible") is True,
+        "DINVA classic gridlines must remain visible",
+    )
+    merges = mapping(layout.get("merged_cells"), "merged cells")
+    require(
+        merges.get("mode") == "NONE" and merges.get("ranges") == [],
+        "DINVA classic successor must not merge cells",
     )
     assets = contract.get("assets")
     require(
@@ -249,6 +401,34 @@ def validate_profile(
     except (ValueError, TypeError) as exc:
         raise RendererError("logo asset base64 is invalid") from exc
     require(sha256_bytes(logo) == asset.get("sha256"), "logo asset SHA-256 mismatch")
+    placement = mapping(asset.get("placement"), "logo placement")
+    require(
+        placement.get("anchor_type") == "TWO_CELL"
+        and placement.get("relative_to") == "COMPANY_HEADER_BLOCK"
+        and placement.get("base_cell") == "B2",
+        "logo placement rule mismatch",
+    )
+    if visual:
+        semantics = mapping(asset.get("drawing_semantics"), "logo drawing semantics")
+        require(semantics.get("edit_as") == "absolute", "logo editAs mismatch")
+        try:
+            picture = ElementTree.fromstring(
+                cast(str, text(semantics.get("picture_xml"), "logo picture XML"))
+            )
+        except ElementTree.ParseError as exc:
+            raise RendererError("logo governed picture XML invalid") from exc
+        require(
+            picture.tag == f"{{{DRAWING_NS}}}pic"
+            and picture.find(
+                f"{{{DRAWING_NS}}}spPr/{{{DRAWING_MAIN_NS}}}xfrm/{{{DRAWING_MAIN_NS}}}off"
+            )
+            is not None
+            and picture.find(
+                f"{{{DRAWING_NS}}}spPr/{{{DRAWING_MAIN_NS}}}xfrm/{{{DRAWING_MAIN_NS}}}ext"
+            )
+            is not None,
+            "logo explicit transform missing",
+        )
     return contract
 
 
@@ -272,10 +452,39 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
     except (TypeError, ValueError) as exc:
         raise RendererError("document date must be ISO date") from exc
     require(document.get("currency") == "KZT", "document currency mismatch")
+    require(
+        document.get("document_fingerprint") == document_fingerprint(document),
+        "document fingerprint mismatch",
+    )
     text(document.get("object_name"), "object_name", nullable=True)
     text(document.get("basis"), "basis", nullable=True)
     items = document.get("items")
     require(isinstance(items, list) and bool(items), "document items must be non-empty")
+    sections = document.get("sections")
+    require(
+        isinstance(sections, list) and bool(sections),
+        "document sections must be non-empty",
+    )
+    next_position = 1
+    for index, raw_section in enumerate(cast(list[Any], sections), start=1):
+        section = mapping(raw_section, f"section {index}")
+        exact_keys(
+            section, {"label", "first_position", "last_position"}, f"section {index}"
+        )
+        text(section.get("label"), f"section {index}.label")
+        first = integer(
+            section.get("first_position"), "section first position", minimum=1
+        )
+        last = integer(section.get("last_position"), "section last position", minimum=1)
+        require(
+            first == next_position and last >= first,
+            "section ranges must be ordered and contiguous",
+        )
+        next_position = last + 1
+    require(
+        next_position == len(cast(list[Any], items)) + 1,
+        "sections must cover every item exactly once",
+    )
     expected_item_keys = {
         "position",
         "name",
@@ -297,22 +506,39 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
             == expected_position,
             "item positions must be contiguous",
         )
-        for field in (
-            "name",
-            "unit",
-            "detailed_technical_composition",
-            "apparatus",
-            "enclosure",
-            "approval_reference",
-        ):
+        for field in ("name", "unit", "detailed_technical_composition", "enclosure"):
             text(item.get(field), f"item {expected_position}.{field}")
         composition = cast(str, item["detailed_technical_composition"])
-        apparatus = cast(str, item["apparatus"])
+        apparatus = mapping(
+            item.get("apparatus"), f"item {expected_position}.apparatus"
+        )
+        exact_keys(
+            apparatus,
+            {"text", "source_role", "source_sha256", "source_locator"},
+            f"item {expected_position}.apparatus",
+        )
+        apparatus_text = cast(str, text(apparatus.get("text"), "apparatus text"))
         require(
-            apparatus in composition,
+            apparatus.get("source_role") == "AUTHORITATIVE_DOCUMENT_TEXT_SOURCE",
+            "apparatus source role mismatch",
+        )
+        sha256_text(apparatus.get("source_sha256"), "apparatus source SHA-256")
+        text(apparatus.get("source_locator"), "apparatus source locator")
+        require(
+            apparatus_text in composition,
             f"item {expected_position} apparatus is not exactly represented "
             "in detailed composition",
         )
+        reference = mapping(
+            item.get("approval_reference"),
+            f"item {expected_position}.approval reference",
+        )
+        exact_keys(
+            reference, {"pricing", "technical", "enclosure"}, "approval reference"
+        )
+        text(reference.get("pricing"), "pricing approval reference")
+        text(reference.get("technical"), "technical approval reference")
+        text(reference.get("enclosure"), "enclosure approval reference", nullable=True)
         quantity = integer(item.get("quantity"), "quantity", minimum=1)
         unit_price = integer(item.get("approved_unit_price_kzt"), "unit price")
         line_total = integer(item.get("approved_line_total_kzt"), "line total")
@@ -352,19 +578,115 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
     text(vat.get("approved_text"), "VAT text")
     terms = mapping(document.get("terms"), "terms")
     exact_keys(
-        terms, {"payment", "delivery", "manufacturing_lead_time", "validity"}, "terms"
+        terms,
+        {
+            "payment",
+            "delivery",
+            "manufacturing_lead_time",
+            "manufacturing_lead_time_provenance",
+            "validity",
+            "commercial_lines",
+        },
+        "terms",
     )
-    for field in ("payment", "delivery", "manufacturing_lead_time"):
+    text(terms.get("payment"), "terms.payment", nullable=True)
+    if (
+        document.get("document_number") == "519"
+        or mapping(document.get("approval_provenance"), "document approval").get(
+            "approval_scope"
+        )
+        == "INVOICE519_DOCUMENT_MODEL_ONLY"
+    ):
+        require(
+            terms.get("payment") is None,
+            "Invoice519 payment lacks governed provenance",
+        )
+    for field in ("delivery", "manufacturing_lead_time"):
         text(terms.get(field), f"terms.{field}")
     text(terms.get("validity"), "terms.validity", nullable=True)
+    commercial_lines = terms.get("commercial_lines")
+    require(
+        isinstance(commercial_lines, list) and bool(commercial_lines),
+        "commercial terms lines missing",
+    )
+    for index, raw_line in enumerate(cast(list[Any], commercial_lines), start=1):
+        line = mapping(raw_line, f"commercial line {index}")
+        exact_keys(
+            line,
+            {"source_order", "text", "source_sha256", "source_locator"},
+            f"commercial line {index}",
+        )
+        require(
+            integer(line.get("source_order"), "commercial source order", minimum=1)
+            == index,
+            "commercial source order must be contiguous",
+        )
+        text(line.get("text"), f"commercial line {index}.text")
+        sha256_text(line.get("source_sha256"), "commercial line source SHA-256")
+        text(line.get("source_locator"), "commercial line source locator")
+    lead_provenance = mapping(
+        terms.get("manufacturing_lead_time_provenance"),
+        "manufacturing lead-time provenance",
+    )
+    exact_keys(
+        lead_provenance,
+        {
+            "source_order",
+            "source_text",
+            "normalized_text",
+            "source_sha256",
+            "source_locator",
+            "normalization_rule",
+            "approval_reference",
+        },
+        "manufacturing lead-time provenance",
+    )
+    lead_source_order = integer(
+        lead_provenance.get("source_order"), "lead-time source order", minimum=1
+    )
+    require(
+        lead_source_order <= len(cast(list[Any], commercial_lines)),
+        "lead-time source order is out of range",
+    )
+    lead_source = mapping(
+        cast(list[Any], commercial_lines)[lead_source_order - 1],
+        "lead-time commercial source",
+    )
+    require(
+        lead_provenance.get("source_text") == lead_source.get("text")
+        and lead_provenance.get("source_sha256") == lead_source.get("source_sha256")
+        and lead_provenance.get("source_locator") == lead_source.get("source_locator")
+        and lead_provenance.get("normalized_text")
+        == terms.get("manufacturing_lead_time"),
+        "manufacturing lead-time provenance mismatch",
+    )
+    text(lead_provenance.get("normalization_rule"), "lead-time normalization rule")
+    text(lead_provenance.get("approval_reference"), "lead-time approval reference")
     signatures = mapping(document.get("signatures"), "signatures")
     exact_keys(
         signatures,
-        {"director_title", "director_name", "executor_title", "executor_name"},
+        {
+            "director_title",
+            "director_name",
+            "executor_label",
+            "executor_title",
+            "executor_name",
+            "executor_full_text",
+        },
         "signatures",
     )
     for field in signatures:
         text(signatures[field], f"signatures.{field}")
+    require(
+        cast(str, signatures["executor_title"])
+        in cast(str, signatures["executor_full_text"]),
+        "executor title is not represented in full text",
+    )
+    require(
+        cast(str, signatures["executor_name"])
+        in cast(str, signatures["executor_full_text"]),
+        "executor name is not represented in full text",
+    )
     approval = mapping(document.get("approval_provenance"), "document approval")
     exact_keys(
         approval,
@@ -373,6 +695,9 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
             "authority",
             "approval_id",
             "approved_at",
+            "approval_scope",
+            "approved_document_fingerprint",
+            "source_bindings",
             "source_sha256s",
             "rendering_authorized",
             "client_send_authorized",
@@ -388,16 +713,40 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
     text(approval.get("authority"), "approval authority")
     text(approval.get("approval_id"), "approval id")
     text(approval.get("approved_at"), "approved_at")
+    approval_scope = text(approval.get("approval_scope"), "document approval scope")
+    if approval_scope == "INVOICE519_DOCUMENT_MODEL_ONLY":
+        require(document.get("basis") == "2024/086", "Invoice519 basis mismatch")
+    require(
+        approval.get("approved_document_fingerprint") == document_fingerprint(document),
+        "document approval fingerprint mismatch",
+    )
+    bindings = approval.get("source_bindings")
+    require(
+        isinstance(bindings, list) and bool(bindings),
+        "document source bindings missing",
+    )
+    bound_shas: list[str] = []
+    roles: set[str] = set()
+    for index, raw_binding in enumerate(cast(list[Any], bindings), start=1):
+        binding = mapping(raw_binding, f"source binding {index}")
+        exact_keys(binding, {"role", "path", "sha256"}, f"source binding {index}")
+        role = cast(str, text(binding.get("role"), "source binding role"))
+        require(role not in roles, "duplicate source binding role")
+        roles.add(role)
+        text(binding.get("path"), "source binding path")
+        bound_shas.append(sha256_text(binding.get("sha256"), "source binding SHA-256"))
     source_shas = approval.get("source_sha256s")
     require(
         isinstance(source_shas, list) and bool(source_shas),
         "document source hashes missing",
     )
     require(
-        all(
-            isinstance(item, str) and len(item) == 64
+        all(isinstance(item, str) for item in cast(list[Any], source_shas))
+        and [
+            sha256_text(item, "document source hash")
             for item in cast(list[Any], source_shas)
-        ),
+        ]
+        == bound_shas,
         "document source hash invalid",
     )
     require(
@@ -457,14 +806,384 @@ def apply_style(cell: Cell, raw_style: Mapping[str, Any]) -> None:
     cell.number_format = cast(str, raw_style["number_format"])
 
 
-def item_height(texts: Sequence[str], rule: Mapping[str, Any]) -> float:
-    longest = max(len(value) for value in texts)
-    base = float(rule["base"])
-    threshold = integer(rule["characters_per_increment"], "height threshold", minimum=1)
-    increment = float(rule["increment"])
-    maximum = float(rule["maximum"])
-    extra = max(0, (longest - 1) // threshold)
-    return min(maximum, base + extra * increment)
+def percentile_90(values: Sequence[int]) -> int:
+    ordered = sorted(values)
+    require(bool(ordered), "content distribution is empty")
+    return ordered[max(0, ceil(len(ordered) * 0.9) - 1)]
+
+
+def content_lengths(document: Mapping[str, Any], column: str) -> list[int]:
+    fields = {"C": "name", "F": "detailed_technical_composition", "G": "enclosure"}
+    items = cast(list[Mapping[str, Any]], document["items"])
+    if column in fields:
+        return [
+            max(len(part) for part in cast(str, item[fields[column]]).split("\n"))
+            for item in items
+        ]
+    if column == "I":
+        values = [
+            cast(int, document["approved_grand_total_kzt"]),
+            *[cast(int, item["approved_line_total_kzt"]) for item in items],
+        ]
+        return [len(f"{value:,}") for value in values]
+    return [1]
+
+
+def adaptive_column_widths(
+    contract: Mapping[str, Any], document: Mapping[str, Any]
+) -> dict[str, float]:
+    layout = mapping(contract["layout"], "layout")
+    rules = mapping(layout["column_width_rules"], "column width rules")
+    widths: dict[str, float] = {}
+    minimums: dict[str, float] = {}
+    for column in "BCDEFGHI":
+        rule = mapping(rules[column], f"column {column} rule")
+        minimum = float(rule["minimum"])
+        preferred = float(rule["preferred"])
+        maximum = float(rule["maximum"])
+        minimums[column] = minimum
+        if not cast(bool, rule["adaptive"]):
+            widths[column] = preferred
+            continue
+        score = percentile_90(content_lengths(document, column))
+        preferred_chars = integer(
+            rule["preferred_chars"], f"column {column} preferred chars", minimum=1
+        )
+        maximum_chars = integer(
+            rule["maximum_chars"], f"column {column} maximum chars", minimum=1
+        )
+        require(
+            maximum_chars > preferred_chars,
+            f"column {column} content thresholds invalid",
+        )
+        if score <= preferred_chars:
+            fraction = score / preferred_chars
+            width = minimum + (preferred - minimum) * fraction
+        else:
+            fraction = min(
+                1.0, (score - preferred_chars) / (maximum_chars - preferred_chars)
+            )
+            width = preferred + (maximum - preferred) * fraction
+        widths[column] = round(width * 4) / 4
+    maximum_total = float(layout["maximum_printable_width"])
+    excess = sum(widths.values()) - maximum_total
+    for column in ("C", "G", "F", "I"):
+        if excess <= 1e-9:
+            break
+        available = widths[column] - minimums[column]
+        reduction = min(available, ceil(excess * 4 - 1e-9) / 4)
+        widths[column] = round((widths[column] - reduction) * 4) / 4
+        excess = sum(widths.values()) - maximum_total
+    require(excess <= 1e-9, "column width bounds exceed printable width")
+    return widths
+
+
+def wrapped_line_count(text_value: str, width: float, font_size: float) -> int:
+    capacity = max(1, int(width * 11.0 / font_size * 0.94))
+    return sum(max(1, ceil(len(part) / capacity)) for part in text_value.split("\n"))
+
+
+def content_row_height(
+    item: Mapping[str, Any],
+    widths: Mapping[str, float],
+    rule: Mapping[str, Any],
+    styles: Mapping[str, Any],
+) -> float:
+    roles = {
+        "C": ("name", "item_name"),
+        "F": ("detailed_technical_composition", "technical_composition"),
+        "G": ("enclosure", "enclosure"),
+    }
+    lines = []
+    for column, (field, style_name) in roles.items():
+        style = mapping(styles[style_name], f"{style_name} style")
+        font = mapping(style["font"], f"{style_name} font")
+        lines.append(
+            wrapped_line_count(
+                cast(str, item[field]), float(widths[column]), float(font["size"])
+            )
+        )
+    line_height = float(rule["line_height_points"])
+    padding = float(rule["vertical_padding_points"])
+    required = max(lines) * line_height + padding
+    maximum = float(rule["maximum_height"])
+    require(required <= maximum, "item content exceeds safe Excel row height")
+    return round(max(float(rule["minimum_height"]), required) * 4) / 4
+
+
+def table_header_height(
+    contract: Mapping[str, Any],
+    document: Mapping[str, Any],
+    widths: Mapping[str, float],
+) -> float:
+    fixed = mapping(contract["fixed_blocks"], "fixed blocks")
+    headers = dict(mapping(fixed["table_headers"], "table headers"))
+    headers["F"] = document["apparatus_heading"]
+    style = mapping(
+        mapping(contract["styles"], "styles")["table_header"], "header style"
+    )
+    font_size = float(mapping(style["font"], "header font")["size"])
+    lines = max(
+        wrapped_line_count(cast(str, headers[column]), widths[column], font_size)
+        for column in "BCDEFGHI"
+    )
+    rule = mapping(
+        mapping(contract["layout"], "layout")["row_height_rule"], "height rule"
+    )
+    return (
+        round(
+            max(
+                float(rule["header_minimum_height"]),
+                lines * float(rule["header_line_height_points"])
+                + float(rule["vertical_padding_points"]),
+            )
+            * 4
+        )
+        / 4
+    )
+
+
+def object_block_height(
+    contract: Mapping[str, Any],
+    document: Mapping[str, Any],
+    widths: Mapping[str, float],
+) -> float:
+    layout = mapping(contract["layout"], "layout")
+    minimum = float(mapping(layout["top_row_heights"], "top heights")["13"])
+    if "top_block_rules" not in layout or document["object_name"] is None:
+        return minimum
+    if contract.get("contract_version") in {
+        "dinva_classic_presentation_contract.v0.4",
+        "dinva_classic_presentation_contract.v0.5",
+    }:
+        rule = mapping(
+            mapping(layout["top_block_rules"], "top rules")["object_presentation"],
+            "object presentation",
+        )
+        font = mapping(
+            mapping(mapping(contract["styles"], "styles")["object"], "object style")[
+                "font"
+            ],
+            "object font",
+        )
+        require(
+            all(
+                font.get(key) == value
+                for key, value in mapping(rule["font"], "canonical font").items()
+                if key != "color_indexed"
+            ),
+            "object font differs from canonical font",
+        )
+        require(
+            font.get("color") == {"type": "indexed", "value": 8, "tint": 0.0}
+            and mapping(
+                mapping(
+                    mapping(contract["styles"], "styles")["object"], "object style"
+                )["alignment"],
+                "object alignment",
+            )
+            == rule["stored_alignment"],
+            "object style differs from canonical C13 presentation",
+        )
+        try:
+            canonical_spill_fit(rule, str(document["object_name"]), widths)
+        except ValueError as exc:
+            raise RendererError(str(exc)) from exc
+        return minimum
+    rule = mapping(
+        mapping(layout["top_block_rules"], "top rules")["object_height"],
+        "object height",
+    )
+    require(
+        rule
+        == {
+            "cell": "C13",
+            "glyph_width_em": 1.1,
+            "line_height_em": 1.5,
+            "padding_points": 6.0,
+            "maximum_height": 408.0,
+        },
+        "unsupported object height rule",
+    )
+    font = mapping(
+        mapping(mapping(contract["styles"], "styles")["object"], "object style")[
+            "font"
+        ],
+        "object font",
+    )
+    size = float(font["size"])
+    # Conservative one-em glyph bound plus word-wrap and explicit line breaks.
+    capacity = max(1, int(((widths["C"] * 7 + 5) * 0.75 - 6) / (size * 1.1)))
+    lines = sum(
+        max(
+            1,
+            len(
+                textwrap.wrap(
+                    part, capacity, replace_whitespace=False, drop_whitespace=False
+                )
+            ),
+        )
+        for part in str(document["object_name"]).split("\n")
+    )
+    height = max(minimum, ceil((lines * size * 1.5 + 6) * 4) / 4)
+    require(height <= 408, "object content exceeds safe Excel row height")
+    return height
+
+
+def dynamic_layout_plan(
+    contract: Mapping[str, Any], document: Mapping[str, Any]
+) -> dict[str, Any]:
+    layout = mapping(contract["layout"], "layout")
+    styles = mapping(contract["styles"], "styles")
+    widths = adaptive_column_widths(contract, document)
+    rule = mapping(layout["row_height_rule"], "row height rule")
+    row = integer(layout["first_content_row"], "first content row", minimum=1)
+    rows: list[dict[str, Any]] = []
+    items = cast(list[Mapping[str, Any]], document["items"])
+    by_position = {cast(int, item["position"]): item for item in items}
+    for section in cast(list[Mapping[str, Any]], document["sections"]):
+        rows.append(
+            {
+                "row": row,
+                "kind": "section",
+                "height": float(rule["section_height"]),
+                "value": section["label"],
+            }
+        )
+        row += 1
+        for position in range(
+            cast(int, section["first_position"]),
+            cast(int, section["last_position"]) + 1,
+        ):
+            item = by_position[position]
+            rows.append(
+                {
+                    "row": row,
+                    "kind": "item",
+                    "height": content_row_height(item, widths, rule, styles),
+                    "item": item,
+                }
+            )
+            row += 1
+    last_data_row = row - 1
+    bottom = mapping(layout["bottom_layout"], "bottom layout")
+    total_row = row
+    amount_row = total_row + integer(
+        bottom["amount_words_offset"], "amount words offset", minimum=1
+    )
+    commercial_start = amount_row + 1
+    commercial_count = len(
+        cast(list[Any], mapping(document["terms"], "terms")["commercial_lines"])
+    )
+    director_row = (
+        commercial_start
+        + commercial_count
+        + integer(bottom["signature_spacer_rows"], "signature spacer rows", minimum=0)
+    )
+    executor_row = director_row + 1
+    final_row = executor_row
+    rows.extend(
+        [
+            {"row": total_row, "kind": "total", "height": float(rule["total_height"])},
+            {
+                "row": amount_row,
+                "kind": "amount",
+                "height": float(rule["amount_height"]),
+            },
+            *[
+                {
+                    "row": commercial_start + offset,
+                    "kind": "commercial",
+                    "height": float(rule["commercial_height"]),
+                }
+                for offset in range(commercial_count)
+            ],
+            {
+                "row": director_row,
+                "kind": "signature",
+                "height": float(rule["signature_height"]),
+            },
+            {
+                "row": executor_row,
+                "kind": "executor",
+                "height": float(rule["signature_height"]),
+            },
+        ]
+    )
+    pagination = mapping(layout["pagination"], "pagination")
+    breaks: list[int] = []
+    if contract.get("contract_version") == "dinva_classic_presentation_contract.v0.5":
+        breaks = []
+    else:
+        first_limit = float(pagination["first_page_body_height_points"])
+        first_limit -= object_block_height(contract, document, widths) - float(
+            mapping(layout["top_row_heights"], "top heights")["13"]
+        )
+        following_limit = float(pagination["following_page_body_height_points"])
+        groups: list[list[dict[str, Any]]] = []
+        index = 0
+        while index < len(rows):
+            current = rows[index]
+            if (
+                current["kind"] == "section"
+                and index + 1 < len(rows)
+                and rows[index + 1]["kind"] == "item"
+            ):
+                groups.append([current, rows[index + 1]])
+                index += 2
+            elif current["kind"] == "total":
+                groups.append(rows[index:])
+                break
+            else:
+                groups.append([current])
+                index += 1
+        used = 0.0
+        limit = first_limit
+        previous_row: int | None = None
+        for group in groups:
+            height = sum(float(entry["height"]) for entry in group)
+            require(
+                height <= following_limit,
+                "layout group is taller than one printable page",
+            )
+            if previous_row is not None and used > 0 and used + height > limit:
+                breaks.append(previous_row)
+                used = 0.0
+                limit = following_limit
+            used += height
+            previous_row = cast(int, group[-1]["row"])
+    return {
+        "widths": widths,
+        "rows": rows,
+        "last_data_row": last_data_row,
+        "total_row": total_row,
+        "amount_row": amount_row,
+        "commercial_start": commercial_start,
+        "director_row": director_row,
+        "executor_row": executor_row,
+        "final_row": final_row,
+        "page_breaks": breaks,
+        "header_height": table_header_height(contract, document, widths),
+    }
+
+
+def display_document_date(value: str) -> str:
+    parsed = date.fromisoformat(value)
+    months = (
+        "января",
+        "февраля",
+        "марта",
+        "апреля",
+        "мая",
+        "июня",
+        "июля",
+        "августа",
+        "сентября",
+        "октября",
+        "ноября",
+        "декабря",
+    )
+    return f"{parsed.day} {months[parsed.month - 1]} {parsed.year} года"
 
 
 def render_clean_workbook(
@@ -478,6 +1197,7 @@ def render_clean_workbook(
     layout = mapping(contract["layout"], "layout")
     styles = mapping(contract["styles"], "styles")
     fixed = mapping(contract["fixed_blocks"], "fixed blocks")
+    plan = dynamic_layout_plan(contract, document)
     workbook = Workbook()
     worksheet = workbook.active
     sheet_contract = cast(
@@ -491,64 +1211,118 @@ def render_clean_workbook(
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
-    worksheet.sheet_view.showGridLines = False
-    for column, width in mapping(layout["column_widths"], "column widths").items():
-        worksheet.column_dimensions[column].width = float(cast(float, width))
+    worksheet.sheet_view.showGridLines = True
+    for column, width in cast(dict[str, float], plan["widths"]).items():
+        worksheet.column_dimensions[column].width = width
+    for raw_row, raw_height in mapping(
+        layout["top_row_heights"], "top row heights"
+    ).items():
+        worksheet.row_dimensions[int(raw_row)].height = float(raw_height)
     company = mapping(fixed["company"], "company block")
     for coordinate, value in company.items():
         worksheet[coordinate] = value
         apply_style(
             worksheet[coordinate],
             mapping(
-                styles["company_title" if coordinate == "C2" else "company_info"],
+                styles[
+                    (
+                        "company_title"
+                        if coordinate == "C2"
+                        else (
+                            "country"
+                            if coordinate == "C3"
+                            else (
+                                "bank_title"
+                                if coordinate in {"I2", "I3"}
+                                else (
+                                    "bank_info"
+                                    if coordinate.startswith("I")
+                                    else "company_info"
+                                )
+                            )
+                        )
+                    )
+                ],
                 "company style",
             ),
         )
-    worksheet["B9"] = (
-        f"Счёт-КП № {document['document_number']} от {document['document_date']}"
+    title_by_type = {
+        "QUOTE": "Коммерческое предложение",
+        "INVOICE": "Счёт",
+        "QUOTE_INVOICE": "Счёт-КП",
+    }
+    worksheet["C9"] = (
+        f"{title_by_type[cast(str, document['document_type'])]} № "
+        f"{document['document_number']} от "
+        f"{display_document_date(cast(str, document['document_date']))}"
     )
-    worksheet["B10"] = f"Плательщик: {document['payer']}"
-    worksheet["B11"] = f"Объект: {document['object_name'] or 'не указан'}"
-    worksheet["B12"] = f"Основание / проект: {document['basis'] or 'не указано'}"
-    worksheet["B13"] = "Статус документа: DRAFT XLSX"
-    worksheet["G9"] = "ВНИМАНИЕ!"
+    worksheet["C10"] = f"Плательщик: {document['payer']}"
+    if document["object_name"] is not None:
+        worksheet["C13"] = document["object_name"]
+        apply_style(worksheet["C13"], mapping(styles["object"], "object style"))
+        worksheet.row_dimensions[13].height = object_block_height(
+            contract, document, plan["widths"]
+        )
+    worksheet["G9"] = mapping(fixed["warning"], "warning block")["G9"]
     terms = mapping(document["terms"], "terms")
-    worksheet["G10"] = f"Срок изготовления: {terms['manufacturing_lead_time']}"
-    worksheet["G11"] = f"Оплата: {terms['payment']}"
-    worksheet["G12"] = f"Поставка: {terms['delivery']}"
-    worksheet["G13"] = "Technical PASS не является разрешением на отправку"
-    for coordinate in ("B9", "B10", "B11", "B12", "B13"):
-        apply_style(
-            worksheet[coordinate], mapping(styles["company_info"], "metadata style")
+    worksheet["G10"] = f"Срок изготовления {terms['manufacturing_lead_time']}"
+    apply_style(worksheet["C9"], mapping(styles["document_title"], "title style"))
+    apply_style(worksheet["C10"], mapping(styles["payer"], "payer style"))
+    apply_style(worksheet["G9"], mapping(styles["warning"], "warning style"))
+    apply_style(worksheet["G10"], mapping(styles["lead_time"], "lead time style"))
+    if "top_block_rules" in layout:
+        top = mapping(layout["top_block_rules"], "top block rules")
+        if contract.get("contract_version") in {
+            "dinva_classic_presentation_contract.v0.4",
+            "dinva_classic_presentation_contract.v0.5",
+        }:
+            country = mapping(top["country_rich_text"], "country rich text")
+            runs = cast(list[dict[str, Any]], country["runs"])
+            require(
+                country.get("cell") == "C3"
+                and "".join(run["text"] for run in runs) == company["C3"],
+                "country rich text differs from fixed text",
+            )
+            worksheet["C3"] = CellRichText(
+                [
+                    TextBlock(
+                        InlineFont(
+                            rFont=run["font"]["name"],
+                            sz=run["font"]["size"],
+                            b=run["font"]["bold"],
+                            family=run["font"]["family"],
+                            charset=run["font"]["charset"],
+                            color=Color(indexed=run["font"]["color_indexed"]),
+                        ),
+                        run["text"],
+                    )
+                    for run in runs
+                ]
+            )
+        borders = mapping(top["border_xml_by_cell"], "top borders")
+        require(
+            set(borders) == {f"{c}{r}" for r in range(2, 15) for c in "BCDEFGHI"},
+            "top border map mismatch",
         )
-    for coordinate in ("G9", "G10", "G11", "G12", "G13"):
-        apply_style(
-            worksheet[coordinate],
-            mapping(
-                styles["warning" if coordinate == "G9" else "company_info"],
-                "warning style",
-            ),
-        )
+        for coordinate, raw_border in borders.items():
+            worksheet[coordinate].border = Border.from_tree(
+                ElementTree.fromstring(str(raw_border))
+            )
     header_row = integer(layout["table_header_row"], "table header row", minimum=1)
     headers = dict(mapping(fixed["table_headers"], "table headers"))
     headers["F"] = document["apparatus_heading"]
+    header_style_by_column = {"B": "table_header_left", "I": "table_header_right"}
     for column in "BCDEFGHI":
         coordinate = f"{column}{header_row}"
         worksheet[coordinate] = headers[column]
         apply_style(
-            worksheet[coordinate], mapping(styles["table_header"], "table header style")
+            worksheet[coordinate],
+            mapping(
+                styles[header_style_by_column.get(column, "table_header")],
+                "table header style",
+            ),
         )
-    first_row = integer(layout["first_item_row"], "first item row", minimum=1)
-    section_row = integer(layout["section_row"], "section row", minimum=1)
-    capacity = integer(layout["item_capacity"], "item capacity", minimum=1)
-    items = cast(list[Mapping[str, Any]], document["items"])
-    require(len(items) <= capacity, "document exceeds governed item capacity")
-    height_rule = mapping(layout["item_height_rule"], "item height rule")
-    section_value = (
-        document["object_name"] or document["basis"] or document["document_id"]
-    )
-    worksheet[f"C{section_row}"] = f"{fixed['section_label_prefix']} {section_value}"
-    apply_style(worksheet[f"C{section_row}"], mapping(styles["terms"], "section style"))
+    worksheet.row_dimensions[header_row].height = float(plan["header_height"])
     style_by_column = {
         "B": "position",
         "C": "item_name",
@@ -559,18 +1333,23 @@ def render_clean_workbook(
         "H": "money",
         "I": "line_total",
     }
-    for row in range(first_row, first_row + capacity):
-        worksheet.row_dimensions[row].height = float(height_rule["base"])
-        for column, style_name in style_by_column.items():
-            apply_style(
-                worksheet[f"{column}{row}"],
-                mapping(styles[style_name], f"{column} item style"),
-            )
     line_template = cast(
         str, mapping(contract["formulas"], "formulas")["line_total_template"]
     )
-    for offset, item in enumerate(items):
-        row = first_row + offset
+    for entry in cast(list[dict[str, Any]], plan["rows"]):
+        row = cast(int, entry["row"])
+        worksheet.row_dimensions[row].height = float(entry["height"])
+        if entry["kind"] == "section":
+            for column in "BCDEFGHI":
+                apply_style(
+                    worksheet[f"{column}{row}"],
+                    mapping(styles["section"], "section style"),
+                )
+            worksheet[f"C{row}"] = entry["value"]
+            continue
+        if entry["kind"] != "item":
+            continue
+        item = cast(Mapping[str, Any], entry["item"])
         values = {
             "B": item["position"],
             "C": item["name"],
@@ -583,79 +1362,63 @@ def render_clean_workbook(
         }
         for column, value in values.items():
             worksheet[f"{column}{row}"] = value
-        worksheet.row_dimensions[row].height = item_height(
-            [
-                cast(str, item["name"]),
-                cast(str, item["detailed_technical_composition"]),
-                cast(str, item["enclosure"]),
-            ],
-            height_rule,
-        )
-    total_row = integer(layout["total_row"], "total row", minimum=1)
-    worksheet[f"H{total_row}"] = fixed["total_label"]
+            apply_style(
+                worksheet[f"{column}{row}"],
+                mapping(styles[style_by_column[column]], f"{column} item style"),
+            )
+    total_row = cast(int, plan["total_row"])
+    worksheet[f"C{total_row}"] = fixed["total_label"]
     grand_template = cast(
         str, mapping(contract["formulas"], "formulas")["grand_total_template"]
     )
     worksheet[f"I{total_row}"] = grand_template.format(
-        start=first_row, end=first_row + capacity - 1
+        start=integer(layout["first_content_row"], "first content row"),
+        end=cast(int, plan["last_data_row"]),
     )
-    apply_style(worksheet[f"H{total_row}"], mapping(styles["total"], "total style"))
-    apply_style(worksheet[f"I{total_row}"], mapping(styles["total"], "total style"))
-    vat_row = integer(layout["vat_row"], "VAT row", minimum=1)
+    apply_style(
+        worksheet[f"C{total_row}"], mapping(styles["total_label"], "total label style")
+    )
+    apply_style(
+        worksheet[f"I{total_row}"],
+        mapping(styles["total_amount"], "total amount style"),
+    )
     vat = mapping(document["vat"], "VAT")
-    worksheet[f"H{vat_row}"] = vat["approved_text"]
-    worksheet[f"I{vat_row}"] = vat["approved_amount_kzt"]
-    apply_style(worksheet[f"H{vat_row}"], mapping(styles["money"], "VAT style"))
-    apply_style(worksheet[f"I{vat_row}"], mapping(styles["money"], "VAT style"))
-    amount_row = integer(layout["amount_words_row"], "amount row", minimum=1)
-    worksheet[f"C{amount_row}"] = mapping(document["amount_words"], "amount words")[
-        "approved_text"
-    ]
+    amount_row = cast(int, plan["amount_row"])
+    approved_words = mapping(document["amount_words"], "amount words")["approved_text"]
+    worksheet[f"C{amount_row}"] = f"ВСЕГО: {approved_words}, {vat['approved_text']}."
     apply_style(
         worksheet[f"C{amount_row}"],
         mapping(styles["amount_words"], "amount words style"),
     )
-    guard_lines = mapping(fixed["guard_lines"], "guard lines")
-    term_values = [
-        f"Срок действия: {terms['validity'] or 'не указан'}",
-        f"Условия оплаты: {terms['payment']}. Условия поставки: {terms['delivery']}.",
-        f"Срок изготовления: {terms['manufacturing_lead_time']}",
-        guard_lines["specification"],
-        guard_lines["no_send"],
-    ]
-    term_rows = cast(list[int], layout["terms_rows"])
-    require(len(term_rows) == len(term_values), "terms region mismatch")
-    for row, value in zip(term_rows, term_values, strict=True):
-        worksheet[f"C{row}"] = value
+    commercial_start = cast(int, plan["commercial_start"])
+    for offset, raw_line in enumerate(
+        cast(list[Mapping[str, Any]], terms["commercial_lines"])
+    ):
+        row = commercial_start + offset
+        worksheet[f"C{row}"] = raw_line["text"]
         apply_style(
             worksheet[f"C{row}"],
-            mapping(styles["terms"], "terms style"),
+            mapping(styles["commercial_line"], "commercial line style"),
         )
     signatures = mapping(document["signatures"], "signatures")
-    signature_rows = cast(list[int], layout["signature_rows"])
-    require(len(signature_rows) == 3, "signature region mismatch")
-    director_row, executor_row, review_row = signature_rows
-    worksheet[f"B{director_row}"] = signatures["director_title"]
+    director_row = cast(int, plan["director_row"])
+    executor_row = cast(int, plan["executor_row"])
+    worksheet[f"C{director_row}"] = signatures["director_title"]
     worksheet[f"F{director_row}"] = signatures["director_name"]
-    worksheet[f"B{executor_row}"] = signatures["executor_title"]
-    worksheet[f"F{executor_row}"] = signatures["executor_name"]
-    for coordinate in (
-        f"B{director_row}",
-        f"F{director_row}",
-        f"B{executor_row}",
-        f"F{executor_row}",
-    ):
-        apply_style(
-            worksheet[coordinate], mapping(styles["signature"], "signature style")
-        )
-    worksheet[f"B{review_row}"] = guard_lines["review_date"]
+    worksheet[f"H{director_row}"] = signatures["executor_label"]
+    worksheet[f"E{executor_row}"] = "=C9"
+    worksheet[f"H{executor_row}"] = signatures["executor_full_text"]
     apply_style(
-        worksheet[f"B{review_row}"], mapping(styles["signature"], "review style")
+        worksheet[f"C{director_row}"], mapping(styles["director"], "director style")
     )
-    for merged_range in cast(
-        list[str], mapping(layout["merged_cells"], "merged cells")["ranges"]
-    ):
-        worksheet.merge_cells(merged_range)
+    apply_style(
+        worksheet[f"F{director_row}"],
+        mapping(styles["director_name"], "director name style"),
+    )
+    for coordinate in (f"H{director_row}", f"E{executor_row}", f"H{executor_row}"):
+        apply_style(
+            worksheet[coordinate], mapping(styles["executor"], "executor style")
+        )
     print_contract = mapping(contract["print"], "print contract")
     worksheet.page_setup.paperSize = cast(str, print_contract["paper_size"])
     worksheet.page_setup.orientation = cast(str, print_contract["orientation"])
@@ -665,14 +1428,26 @@ def render_clean_workbook(
     worksheet.page_setup.fitToHeight = integer(
         print_contract["fit_to_height"], "fit height"
     )
+    native_print = (
+        contract.get("contract_version") == "dinva_classic_presentation_contract.v0.5"
+    )
+    worksheet.page_setup.fitToWidth = (
+        None if native_print else integer(print_contract["fit_to_width"], "fit width")
+    )
     worksheet.sheet_properties.pageSetUpPr.fitToPage = bool(
         print_contract["fit_to_page"]
     )
     margins = mapping(print_contract["margins"], "margins")
     for name in ("left", "right", "top", "bottom", "header", "footer"):
         setattr(worksheet.page_margins, name, float(cast(float, margins[name])))
-    final_row = integer(layout["final_row"], "final row", minimum=1)
-    worksheet.print_area = f"B1:I{final_row}"
+    if not native_print:
+        worksheet.print_title_rows = cast(
+            str, mapping(layout["pagination"], "pagination")["repeat_rows"]
+        )
+        for break_after_row in cast(list[int], plan["page_breaks"]):
+            worksheet.row_breaks.append(Break(id=break_after_row))
+        final_row = cast(int, plan["final_row"])
+        worksheet.print_area = f"B1:I{final_row}"
     workbook.save(output)
     workbook.close()
     asset = mapping(cast(list[Any], contract["assets"])[0], "logo asset")
@@ -689,6 +1464,11 @@ def render_clean_workbook(
             ),
             "DINVA_DOCUMENT_SHA256": document_sha256,
         },
+        (
+            mapping(asset["drawing_semantics"], "logo drawing semantics")
+            if "drawing_semantics" in asset
+            else None
+        ),
     )
 
 
@@ -700,15 +1480,51 @@ def archive_parts(path: Path) -> dict[str, bytes]:
         raise RendererError(f"candidate is not a valid XLSX package: {exc}") from exc
 
 
-def drawing_xml(placement: Mapping[str, Any]) -> bytes:
-    require(placement.get("anchor_type") == "ONE_CELL", "logo anchor type mismatch")
+def drawing_xml(
+    placement: Mapping[str, Any], semantics: Mapping[str, Any] | None = None
+) -> bytes:
+    anchor_type = placement.get("anchor_type")
+    if anchor_type == "ONE_CELL":
+        start = mapping(placement["from"], "logo from anchor")
+        extent = mapping(placement["extent"], "logo extent")
+
+        def legacy_marker(name: str, value: Mapping[str, Any]) -> str:
+            column = integer(value["column"], "anchor column")
+            column_offset = integer(value["column_offset"], "anchor column offset")
+            row = integer(value["row"], "anchor row")
+            row_offset = integer(value["row_offset"], "anchor row offset")
+            return (
+                f"<xdr:{name}><xdr:col>{column}</xdr:col>"
+                f"<xdr:colOff>{column_offset}</xdr:colOff>"
+                f"<xdr:row>{row}</xdr:row>"
+                f"<xdr:rowOff>{row_offset}</xdr:rowOff>"
+                f"</xdr:{name}>"
+            )
+
+        return (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<xdr:wsDr xmlns:xdr="{DRAWING_NS}" xmlns:a="{DRAWING_MAIN_NS}" '
+            f'xmlns:r="{OFFICE_REL_NS}"><xdr:oneCellAnchor>'
+            + legacy_marker("from", start)
+            + f'<xdr:ext cx="{integer(extent["cx"], "logo extent cx")}" '
+            f'cy="{integer(extent["cy"], "logo extent cy")}"/>'
+            + '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="DINVA classic logo"/>'
+            '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/>'
+            "</xdr:cNvPicPr></xdr:nvPicPr>"
+            '<xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch>'
+            '</xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+            "<a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr></xdr:pic><xdr:clientData/>"
+            "</xdr:oneCellAnchor></xdr:wsDr>"
+        ).encode("utf-8")
+    require(anchor_type == "TWO_CELL", "logo anchor type mismatch")
+    require(placement.get("base_cell") == "B2", "logo base cell mismatch")
     start = mapping(placement["from"], "logo from anchor")
-    extent = mapping(placement["extent"], "logo extent")
+    end = mapping(placement["to"], "logo to anchor")
 
     def marker(name: str, value: Mapping[str, Any]) -> str:
-        column = integer(value["column"], "anchor column")
+        column = 1 + integer(value["column_delta"], "anchor column delta")
         column_offset = integer(value["column_offset"], "anchor column offset")
-        row = integer(value["row"], "anchor row")
+        row = 1 + integer(value["row_delta"], "anchor row delta")
         row_offset = integer(value["row_offset"], "anchor row offset")
         return (
             f"<xdr:{name}><xdr:col>{column}</xdr:col>"
@@ -718,19 +1534,28 @@ def drawing_xml(placement: Mapping[str, Any]) -> bytes:
             f"</xdr:{name}>"
         )
 
+    if semantics is not None:
+        require(semantics.get("edit_as") == "absolute", "logo editAs mismatch")
+        return (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<xdr:wsDr xmlns:xdr="{DRAWING_NS}"><xdr:twoCellAnchor editAs="absolute">'
+            + marker("from", start)
+            + marker("to", end)
+            + cast(str, semantics["picture_xml"])
+            + "<xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"
+        ).encode("utf-8")
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         f'<xdr:wsDr xmlns:xdr="{DRAWING_NS}" xmlns:a="{DRAWING_MAIN_NS}" '
-        f'xmlns:r="{OFFICE_REL_NS}"><xdr:oneCellAnchor>'
+        f'xmlns:r="{OFFICE_REL_NS}"><xdr:twoCellAnchor editAs="absolute">'
         + marker("from", start)
-        + f'<xdr:ext cx="{integer(extent["cx"], "logo extent cx")}" '
-        f'cy="{integer(extent["cy"], "logo extent cy")}"/>'
+        + marker("to", end)
         + '<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="1" name="DINVA classic logo"/>'
         '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
         '<xdr:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch>'
         '</xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
         "<a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr></xdr:pic><xdr:clientData/>"
-        "</xdr:oneCellAnchor></xdr:wsDr>"
+        "</xdr:twoCellAnchor></xdr:wsDr>"
     ).encode("utf-8")
 
 
@@ -754,10 +1579,17 @@ def inject_governed_parts(
     logo: bytes,
     placement: Mapping[str, Any],
     custom_properties: Mapping[str, str],
+    drawing_semantics: Mapping[str, Any] | None = None,
 ) -> None:
     parts = archive_parts(path)
     sheet_name = "xl/worksheets/sheet1.xml"
     root = ElementTree.fromstring(parts[sheet_name])
+    # Rich-text serializers may omit xml:space on whitespace-only runs.
+    # Preserve the governed text in the raw package, before independent validation.
+    for text_node in root.findall(f".//{{{SPREADSHEET_NS}}}t"):
+        value = text_node.text or ""
+        if value and value != value.strip():
+            text_node.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
     drawing = ElementTree.SubElement(root, f"{{{SPREADSHEET_NS}}}drawing")
     drawing.set(f"{{{OFFICE_REL_NS}}}id", "rId1")
     ElementTree.register_namespace("", SPREADSHEET_NS)
@@ -771,7 +1603,7 @@ def inject_governed_parts(
         f'Type="{OFFICE_REL_NS}/drawing" Target="../drawings/drawing1.xml"/>'
         "</Relationships>"
     ).encode()
-    parts["xl/drawings/drawing1.xml"] = drawing_xml(placement)
+    parts["xl/drawings/drawing1.xml"] = drawing_xml(placement, drawing_semantics)
     parts["xl/drawings/_rels/drawing1.xml.rels"] = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         f'<Relationships xmlns="{PACKAGE_REL_NS}"><Relationship Id="rId1" '
@@ -804,6 +1636,7 @@ def inject_governed_parts(
             ),
         },
     )
+    ElementTree.register_namespace("", CONTENT_TYPES_NS)
     parts["[Content_Types].xml"] = ElementTree.tostring(
         content_types, encoding="utf-8", xml_declaration=True
     )
@@ -821,6 +1654,7 @@ def inject_governed_parts(
             "Target": "docProps/custom.xml",
         },
     )
+    ElementTree.register_namespace("", PACKAGE_REL_NS)
     parts["_rels/.rels"] = ElementTree.tostring(
         package_rels, encoding="utf-8", xml_declaration=True
     )
