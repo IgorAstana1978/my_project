@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -341,34 +342,35 @@ def test_source_toctou_rolls_back_draft(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
 ) -> None:
     producer, profile, predecessor = print_successor(tmp_path, monkeypatch)
-    import extract_dinva_classic_presentation_profile_v0_2 as publisher
 
     source = Path(profile["reference_provenance"][0]["path"])
     out = tmp_path / "toctou" / "dinva-classic-presentation-profile-v0.5-DRAFT.json"
     if phase == "after_link":
-        original_link = publisher.os.link
+        original_link = os.link
 
         def link(src: Any, dst: Any) -> None:
             original_link(src, dst)
             source.write_bytes(b"drift after link")
 
-        monkeypatch.setattr(publisher.os, "link", link)
+        monkeypatch.setattr(os, "link", link)
     else:
-        original_fsync = publisher.os.fsync
+        original_fsync = os.fsync
 
         def fsync(fd: int) -> None:
             original_fsync(fd)
             source.write_bytes(b"drift after staging")
 
-        monkeypatch.setattr(publisher.os, "fsync", fsync)
+        monkeypatch.setattr(os, "fsync", fsync)
     with pytest.raises(ValueError, match="SHA"):
         producer.publish_v0_5_draft(profile, predecessor, out)
     assert not out.parent.exists()
 
 
-def test_nominal_capacity_derived_not_tuned(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
-    from dinva_print_contract import nominal_page_capacity
+def test_nominal_capacity_derived_not_tuned() -> None:
+    contract = load_file(
+        "dinva_print_contract_capacity_test",
+        ROOT / "scripts/dinva_print_contract.py",
+    )
 
     config = {
         "paper_size": "9",
@@ -376,11 +378,13 @@ def test_nominal_capacity_derived_not_tuned(monkeypatch: pytest.MonkeyPatch) -> 
         "scale": 54,
         "margins": {"top": 0.5, "bottom": 0.5},
     }
-    first = nominal_page_capacity(config)
+    first = contract.nominal_page_capacity(config)
     config["scale"] = 27
-    assert nominal_page_capacity(config) == first * 2
+    assert contract.nominal_page_capacity(config) == first * 2
     config["margins"] = {"top": 0.5, "bottom": 1.5}
-    assert nominal_page_capacity(config) == pytest.approx(first * 2 - 72 / 0.27)
+    assert contract.nominal_page_capacity(config) == pytest.approx(
+        first * 2 - 72 / 0.27
+    )
 
 
 @pytest.mark.parametrize("sizes", [[1], [40], [130]])

@@ -54,6 +54,12 @@ xmlns:a14="{A14}" xmlns:r="{R}">
 </xdr:spPr></xdr:pic><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>"""
 
 
+def require_element(parent: ElementTree.Element, path: str) -> ElementTree.Element:
+    element = parent.find(path)
+    assert element is not None, f"missing XML element: {path}"
+    return element
+
+
 def rewrite_drawing(path: Path, transform: Any) -> None:
     with ZipFile(path) as archive:
         parts = {n: archive.read(n) for n in archive.namelist()}
@@ -194,11 +200,11 @@ def test_visual_successor_production_builder_dynamic_render(
     )
     geometry = profile["presentation_contract"]["assets"][0]["drawing_semantics"]
     picture = ElementTree.fromstring(geometry["picture_xml"])
-    assert picture.find(f"{{{XDR}}}spPr/{{{A}}}xfrm/{{{A}}}ext").attrib == {
+    assert require_element(picture, f"{{{XDR}}}spPr/{{{A}}}xfrm/{{{A}}}ext").attrib == {
         "cx": "1504950",
         "cy": "514350",
     }
-    assert picture.find(f"{{{XDR}}}spPr/{{{A}}}xfrm/{{{A}}}off").attrib == {
+    assert require_element(picture, f"{{{XDR}}}spPr/{{{A}}}xfrm/{{{A}}}off").attrib == {
         "x": "457200",
         "y": "285750",
     }
@@ -309,7 +315,9 @@ def test_object_height_bounds_and_logo_marker_drift_rejected(
     output = render_case(case, tmp_path / "synthetic-original.xlsx")
 
     def change_marker(root: ElementTree.Element) -> None:
-        root.find(f"{{{XDR}}}twoCellAnchor/{{{XDR}}}to/{{{XDR}}}rowOff").text = "999999"
+        require_element(
+            root, f"{{{XDR}}}twoCellAnchor/{{{XDR}}}to/{{{XDR}}}rowOff"
+        ).text = "999999"
 
     rewrite_drawing(output, change_marker)
     validator = load_file(
@@ -361,26 +369,27 @@ def test_independent_logo_drawing_mutations_rejected(
 
     def mutate(root: ElementTree.Element) -> None:
         anchor = root[0]
-        pic = anchor.find(f"{{{XDR}}}pic")
-        sp = pic.find(f"{{{XDR}}}spPr")
+        pic = require_element(anchor, f"{{{XDR}}}pic")
+        sp = require_element(pic, f"{{{XDR}}}spPr")
         if mutation == "missing_transform":
-            sp.remove(sp.find(f"{{{A}}}xfrm"))
+            transform = require_element(sp, f"{{{A}}}xfrm")
+            sp.remove(transform)
         elif mutation == "off":
-            sp.find(f"{{{A}}}xfrm/{{{A}}}off").set("x", "457201")
+            require_element(sp, f"{{{A}}}xfrm/{{{A}}}off").set("x", "457201")
         elif mutation == "extent":
-            sp.find(f"{{{A}}}xfrm/{{{A}}}ext").set("cx", "1504949")
+            require_element(sp, f"{{{A}}}xfrm/{{{A}}}ext").set("cx", "1504949")
         elif mutation == "crop":
-            pic.find(f"{{{XDR}}}blipFill/{{{A}}}srcRect").set("l", "100")
+            require_element(pic, f"{{{XDR}}}blipFill/{{{A}}}srcRect").set("l", "100")
         elif mutation == "stretch":
-            pic.find(f"{{{XDR}}}blipFill/{{{A}}}stretch/{{{A}}}fillRect").set(
-                "r", "100"
-            )
+            require_element(
+                pic, f"{{{XDR}}}blipFill/{{{A}}}stretch/{{{A}}}fillRect"
+            ).set("r", "100")
         elif mutation == "dpi":
-            pic.find(f".//{{{A14}}}useLocalDpi").set("val", "1")
+            require_element(pic, f".//{{{A14}}}useLocalDpi").set("val", "1")
         elif mutation == "locks":
-            pic.find(f".//{{{A}}}picLocks").set("noChangeAspect", "0")
+            require_element(pic, f".//{{{A}}}picLocks").set("noChangeAspect", "0")
         elif mutation == "hidden_geometry":
-            pic.find(f".//{{{A14}}}hiddenLine").set("w", "9526")
+            require_element(pic, f".//{{{A14}}}hiddenLine").set("w", "9526")
         else:
             anchor.set("editAs", "twoCell")
 
@@ -411,7 +420,7 @@ def test_family_logo_geometry_disagreement_is_hold(
     ]
 
     def drift(root: ElementTree.Element) -> None:
-        root.find(f".//{{{A}}}xfrm/{{{A}}}ext").set("cy", "514351")
+        require_element(root, f".//{{{A}}}xfrm/{{{A}}}ext").set("cy", "514351")
 
     rewrite_drawing(family[0].path, drift)
     family[0] = producer.BoundInput(
