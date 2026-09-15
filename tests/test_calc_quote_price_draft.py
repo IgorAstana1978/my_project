@@ -36,6 +36,18 @@ calculator = cast(
 )
 
 
+@pytest.fixture(autouse=True)
+def synthetic_workbooks_are_bound_by_test_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing synthetic unit workbooks exercise mappings, not real SHA binding."""
+    monkeypatch.setattr(
+        calculator,
+        "require_price_baseline",
+        lambda path, version: calculator.HISTORICAL,
+    )
+
+
 def confirmed_rows() -> list[list[str]]:
     return [
         [
@@ -810,7 +822,11 @@ def sha256(path: Path) -> str:
 
 
 def calculate(workbook_path: Path, csv_path: Path) -> Any:
-    return calculator.calculate_price_draft(workbook_path, csv_path)
+    return calculator.calculate_price_draft(
+        workbook_path,
+        csv_path,
+        price_baseline_version=calculator.HISTORICAL.version,
+    )
 
 
 def write_shu_t1_workbook(path: Path, *, rt_work: int = 900) -> None:
@@ -1182,7 +1198,7 @@ def test_report_contains_required_safety_boundaries(tmp_path: Path) -> None:
     assert "Human Approval:" in report
 
 
-def test_cli_prints_pass_report_and_returns_zero(tmp_path: Path) -> None:
+def test_cli_rejects_unversioned_synthetic_workbook(tmp_path: Path) -> None:
     workbook_path = tmp_path / "price.xlsx"
     csv_path = tmp_path / "composition.csv"
     write_workbook(workbook_path)
@@ -1202,13 +1218,8 @@ def test_cli_prints_pass_report_and_returns_zero(tmp_path: Path) -> None:
         check=False,
     )
 
-    assert result.returncode == 0
-    assert "Status:\nPASS" in result.stdout
-    assert "Cabinet price:\n7 985" in result.stdout
-    assert "Component material total:\n16 900" in result.stdout
-    assert "Work total:\n2 700" in result.stdout
-    assert "Base:\n30 965" in result.stdout
-    assert "Total preliminary price:\n44 512" in result.stdout
+    assert result.returncode != 0
+    assert "--price-baseline-version" in result.stderr
 
 
 def test_existing_workflows_remain_isolated_from_calculator() -> None:
@@ -1512,6 +1523,7 @@ def test_custom_sche_uses_checked_base_cost_without_price_row(
         workbook_path,
         csv_path,
         custom_cabinet_base_cost=10000,
+        price_baseline_version=calculator.HISTORICAL.version,
     )
 
     assert result.status == "PASS"

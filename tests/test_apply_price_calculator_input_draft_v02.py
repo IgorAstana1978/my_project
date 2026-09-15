@@ -1928,11 +1928,15 @@ def test_checked_runner_routes_four_sche_groups_through_resolver(
 
     monkeypatch.setattr(runner, "resolve_custom_sche_base_cost", fake_resolver)
     monkeypatch.setattr(runner, "run_calculator_cli", fake_calculator)
+    monkeypatch.setattr(
+        runner, "require_price_baseline", lambda _path, _version: runner.HISTORICAL
+    )
     metal_workbook = tmp_path / "metal.xlsx"
     result = runner.run_checked_price_calculator_from_completed_draft(
         output,
         tmp_path / "prices.xlsx",
         custom_sche_metal_workbook=metal_workbook,
+        price_baseline_version=runner.HISTORICAL.version,
     )
 
     assert result.status == "PASS"

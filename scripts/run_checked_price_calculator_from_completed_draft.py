@@ -17,6 +17,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+from price_baseline_contract import (
+    BASELINES,
+    HISTORICAL,
+    SUCCESSOR,
+    require_price_baseline,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = Path(__file__).with_name(
     "validate_completed_price_calculator_input_draft.py"
@@ -351,6 +358,8 @@ class ProfilePositionCalculation:
 class CheckedRunResult:
     completed_input_json: Path
     price_workbook: Path
+    price_baseline_version: str | None = None
+    price_baseline_sha256: str | None = None
     status: str = "FAIL"
     checks: dict[str, str] = field(
         default_factory=lambda: {
@@ -394,10 +403,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--completed-input-json", required=True, type=Path)
     parser.add_argument("--price-workbook", required=True, type=Path)
     parser.add_argument("--custom-sche-metal-workbook", type=Path)
-    parser.add_argument("--pricing-profile", required=True, type=Path)
+    parser.add_argument("--pricing-profile", type=Path)
     parser.add_argument(
         "--expected-pricing-profile-sha256",
-        required=True,
+    )
+    parser.add_argument(
+        "--price-baseline-version",
+        choices=(HISTORICAL.version, SUCCESSOR.version),
+        help="Required for a future/non-profile run; profiles remain historical",
     )
     return parser.parse_args(argv)
 
@@ -2108,6 +2121,22 @@ def run_calculator_cli(
     input_csv: Path,
     custom_cabinet_base_cost: int | None = None,
 ) -> CalculatorProcessResult:
+    version = next(
+        (
+            item.version
+            for item in BASELINES.values()
+            if price_workbook.resolve(strict=False) == item.path.resolve(strict=False)
+        ),
+        None,
+    )
+    if version is None:
+        return CalculatorProcessResult(
+            returncode=1, stdout="", stderr="unknown price baseline path/version"
+        )
+    try:
+        require_price_baseline(price_workbook, version)
+    except ValueError as exc:
+        return CalculatorProcessResult(returncode=1, stdout="", stderr=str(exc))
     child_env = os.environ.copy()
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
@@ -2116,6 +2145,8 @@ def run_calculator_cli(
         str(CALCULATOR_PATH),
         "--price-workbook",
         str(price_workbook),
+        "--price-baseline-version",
+        version,
         "--input-csv",
         str(input_csv),
     ]
@@ -2481,6 +2512,7 @@ def run_checked_price_calculator_from_completed_draft(
     custom_sche_metal_workbook: Path | None = None,
     pricing_profile_path: Path | None = None,
     expected_pricing_profile_sha256: str | None = None,
+    price_baseline_version: str | None = None,
 ) -> CheckedRunResult:
     result = CheckedRunResult(
         completed_input_json=resolved(completed_input_json),
@@ -2490,6 +2522,24 @@ def run_checked_price_calculator_from_completed_draft(
     profile_mode = (
         pricing_profile_path is not None or expected_pricing_profile_sha256 is not None
     )
+    if profile_mode and price_baseline_version not in (None, HISTORICAL.version):
+        add_red_flag(
+            result, "frozen Invoice519 profile rejects successor price baseline"
+        )
+        return result
+    if not profile_mode:
+        if price_baseline_version is None:
+            add_red_flag(result, "explicit price baseline version is required")
+            return result
+        try:
+            baseline = require_price_baseline(
+                result.price_workbook, price_baseline_version
+            )
+        except ValueError as exc:
+            add_red_flag(result, str(exc))
+            return result
+        result.price_baseline_version = baseline.version
+        result.price_baseline_sha256 = baseline.sha256
     if profile_mode:
         result.checks.update(
             {
@@ -2597,6 +2647,12 @@ def run_checked_price_calculator_from_completed_draft(
             )
     finally:
         cleanup_temp_csv(result)
+
+    try:
+        require_price_baseline(result.price_workbook, cast(str, price_baseline_version))
+    except ValueError as exc:
+        add_red_flag(result, f"price baseline final drift: {exc}")
+        return result
 
     all_checks_pass = all(status == "pass" for status in result.checks.values())
     result.status = "PASS" if all_checks_pass and not result.red_flags else "FAIL"
@@ -2798,6 +2854,16 @@ def format_report(result: CheckedRunResult) -> str:
         "Checks:",
     ]
     lines.extend(f"{name}: {status}" for name, status in result.checks.items())
+    if result.price_baseline_version is not None:
+        lines.extend(
+            [
+                "",
+                "Price baseline version:",
+                result.price_baseline_version,
+                "Price baseline SHA-256:",
+                result.price_baseline_sha256 or "not validated",
+            ]
+        )
     lines.extend(["", "Red flags:"])
     lines.extend(format_items(result.red_flags))
     lines.extend(["", "Calculator result:"])
@@ -2921,6 +2987,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         custom_sche_metal_workbook=args.custom_sche_metal_workbook,
         pricing_profile_path=args.pricing_profile,
         expected_pricing_profile_sha256=args.expected_pricing_profile_sha256,
+        price_baseline_version=args.price_baseline_version,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

@@ -6,12 +6,17 @@ import argparse
 import csv
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook  # type: ignore[import-untyped]
+from price_baseline_contract import (
+    HISTORICAL,
+    SUCCESSOR,
+    require_price_baseline,
+)
 
 CSV_DELIMITER = ";"
 KRN_SHEET_NAME = "КРН"
@@ -369,6 +374,29 @@ RT820_INSTALL_TYPE = "temperature_relay_din_2mod"
 RT820_COMPONENT_LABEL = "Реле температуры RT-820 EKF PROxima с внешним датчиком"
 RT820_CABINET_CODE = "CAB-KRN-12"
 RT820_APPROVED_MAPPING = APPROVED_COMPONENT_PRICE_MAPPINGS[-1]
+SUCCESSOR_COMPONENT_PRICE_MAPPINGS = tuple(
+    (
+        replace(
+            mapping,
+            expected_material_price=(
+                15000 if mapping.sheet_name == "ЩР" and mapping.row == 8 else 4500
+            ),
+        )
+        if (mapping.sheet_name, mapping.row) in {("ЩР", 8), ("КРН", 5)}
+        else mapping
+    )
+    for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
+)
+
+
+def component_price_mappings(version: str) -> tuple[ApprovedComponentPriceMapping, ...]:
+    if version == HISTORICAL.version:
+        return APPROVED_COMPONENT_PRICE_MAPPINGS
+    if version == SUCCESSOR.version:
+        return SUCCESSOR_COMPONENT_PRICE_MAPPINGS
+    raise ValueError("unknown price baseline version")
+
+
 SHU_T2_RT820_TECHNICAL_CONTRACT = "controlled_shu_t2_rt820_technical_successor.v0.1"
 SHU_T2_RT820_TECHNICAL_SHA256 = (
     "c27c2c3032699cb07c981aeb4af429b27ec18180225319f45ce65ab77fedee44"
@@ -418,6 +446,8 @@ class CompositionRow:
 class PriceCalculationResult:
     price_workbook: Path
     input_csv: Path
+    price_baseline_version: str = HISTORICAL.version
+    price_baseline_sha256: str | None = None
     status: str = "FAIL"
     product_name: str | None = None
     input_rows_count: int = 0
@@ -537,6 +567,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         type=Path,
         help="Path to the approved .xlsx price workbook",
+    )
+    parser.add_argument(
+        "--price-baseline-version",
+        required=True,
+        choices=(HISTORICAL.version, SUCCESSOR.version),
+        help="Explicit exact workbook/SHA contract (no implicit fallback)",
     )
     parser.add_argument(
         "--input-csv",
@@ -758,11 +794,14 @@ def parse_cabinet_signature(
 def resolve_component_mapping(
     signature: TechnicalSignature,
     component_code: str | None = None,
+    mappings: tuple[ApprovedComponentPriceMapping, ...] | None = None,
 ) -> ApprovedComponentPriceMapping | None:
     exact_mapping_required = exact_component_price_mapping_required(component_code)
     matches = [
         mapping
-        for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS
+        for mapping in (
+            APPROVED_COMPONENT_PRICE_MAPPINGS if mappings is None else mappings
+        )
         if mapping.signature == signature
         and (
             mapping.component_code == component_code
@@ -821,6 +860,11 @@ def resolve_cabinet_mapping(
 
 
 def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow]:
+    try:
+        selected_mappings = component_price_mappings(result.price_baseline_version)
+    except ValueError as exc:
+        add_red_flag(result, str(exc))
+        return []
     path = result.input_csv
     if not path.is_file():
         add_red_flag(result, f"input CSV does not exist: {path}")
@@ -920,7 +964,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
             )
             if not rt820_requested and component_signature is not None:
                 component_mapping = resolve_component_mapping(
-                    component_signature, component_code
+                    component_signature, component_code, selected_mappings
                 )
             if component_mapping is None:
                 if rt820_requested:
@@ -1091,6 +1135,9 @@ def read_approved_component_price(
     mapping: ApprovedComponentPriceMapping,
     result: PriceCalculationResult,
 ) -> tuple[int, int] | None:
+    if mapping not in component_price_mappings(result.price_baseline_version):
+        add_red_flag(result, "cross-version component price mapping mix; ask Igor")
+        return None
     worksheet = mapping_worksheet(workbook, mapping.sheet_name, result)
     if worksheet is None:
         return None
@@ -1256,11 +1303,26 @@ def calculate_price_draft(
     price_workbook: Path,
     input_csv: Path,
     custom_cabinet_base_cost: int | None = None,
+    price_baseline_version: str | None = None,
 ) -> PriceCalculationResult:
+    if price_baseline_version is None:
+        return PriceCalculationResult(
+            price_workbook=resolved(price_workbook),
+            input_csv=resolved(input_csv),
+            price_baseline_version="not selected",
+            red_flags=["explicit price baseline version is required"],
+        )
     result = PriceCalculationResult(
         price_workbook=resolved(price_workbook),
         input_csv=resolved(input_csv),
+        price_baseline_version=price_baseline_version,
     )
+    try:
+        baseline = require_price_baseline(result.price_workbook, price_baseline_version)
+    except ValueError as exc:
+        add_red_flag(result, str(exc))
+        return result
+    result.price_baseline_sha256 = baseline.sha256
     rows = load_composition_rows(result)
     if not rows:
         return result
@@ -1336,6 +1398,12 @@ def calculate_price_draft(
     finally:
         if workbook is not None:
             workbook.close()
+
+    try:
+        require_price_baseline(result.price_workbook, price_baseline_version)
+    except ValueError as exc:
+        add_red_flag(result, f"price baseline final drift: {exc}")
+        return result
 
     if result.red_flags or cabinet_price is None:
         return result
@@ -1424,6 +1492,12 @@ def format_report(result: PriceCalculationResult) -> str:
         "Workbook path:",
         str(result.price_workbook),
         "",
+        "Price baseline version:",
+        result.price_baseline_version,
+        "",
+        "Price baseline SHA-256:",
+        result.price_baseline_sha256 or "not validated",
+        "",
         "Input CSV path:",
         str(result.input_csv),
         "",
@@ -1484,6 +1558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.price_workbook,
         args.input_csv,
         custom_cabinet_base_cost=args.custom_cabinet_base_cost,
+        price_baseline_version=args.price_baseline_version,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

@@ -61,6 +61,25 @@ def load_runner_module() -> ModuleType:
 runner = cast(Any, load_runner_module())
 
 
+@pytest.fixture(autouse=True)
+def synthetic_runner_inputs_use_historical_test_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep existing synthetic flow tests isolated from real workbook SHA checks."""
+    original = runner.run_checked_price_calculator_from_completed_draft
+
+    def bound_run(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("price_baseline_version", runner.HISTORICAL.version)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        runner, "require_price_baseline", lambda path, version: runner.HISTORICAL
+    )
+    monkeypatch.setattr(
+        runner, "run_checked_price_calculator_from_completed_draft", bound_run
+    )
+
+
 def valid_data() -> dict[str, Any]:
     return {
         "schema_version": "price_calculator_input_draft.v0.1",
@@ -598,6 +617,15 @@ def test_child_calculator_uses_utf8_environment_and_decoding(
         )()
 
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        runner,
+        "BASELINES",
+        {
+            runner.HISTORICAL.version: SimpleNamespace(
+                version=runner.HISTORICAL.version, path=PRICE_WORKBOOK
+            )
+        },
+    )
     result = runner.run_calculator_cli(PRICE_WORKBOOK, Path("input.csv"))
 
     assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
@@ -605,6 +633,7 @@ def test_child_calculator_uses_utf8_environment_and_decoding(
     assert captured["text"] is True
     assert captured["encoding"] == "utf-8"
     assert captured["errors"] == "strict"
+    assert "--price-baseline-version" in captured["command"]
     assert result.stdout == "ПР 800×600×250"
 
 
