@@ -17,11 +17,13 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
-from price_baseline_contract import (
+from price_baseline_contract import (  # type: ignore[import-not-found]
+    ACTIVE_VERSION,
     BASELINES,
+    DEFAULT_ACTIVE_SELECTOR,
     HISTORICAL,
-    SUCCESSOR,
     require_price_baseline,
+    resolve_price_baseline,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -360,6 +362,9 @@ class CheckedRunResult:
     price_workbook: Path
     price_baseline_version: str | None = None
     price_baseline_sha256: str | None = None
+    price_baseline_manifest_id: str | None = None
+    price_baseline_manifest_sha256: str | None = None
+    active_selector_path: Path = DEFAULT_ACTIVE_SELECTOR
     status: str = "FAIL"
     checks: dict[str, str] = field(
         default_factory=lambda: {
@@ -401,7 +406,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
     )
     parser.add_argument("--completed-input-json", required=True, type=Path)
-    parser.add_argument("--price-workbook", required=True, type=Path)
+    parser.add_argument(
+        "--price-workbook",
+        type=Path,
+        help="Exact workbook path; omit for the active approved manifest",
+    )
     parser.add_argument("--custom-sche-metal-workbook", type=Path)
     parser.add_argument("--pricing-profile", type=Path)
     parser.add_argument(
@@ -409,8 +418,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--price-baseline-version",
-        choices=(HISTORICAL.version, SUCCESSOR.version),
-        help="Required for a future/non-profile run; profiles remain historical",
+        help="Explicit historical/released binding; omit for active future baseline",
+    )
+    parser.add_argument(
+        "--active-selector",
+        type=Path,
+        default=DEFAULT_ACTIVE_SELECTOR,
     )
     return parser.parse_args(argv)
 
@@ -2120,21 +2133,30 @@ def run_calculator_cli(
     price_workbook: Path,
     input_csv: Path,
     custom_cabinet_base_cost: int | None = None,
+    *,
+    price_baseline_version: str | None = None,
+    active_selector_path: Path = DEFAULT_ACTIVE_SELECTOR,
 ) -> CalculatorProcessResult:
-    version = next(
-        (
-            item.version
-            for item in BASELINES.values()
-            if price_workbook.resolve(strict=False) == item.path.resolve(strict=False)
-        ),
-        None,
-    )
+    version = price_baseline_version
     if version is None:
-        return CalculatorProcessResult(
-            returncode=1, stdout="", stderr="unknown price baseline path/version"
+        version = next(
+            (
+                item.version
+                for item in BASELINES.values()
+                if price_workbook.resolve(strict=False)
+                == item.path.resolve(strict=False)
+            ),
+            ACTIVE_VERSION,
         )
     try:
-        require_price_baseline(price_workbook, version)
+        if version == ACTIVE_VERSION:
+            require_price_baseline(
+                price_workbook,
+                version,
+                active_selector_path=active_selector_path,
+            )
+        else:
+            require_price_baseline(price_workbook, version)
     except ValueError as exc:
         return CalculatorProcessResult(returncode=1, stdout="", stderr=str(exc))
     child_env = os.environ.copy()
@@ -2150,6 +2172,8 @@ def run_calculator_cli(
         "--input-csv",
         str(input_csv),
     ]
+    if version == ACTIVE_VERSION:
+        command.extend(["--active-selector", str(active_selector_path)])
     if custom_cabinet_base_cost is not None:
         command.extend(["--custom-cabinet-base-cost", str(custom_cabinet_base_cost)])
     completed = subprocess.run(
@@ -2317,15 +2341,22 @@ def execute_calculator(
     custom_cabinet_base_cost: int | None = None,
 ) -> bool:
     try:
-        process_result = (
-            run_calculator_cli(result.price_workbook, input_csv)
-            if custom_cabinet_base_cost is None
-            else run_calculator_cli(
+        if result.price_baseline_version == ACTIVE_VERSION:
+            process_result = run_calculator_cli(
+                result.price_workbook,
+                input_csv,
+                custom_cabinet_base_cost=custom_cabinet_base_cost,
+                price_baseline_version=ACTIVE_VERSION,
+                active_selector_path=result.active_selector_path,
+            )
+        elif custom_cabinet_base_cost is None:
+            process_result = run_calculator_cli(result.price_workbook, input_csv)
+        else:
+            process_result = run_calculator_cli(
                 result.price_workbook,
                 input_csv,
                 custom_cabinet_base_cost=custom_cabinet_base_cost,
             )
-        )
     except OSError:
         add_red_flag(result, "calculator invocation failed")
         return False
@@ -2508,15 +2539,20 @@ def cleanup_temp_csv(result: CheckedRunResult) -> None:
 
 def run_checked_price_calculator_from_completed_draft(
     completed_input_json: Path,
-    price_workbook: Path,
+    price_workbook: Path | None,
     custom_sche_metal_workbook: Path | None = None,
     pricing_profile_path: Path | None = None,
     expected_pricing_profile_sha256: str | None = None,
     price_baseline_version: str | None = None,
+    active_selector_path: Path = DEFAULT_ACTIVE_SELECTOR,
 ) -> CheckedRunResult:
+    requested_workbook = (
+        resolved(price_workbook) if price_workbook is not None else None
+    )
     result = CheckedRunResult(
         completed_input_json=resolved(completed_input_json),
-        price_workbook=resolved(price_workbook),
+        price_workbook=requested_workbook or Path("<active-price-workbook>"),
+        active_selector_path=resolved(active_selector_path),
     )
 
     profile_mode = (
@@ -2528,18 +2564,33 @@ def run_checked_price_calculator_from_completed_draft(
         )
         return result
     if not profile_mode:
-        if price_baseline_version is None:
-            add_red_flag(result, "explicit price baseline version is required")
-            return result
         try:
-            baseline = require_price_baseline(
-                result.price_workbook, price_baseline_version
-            )
+            if price_baseline_version is None:
+                baseline = resolve_price_baseline(
+                    requested_workbook,
+                    None,
+                    active_selector_path=result.active_selector_path,
+                )
+            elif price_baseline_version == ACTIVE_VERSION:
+                baseline = require_price_baseline(
+                    requested_workbook,
+                    ACTIVE_VERSION,
+                    active_selector_path=result.active_selector_path,
+                )
+            else:
+                baseline = require_price_baseline(
+                    requested_workbook,
+                    price_baseline_version,
+                )
         except ValueError as exc:
             add_red_flag(result, str(exc))
             return result
+        if baseline.version == ACTIVE_VERSION:
+            result.price_workbook = baseline.path
         result.price_baseline_version = baseline.version
         result.price_baseline_sha256 = baseline.sha256
+        result.price_baseline_manifest_id = baseline.manifest_id
+        result.price_baseline_manifest_sha256 = baseline.manifest_sha256
     if profile_mode:
         result.checks.update(
             {
@@ -2649,7 +2700,17 @@ def run_checked_price_calculator_from_completed_draft(
         cleanup_temp_csv(result)
 
     try:
-        require_price_baseline(result.price_workbook, cast(str, price_baseline_version))
+        if result.price_baseline_version == ACTIVE_VERSION:
+            require_price_baseline(
+                result.price_workbook,
+                ACTIVE_VERSION,
+                active_selector_path=result.active_selector_path,
+            )
+        else:
+            require_price_baseline(
+                result.price_workbook,
+                cast(str, result.price_baseline_version),
+            )
     except ValueError as exc:
         add_red_flag(result, f"price baseline final drift: {exc}")
         return result
@@ -2862,6 +2923,10 @@ def format_report(result: CheckedRunResult) -> str:
                 result.price_baseline_version,
                 "Price baseline SHA-256:",
                 result.price_baseline_sha256 or "not validated",
+                "Price baseline manifest ID:",
+                result.price_baseline_manifest_id or "explicit static/frozen binding",
+                "Price baseline manifest SHA-256:",
+                result.price_baseline_manifest_sha256 or "not applicable",
             ]
         )
     lines.extend(["", "Red flags:"])
@@ -2988,6 +3053,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         pricing_profile_path=args.pricing_profile,
         expected_pricing_profile_sha256=args.expected_pricing_profile_sha256,
         price_baseline_version=args.price_baseline_version,
+        active_selector_path=args.active_selector,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

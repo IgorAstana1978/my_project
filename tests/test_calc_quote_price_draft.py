@@ -1198,7 +1198,7 @@ def test_report_contains_required_safety_boundaries(tmp_path: Path) -> None:
     assert "Human Approval:" in report
 
 
-def test_cli_rejects_unversioned_synthetic_workbook(tmp_path: Path) -> None:
+def test_cli_defaults_unversioned_workbook_to_active_selector(tmp_path: Path) -> None:
     workbook_path = tmp_path / "price.xlsx"
     csv_path = tmp_path / "composition.csv"
     write_workbook(workbook_path)
@@ -1219,7 +1219,8 @@ def test_cli_rejects_unversioned_synthetic_workbook(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert "--price-baseline-version" in result.stderr
+    assert "active selector does not exist" in result.stdout
+    assert result.stderr == ""
 
 
 def test_existing_workflows_remain_isolated_from_calculator() -> None:

@@ -1,23 +1,54 @@
-# Versioned price baseline for future calculations
+# Dynamic approved price baseline manifest v0.1
 
 The historical Invoice519 pricing profile remains bound to `Таблица 05.01.2026
 верная.xlsx`, SHA-256
 `79b3ace77e84b87c46eb708f1c3b2ae63b5c6d75c5ebf6889c12b99624112ba1`.
 Neither its approved mappings nor its frozen calculation/provenance is repriced.
 
-The successor price source is the entire exact `Таблица 09.09.2026
+The compatibility successor price source is the entire exact `Таблица 09.09.2026
 верная-2.xlsx`, SHA-256
 `02ca5be9b2eb6775289ee1053c389a659c85e2bd27a2b9867b7d523d6d6e4096`.
 The workbook SHA governs dynamic values. This binding does not authorize a
 client-facing price, invoice, quote, sending, procurement or production action.
 
-Both price-calculator entrypoints require an explicit
-`--price-baseline-version` for a future/non-profile run. The two allowed values
-are `historical_invoice519` and `successor_2026_09_09`. The checked frozen
-Invoice519 profile accepts only the historical binding already recorded in its
-authoritative inputs. Unknown versions, path/SHA mismatch, a mapping from the
-wrong version, changed expected values, formula prices and ambiguous same-sheet
-lookups fail closed. No fallback to the other baseline occurs.
+The static successor remains compatibility-only. A future/non-profile run with
+no explicit version resolves this exact chain:
+
+```text
+active-price-baseline.json
+-> exact manifest path/SHA
+-> exact workbook path/SHA
+-> governed mapping snapshot
+-> DRAFT price calculation
+```
+
+The canonical external root is
+`C:\Users\IgorN\Documents\invoice_quote_filler_data\prices`. Immutable
+manifests use `manifests/<manifest-id>.json`; the mutable selector is
+`active-price-baseline.json`. Missing, stale or corrupt members fail closed.
+Explicit `historical_invoice519` always overrides the selector. The checked
+frozen Invoice519 profile keeps its existing authoritative inputs and never
+reprices from the active baseline.
+
+## Authority split
+
+Technical mapping identity is defined independently from price values. It
+includes stable mapping ID, apparatus/cabinet semantics, source sheet/row,
+expected label and an identity fingerprint. The manifest can approve new price
+values only for the unchanged fingerprint. Label, source, identity, added or
+removed price names, formulas, missing values and duplicates produce `HOLD`.
+
+`audit_price_baseline_candidate.py` is read-only: it verifies the active chain,
+computes candidate workbook SHA and structural/price diffs, and prints a
+content-bound approval payload. It does not publish a manifest or update the
+selector.
+
+`activate_price_baseline_manifest.py` accepts only an exact audit/approval
+binding, rechecks every input and the workbook snapshot, publishes the manifest
+with no-overwrite semantics, then replaces the selector atomically and verifies
+the complete chain. Tests use synthetic roots only. A successful technical run
+is still `DRAFT / NOT APPROVED`; quote, send, procurement and production remain
+closed.
 
 ## Actual ingestion classification of the 16 changed exact names
 
@@ -46,7 +77,8 @@ is part of the approved successor workbook source.
 | C | `ПН-2 400А` |
 | C | `Реле времени суточное ТЭ-15` |
 
-Only five existing hardcoded mapping entries need successor expected-material
-values: `ЩР!B8` 13,000 → 15,000 (`C8` stays 1,800), and four mappings using
-`КРН!B5` 4,100 → 4,500 (`C5` stays 432). Historical mappings are left intact;
-no price cells or C-class names are hardcoded as part of successor binding.
+The compatibility release changed five exact mapping entries: `ЩР!B8` 13,000
+→ 15,000 (`C8` remained 1,800), and four mappings using `КРН!B5` 4,100 → 4,500
+(`C5` remained 432). Those historical/successor constants remain frozen for
+reproducibility. Future compatible price-only changes are stored in manifests
+and require no new Python constants or expected-price edits.

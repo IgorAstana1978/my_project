@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "price_baseline_manifest_v0_1.schema.json",
+  "title": "Approved price baseline manifest v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "created_at",
+    "predecessor",
+    "workbook",
+    "mapping_snapshot",
+    "approval",
+    "scope"
+  ],
+  "properties": {
+    "schema_version": {"const": "price_baseline_manifest.v0.1"},
+    "manifest_id": {"type": "string", "minLength": 1},
+    "created_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "predecessor": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["manifest_id", "manifest_sha256"],
+          "properties": {
+            "manifest_id": {"type": "string", "minLength": 1},
+            "manifest_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      ]
+    },
+    "workbook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "structural_fingerprint"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "structural_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "mapping_snapshot": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mapping_id",
+          "mapping_kind",
+          "identity",
+          "identity_fingerprint",
+          "source",
+          "prices"
+        ],
+        "properties": {
+          "mapping_id": {"type": "string", "minLength": 1},
+          "mapping_kind": {
+            "enum": [
+              "component_exact",
+              "component_dynamic",
+              "cabinet_exact",
+              "cabinet_dynamic"
+            ]
+          },
+          "identity": {"type": "object", "minProperties": 1},
+          "identity_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sheet", "row", "label_cell", "price_cells"],
+            "properties": {
+              "sheet": {"type": "string", "minLength": 1},
+              "row": {"type": "integer", "minimum": 1},
+              "label_cell": {"type": "string", "minLength": 1},
+              "price_cells": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "prices": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "authority",
+        "approval_id",
+        "approved_by",
+        "approved_at",
+        "candidate_audit_sha256",
+        "approval_fingerprint"
+      ],
+      "properties": {
+        "schema_version": {"const": "price_baseline_approval.v0.1"},
+        "authority": {"const": "IGOR_DIRECT_HUMAN_APPROVAL"},
+        "approval_id": {"type": "string", "minLength": 1},
+        "approved_by": {"const": "Igor"},
+        "approved_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "candidate_audit_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "approval_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["future_cases_only", "historical_repricing_authorized"],
+      "properties": {
+        "future_cases_only": {"const": true},
+        "historical_repricing_authorized": {"const": false}
+      }
+    }
+  }
+}

@@ -388,7 +388,7 @@ def test_frozen_invoice519_profile_rejects_successor_version() -> None:
 def test_unversioned_and_unknown_entrypoint_calls_fail_before_input_reads() -> None:
     calc = calculator.calculate_price_draft(binding.SUCCESSOR.path, Path("missing.csv"))
     assert calc.status == "FAIL"
-    assert calc.red_flags == ["explicit price baseline version is required"]
+    assert calc.red_flags == ["active selector does not exist"]
     calc_unknown = calculator.calculate_price_draft(
         binding.SUCCESSOR.path,
         Path("missing.csv"),
@@ -400,4 +400,4 @@ def test_unversioned_and_unknown_entrypoint_calls_fail_before_input_reads() -> N
         Path("missing.json"), binding.SUCCESSOR.path
     )
     assert checked.status == "FAIL"
-    assert checked.red_flags == ["explicit price baseline version is required"]
+    assert checked.red_flags == ["active selector does not exist"]

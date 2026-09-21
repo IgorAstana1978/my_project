@@ -9,13 +9,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openpyxl import load_workbook  # type: ignore[import-untyped]
-from price_baseline_contract import (
+from price_baseline_contract import (  # type: ignore[import-not-found]
+    ACTIVE_VERSION,
+    DEFAULT_ACTIVE_SELECTOR,
     HISTORICAL,
     SUCCESSOR,
+    mapping_identity_fingerprint,
     require_price_baseline,
+    resolve_price_baseline,
 )
 
 CSV_DELIMITER = ";"
@@ -232,6 +236,7 @@ class ApprovedComponentPriceMapping:
     expected_work_price: int
     component_code: str | None = None
     strict_raw_label: bool = False
+    mapping_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -250,6 +255,7 @@ class ApprovedCabinetPriceMapping:
     row: int
     expected_label: str
     expected_price: int
+    mapping_id: str = ""
 
 
 APPROVED_COMPONENT_PRICE_MAPPINGS = (
@@ -260,6 +266,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         "ВА55/57/59, АМ1 3 полюсные от 16 до 63А",
         13000,
         1800,
+        mapping_id="COMPONENT-PRICE-MCCB-3P-63A",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature("rcbo", 2, 16, 30, "C", "diff_1p_n"),
@@ -268,6 +275,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         "УЗО АД-32 1Р+N до 63А EKF",
         4100,
         432,
+        mapping_id="COMPONENT-PRICE-RCBO-2P-C16-30MA",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature("rcbo", 2, 20, 30, "C", "diff_1p_n"),
@@ -276,6 +284,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         "УЗО АД-32 1Р+N до 63А EKF",
         4100,
         432,
+        mapping_id="COMPONENT-PRICE-RCBO-2P-C20-30MA",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature("load_switch", 3, 32, None, None, "load_switch_3p"),
@@ -284,6 +293,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         "ВН-32 3Р 16-25-40-63-80-100А",
         2750,
         540,
+        mapping_id="COMPONENT-PRICE-LOAD-SWITCH-3P-32A",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature(
@@ -302,6 +312,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         432,
         component_code="EKF-AD32-1P-N",
         strict_raw_label=True,
+        mapping_id="COMPONENT-MAPPING-012",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature(
@@ -320,6 +331,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         432,
         component_code="EKF-AD12-1P-N-C16-30MA-4P5KA",
         strict_raw_label=True,
+        mapping_id="COMPONENT-MAPPING-009-016",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature("rcbo", 4, 16, 100, "C", "diff_3p_4p"),
@@ -330,6 +342,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         432,
         component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
         strict_raw_label=True,
+        mapping_id="COMPONENT-MAPPING-005",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature(
@@ -348,6 +361,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         432,
         component_code="EKF-AVDT63N-3P-N-C16-100MA-6KA-S",
         strict_raw_label=True,
+        mapping_id="COMPONENT-MAPPING-005-6KA",
     ),
     ApprovedComponentPriceMapping(
         TechnicalSignature(
@@ -365,6 +379,7 @@ APPROVED_COMPONENT_PRICE_MAPPINGS = (
         900,
         component_code="EKF-RT-820",
         strict_raw_label=True,
+        mapping_id="COMPONENT-PRICE-RT820",
     ),
 )
 RT820_COMPONENT_CODE = "EKF-RT-820"
@@ -389,11 +404,117 @@ SUCCESSOR_COMPONENT_PRICE_MAPPINGS = tuple(
 )
 
 
-def component_price_mappings(version: str) -> tuple[ApprovedComponentPriceMapping, ...]:
+def component_mapping_identity(
+    mapping: ApprovedComponentPriceMapping,
+) -> dict[str, Any]:
+    signature = mapping.signature
+    return {
+        "authority": "TECHNICAL_MAPPING_IDENTITY",
+        "mapping_id": mapping.mapping_id,
+        "apparatus_category": signature.apparatus_category,
+        "poles": signature.poles,
+        "rating_a": signature.rating_a,
+        "residual_current_ma": signature.residual_current_ma,
+        "trip_curve": signature.trip_curve,
+        "install_type": signature.install_type,
+        "breaking_capacity_ka": (
+            str(signature.breaking_capacity_ka)
+            if signature.breaking_capacity_ka is not None
+            else None
+        ),
+        "component_code": mapping.component_code,
+        "sheet": mapping.sheet_name,
+        "row": mapping.row,
+        "expected_label": mapping.expected_label,
+        "strict_label": mapping.strict_raw_label,
+    }
+
+
+def cabinet_mapping_identity(mapping: ApprovedCabinetPriceMapping) -> dict[str, Any]:
+    signature = mapping.signature
+    return {
+        "authority": "TECHNICAL_MAPPING_IDENTITY",
+        "mapping_id": mapping.mapping_id,
+        "cabinet_code": signature.cabinet_code,
+        "width_mm": signature.width_mm,
+        "height_mm": signature.height_mm,
+        "depth_mm": signature.depth_mm,
+        "material": signature.material,
+        "sheet": mapping.sheet_name,
+        "row": mapping.row,
+        "expected_label": mapping.expected_label,
+        "strict_label": False,
+    }
+
+
+def _snapshot_by_id(
+    snapshot: Sequence[Mapping[str, Any]], kind: str
+) -> dict[str, Mapping[str, Any]]:
+    return {
+        str(entry["mapping_id"]): entry
+        for entry in snapshot
+        if entry.get("mapping_kind") == kind
+    }
+
+
+def active_component_price_mappings(
+    snapshot: Sequence[Mapping[str, Any]],
+) -> tuple[ApprovedComponentPriceMapping, ...]:
+    by_id = _snapshot_by_id(snapshot, "component_exact")
+    resolved: list[ApprovedComponentPriceMapping] = []
+    for mapping in APPROVED_COMPONENT_PRICE_MAPPINGS:
+        entry = by_id.get(mapping.mapping_id)
+        if entry is None:
+            raise ValueError(f"active manifest missing mapping {mapping.mapping_id}")
+        identity = cast(Mapping[str, Any], entry["identity"])
+        if mapping_identity_fingerprint(component_mapping_identity(mapping)) != entry[
+            "identity_fingerprint"
+        ] or dict(identity) != component_mapping_identity(mapping):
+            raise ValueError(
+                f"active manifest mapping identity drift: {mapping.mapping_id}"
+            )
+        prices = cast(Mapping[str, Any], entry["prices"])
+        resolved.append(
+            replace(
+                mapping,
+                expected_material_price=cast(int, prices["material_kzt"]),
+                expected_work_price=cast(int, prices["work_kzt"]),
+            )
+        )
+    return tuple(resolved)
+
+
+def active_cabinet_price_mappings(
+    snapshot: Sequence[Mapping[str, Any]],
+) -> tuple[ApprovedCabinetPriceMapping, ...]:
+    by_id = _snapshot_by_id(snapshot, "cabinet_exact")
+    resolved: list[ApprovedCabinetPriceMapping] = []
+    for mapping in APPROVED_CABINET_PRICE_MAPPINGS:
+        entry = by_id.get(mapping.mapping_id)
+        if entry is None:
+            raise ValueError(f"active manifest missing mapping {mapping.mapping_id}")
+        identity = cast(Mapping[str, Any], entry["identity"])
+        if mapping_identity_fingerprint(cabinet_mapping_identity(mapping)) != entry[
+            "identity_fingerprint"
+        ] or dict(identity) != cabinet_mapping_identity(mapping):
+            raise ValueError(
+                f"active manifest mapping identity drift: {mapping.mapping_id}"
+            )
+        prices = cast(Mapping[str, Any], entry["prices"])
+        resolved.append(replace(mapping, expected_price=cast(int, prices["price_kzt"])))
+    return tuple(resolved)
+
+
+def component_price_mappings(
+    version: str,
+    snapshot: Sequence[Mapping[str, Any]] = (),
+) -> tuple[ApprovedComponentPriceMapping, ...]:
     if version == HISTORICAL.version:
         return APPROVED_COMPONENT_PRICE_MAPPINGS
     if version == SUCCESSOR.version:
         return SUCCESSOR_COMPONENT_PRICE_MAPPINGS
+    if version == ACTIVE_VERSION:
+        return active_component_price_mappings(snapshot)
     raise ValueError("unknown price baseline version")
 
 
@@ -416,6 +537,7 @@ APPROVED_CABINET_PRICE_MAPPINGS = (
         8,
         "800х600х250",
         21336,
+        mapping_id="CABINET-PRICE-PR-800X600X250",
     ),
     ApprovedCabinetPriceMapping(
         CabinetSignature("КРН-36", 540, 330, 100, "metal"),
@@ -423,6 +545,7 @@ APPROVED_CABINET_PRICE_MAPPINGS = (
         9,
         "Корпус КРН-36 540х330х100",
         9405,
+        mapping_id="CABINET-PRICE-KRN-36",
     ),
 )
 
@@ -448,6 +571,10 @@ class PriceCalculationResult:
     input_csv: Path
     price_baseline_version: str = HISTORICAL.version
     price_baseline_sha256: str | None = None
+    price_baseline_manifest_id: str | None = None
+    price_baseline_manifest_sha256: str | None = None
+    price_mapping_snapshot: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    active_selector_path: Path | None = None
     status: str = "FAIL"
     product_name: str | None = None
     input_rows_count: int = 0
@@ -564,15 +691,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--price-workbook",
-        required=True,
         type=Path,
-        help="Path to the approved .xlsx price workbook",
+        help="Exact workbook path; omit to resolve the active approved manifest",
     )
     parser.add_argument(
         "--price-baseline-version",
-        required=True,
-        choices=(HISTORICAL.version, SUCCESSOR.version),
-        help="Explicit exact workbook/SHA contract (no implicit fallback)",
+        help="Explicit frozen/released binding; omit for active approved baseline",
+    )
+    parser.add_argument(
+        "--active-selector",
+        type=Path,
+        default=DEFAULT_ACTIVE_SELECTOR,
+        help="Active selector path for future/non-profile calculations",
     )
     parser.add_argument(
         "--input-csv",
@@ -850,10 +980,13 @@ def signature_requires_component_code(signature: TechnicalSignature) -> bool:
 
 def resolve_cabinet_mapping(
     signature: CabinetSignature,
+    mappings: tuple[ApprovedCabinetPriceMapping, ...] | None = None,
 ) -> ApprovedCabinetPriceMapping | None:
     matches = [
         mapping
-        for mapping in APPROVED_CABINET_PRICE_MAPPINGS
+        for mapping in (
+            APPROVED_CABINET_PRICE_MAPPINGS if mappings is None else mappings
+        )
         if mapping.signature == signature
     ]
     return matches[0] if len(matches) == 1 else None
@@ -861,7 +994,15 @@ def resolve_cabinet_mapping(
 
 def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow]:
     try:
-        selected_mappings = component_price_mappings(result.price_baseline_version)
+        selected_mappings = component_price_mappings(
+            result.price_baseline_version,
+            result.price_mapping_snapshot,
+        )
+        selected_cabinet_mappings = (
+            active_cabinet_price_mappings(result.price_mapping_snapshot)
+            if result.price_baseline_version == ACTIVE_VERSION
+            else APPROVED_CABINET_PRICE_MAPPINGS
+        )
     except ValueError as exc:
         add_red_flag(result, str(exc))
         return []
@@ -954,6 +1095,18 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
             cabinet_label = row["cabinet_label"]
             rt820_requested = component_code == RT820_COMPONENT_CODE
             component_mapping = resolve_case_scoped_rt820_mapping(row)
+            if (
+                component_mapping is not None
+                and result.price_baseline_version == ACTIVE_VERSION
+            ):
+                component_mapping = next(
+                    (
+                        item
+                        for item in selected_mappings
+                        if item.mapping_id == component_mapping.mapping_id
+                    ),
+                    None,
+                )
             component_signature = (
                 RT820_APPROVED_MAPPING.signature
                 if component_mapping is not None
@@ -1008,7 +1161,7 @@ def load_composition_rows(result: PriceCalculationResult) -> list[CompositionRow
                 cabinet_label,
             )
             cabinet_mapping = (
-                resolve_cabinet_mapping(cabinet_signature)
+                resolve_cabinet_mapping(cabinet_signature, selected_cabinet_mappings)
                 if cabinet_signature is not None
                 else None
             )
@@ -1135,7 +1288,10 @@ def read_approved_component_price(
     mapping: ApprovedComponentPriceMapping,
     result: PriceCalculationResult,
 ) -> tuple[int, int] | None:
-    if mapping not in component_price_mappings(result.price_baseline_version):
+    if mapping not in component_price_mappings(
+        result.price_baseline_version,
+        result.price_mapping_snapshot,
+    ):
         add_red_flag(result, "cross-version component price mapping mix; ask Igor")
         return None
     worksheet = mapping_worksheet(workbook, mapping.sheet_name, result)
@@ -1299,30 +1455,232 @@ def read_cabinet_price(
     return found_prices[0]
 
 
+def _snapshot_entry(
+    *,
+    mapping_id: str,
+    mapping_kind: str,
+    identity: Mapping[str, Any],
+    sheet: str,
+    row: int,
+    label_cell: str,
+    price_cells: list[str],
+    prices: Mapping[str, int],
+) -> dict[str, Any]:
+    return {
+        "mapping_id": mapping_id,
+        "mapping_kind": mapping_kind,
+        "identity": dict(identity),
+        "identity_fingerprint": mapping_identity_fingerprint(identity),
+        "source": {
+            "sheet": sheet,
+            "row": row,
+            "label_cell": f"{sheet}!{label_cell}",
+            "price_cells": [f"{sheet}!{cell}" for cell in price_cells],
+        },
+        "prices": dict(prices),
+    }
+
+
+def build_governed_mapping_snapshot(
+    workbook: Any,
+    *,
+    component_mappings: tuple[ApprovedComponentPriceMapping, ...],
+    cabinet_mappings: tuple[ApprovedCabinetPriceMapping, ...] = (
+        APPROVED_CABINET_PRICE_MAPPINGS
+    ),
+) -> list[dict[str, Any]]:
+    """Capture prices while keeping technical mapping identity price-free."""
+    entries: list[dict[str, Any]] = []
+    for component_mapping in component_mappings:
+        worksheet = workbook[component_mapping.sheet_name]
+        raw_label = worksheet.cell(component_mapping.row, 1).value
+        actual_label = (
+            raw_label
+            if component_mapping.strict_raw_label
+            else normalize_workbook_label(raw_label)
+        )
+        expected_label = (
+            component_mapping.expected_label
+            if component_mapping.strict_raw_label
+            else normalize_workbook_label(component_mapping.expected_label)
+        )
+        material = positive_integer_price(
+            worksheet.cell(component_mapping.row, 2).value
+        )
+        work = positive_integer_price(worksheet.cell(component_mapping.row, 3).value)
+        if actual_label != expected_label or material is None or work is None:
+            raise ValueError(
+                f"governed mapping cannot be captured: {component_mapping.mapping_id}"
+            )
+        entries.append(
+            _snapshot_entry(
+                mapping_id=component_mapping.mapping_id,
+                mapping_kind="component_exact",
+                identity=component_mapping_identity(component_mapping),
+                sheet=component_mapping.sheet_name,
+                row=component_mapping.row,
+                label_cell=f"A{component_mapping.row}",
+                price_cells=[
+                    f"B{component_mapping.row}",
+                    f"C{component_mapping.row}",
+                ],
+                prices={"material_kzt": material, "work_kzt": work},
+            )
+        )
+    krn = workbook[KRN_SHEET_NAME]
+    for component_code, definition in COMPONENT_DEFINITIONS.items():
+        if definition.workbook_label is None:
+            continue
+        expected_label = normalize_workbook_label(definition.workbook_label)
+        component_matches: list[tuple[int, int, int]] = []
+        for row in range(1, MAX_LOOKUP_ROW + 1):
+            if normalize_workbook_label(krn.cell(row, 1).value) != expected_label:
+                continue
+            material = positive_integer_price(krn.cell(row, 2).value)
+            work = positive_integer_price(krn.cell(row, 3).value)
+            if material is not None and work is not None:
+                component_matches.append((row, material, work))
+        if len(component_matches) != 1:
+            raise ValueError(
+                f"dynamic component mapping is missing or ambiguous: {component_code}"
+            )
+        row, material, work = component_matches[0]
+        mapping_id = f"COMPONENT-DYNAMIC-{component_code}"
+        identity = {
+            "authority": "TECHNICAL_MAPPING_IDENTITY",
+            "mapping_id": mapping_id,
+            "component_code": component_code,
+            "install_type": definition.install_type,
+            "sheet": KRN_SHEET_NAME,
+            "row": row,
+            "expected_label": definition.workbook_label,
+            "strict_label": False,
+            "lookup_semantics": "unique_normalized_label",
+        }
+        entries.append(
+            _snapshot_entry(
+                mapping_id=mapping_id,
+                mapping_kind="component_dynamic",
+                identity=identity,
+                sheet=KRN_SHEET_NAME,
+                row=row,
+                label_cell=f"A{row}",
+                price_cells=[f"B{row}", f"C{row}"],
+                prices={"material_kzt": material, "work_kzt": work},
+            )
+        )
+    for cabinet_mapping in cabinet_mappings:
+        worksheet = workbook[cabinet_mapping.sheet_name]
+        actual_label = normalize_workbook_label(
+            worksheet.cell(cabinet_mapping.row, 12).value
+        )
+        expected_label = normalize_workbook_label(cabinet_mapping.expected_label)
+        price = positive_integer_price(worksheet.cell(cabinet_mapping.row, 13).value)
+        if actual_label != expected_label or price is None:
+            raise ValueError(
+                f"governed mapping cannot be captured: {cabinet_mapping.mapping_id}"
+            )
+        entries.append(
+            _snapshot_entry(
+                mapping_id=cabinet_mapping.mapping_id,
+                mapping_kind="cabinet_exact",
+                identity=cabinet_mapping_identity(cabinet_mapping),
+                sheet=cabinet_mapping.sheet_name,
+                row=cabinet_mapping.row,
+                label_cell=f"L{cabinet_mapping.row}",
+                price_cells=[f"M{cabinet_mapping.row}"],
+                prices={"price_kzt": price},
+            )
+        )
+    for cabinet_code, expected in CABINET_DEFINITIONS.items():
+        if cabinet_code == INVOICE519_SCHE_CABINET_CODE:
+            continue
+        expected_label = normalize_workbook_label(expected)
+        cabinet_matches: list[tuple[int, int]] = []
+        for row in range(1, MAX_LOOKUP_ROW + 1):
+            if normalize_workbook_label(krn.cell(row, 12).value) != expected_label:
+                continue
+            price = positive_integer_price(krn.cell(row, 13).value)
+            if price is not None:
+                cabinet_matches.append((row, price))
+        if len(cabinet_matches) != 1:
+            raise ValueError(
+                f"dynamic cabinet mapping is missing or ambiguous: {cabinet_code}"
+            )
+        row, cabinet_price = cabinet_matches[0]
+        mapping_id = f"CABINET-DYNAMIC-{cabinet_code}"
+        identity = {
+            "authority": "TECHNICAL_MAPPING_IDENTITY",
+            "mapping_id": mapping_id,
+            "cabinet_code": cabinet_code,
+            "sheet": KRN_SHEET_NAME,
+            "row": row,
+            "expected_label": expected,
+            "strict_label": False,
+            "lookup_semantics": "unique_normalized_label",
+        }
+        entries.append(
+            _snapshot_entry(
+                mapping_id=mapping_id,
+                mapping_kind="cabinet_dynamic",
+                identity=identity,
+                sheet=KRN_SHEET_NAME,
+                row=row,
+                label_cell=f"L{row}",
+                price_cells=[f"M{row}"],
+                prices={"price_kzt": cabinet_price},
+            )
+        )
+    return sorted(entries, key=lambda entry: cast(str, entry["mapping_id"]))
+
+
 def calculate_price_draft(
-    price_workbook: Path,
+    price_workbook: Path | None,
     input_csv: Path,
     custom_cabinet_base_cost: int | None = None,
     price_baseline_version: str | None = None,
+    active_selector_path: Path = DEFAULT_ACTIVE_SELECTOR,
 ) -> PriceCalculationResult:
-    if price_baseline_version is None:
-        return PriceCalculationResult(
-            price_workbook=resolved(price_workbook),
-            input_csv=resolved(input_csv),
-            price_baseline_version="not selected",
-            red_flags=["explicit price baseline version is required"],
-        )
+    requested_workbook = (
+        resolved(price_workbook) if price_workbook is not None else None
+    )
+    selected_version = (
+        ACTIVE_VERSION if price_baseline_version is None else price_baseline_version
+    )
     result = PriceCalculationResult(
-        price_workbook=resolved(price_workbook),
+        price_workbook=requested_workbook or Path("<active-price-workbook>"),
         input_csv=resolved(input_csv),
-        price_baseline_version=price_baseline_version,
+        price_baseline_version=selected_version,
+        active_selector_path=resolved(active_selector_path),
     )
     try:
-        baseline = require_price_baseline(result.price_workbook, price_baseline_version)
+        if price_baseline_version is None:
+            baseline = resolve_price_baseline(
+                requested_workbook,
+                None,
+                active_selector_path=result.active_selector_path,
+            )
+        elif price_baseline_version == ACTIVE_VERSION:
+            baseline = require_price_baseline(
+                requested_workbook,
+                ACTIVE_VERSION,
+                active_selector_path=result.active_selector_path,
+            )
+        else:
+            baseline = require_price_baseline(
+                requested_workbook,
+                price_baseline_version,
+            )
     except ValueError as exc:
         add_red_flag(result, str(exc))
         return result
+    if baseline.version == ACTIVE_VERSION:
+        result.price_workbook = baseline.path
+    result.price_baseline_version = baseline.version
     result.price_baseline_sha256 = baseline.sha256
+    result.price_baseline_manifest_id = baseline.manifest_id
+    result.price_baseline_manifest_sha256 = baseline.manifest_sha256
+    result.price_mapping_snapshot = baseline.mapping_snapshot
     rows = load_composition_rows(result)
     if not rows:
         return result
@@ -1400,7 +1758,17 @@ def calculate_price_draft(
             workbook.close()
 
     try:
-        require_price_baseline(result.price_workbook, price_baseline_version)
+        if result.price_baseline_version == ACTIVE_VERSION:
+            require_price_baseline(
+                result.price_workbook,
+                ACTIVE_VERSION,
+                active_selector_path=result.active_selector_path,
+            )
+        else:
+            require_price_baseline(
+                result.price_workbook,
+                result.price_baseline_version,
+            )
     except ValueError as exc:
         add_red_flag(result, f"price baseline final drift: {exc}")
         return result
@@ -1498,6 +1866,12 @@ def format_report(result: PriceCalculationResult) -> str:
         "Price baseline SHA-256:",
         result.price_baseline_sha256 or "not validated",
         "",
+        "Price baseline manifest ID:",
+        result.price_baseline_manifest_id or "explicit static/frozen binding",
+        "",
+        "Price baseline manifest SHA-256:",
+        result.price_baseline_manifest_sha256 or "not applicable",
+        "",
         "Input CSV path:",
         str(result.input_csv),
         "",
@@ -1559,6 +1933,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.input_csv,
         custom_cabinet_base_cost=args.custom_cabinet_base_cost,
         price_baseline_version=args.price_baseline_version,
+        active_selector_path=args.active_selector,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1
