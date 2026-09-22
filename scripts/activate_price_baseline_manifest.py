@@ -5,11 +5,19 @@ from __future__ import annotations
 import argparse
 import os
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from audit_price_baseline_candidate import (  # type: ignore[import-not-found]
+    BOOTSTRAP_AUDIT_SCHEMA,
+    BOOTSTRAP_INTENT,
+    CandidateAuditError,
+    bootstrap_state,
+    build_successor_mapping_snapshot,
+    inspect_workbook,
+)
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from price_baseline_contract import (  # type: ignore[import-not-found]
     APPROVAL_AUTHORITY,
@@ -17,7 +25,9 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
     DEFAULT_ACTIVE_SELECTOR,
     MANIFEST_SCHEMA,
     SELECTOR_SCHEMA,
+    SUCCESSOR,
     BaselineContractError,
+    PriceBaseline,
     canonical_json_bytes,
     load_json_bytes,
     resolve_active_price_baseline,
@@ -122,6 +132,82 @@ def validate_audit(data: Mapping[str, Any]) -> None:
         raise ActivationError("candidate approval fingerprint mismatch")
 
 
+def validate_bootstrap_audit(data: Mapping[str, Any]) -> None:
+    _exact_keys(
+        data,
+        {
+            "schema_version",
+            "intent",
+            "status",
+            "manifest_id",
+            "genesis_state",
+            "candidate_workbook",
+            "price_inventory",
+            "conflicts",
+            "mapping_snapshot",
+            "hold_reasons",
+            "approval_payload",
+            "approval_fingerprint",
+        },
+        "bootstrap audit",
+    )
+    if (
+        data["schema_version"] != BOOTSTRAP_AUDIT_SCHEMA
+        or data["intent"] != BOOTSTRAP_INTENT
+        or data["status"] != "PASS_CANDIDATE_ONLY"
+        or data["hold_reasons"] != []
+    ):
+        raise ActivationError("bootstrap audit is not an activatable PASS")
+    genesis = data["genesis_state"]
+    if not isinstance(genesis, Mapping):
+        raise ActivationError("bootstrap genesis_state is invalid")
+    _exact_keys(
+        genesis,
+        {
+            "canonical_root",
+            "root_exists",
+            "selector_path",
+            "selector_exists",
+            "manifest_dir",
+            "manifest_entries",
+        },
+        "bootstrap genesis_state",
+    )
+    if (
+        genesis["root_exists"] is not True
+        or genesis["selector_exists"] is not False
+        or genesis["manifest_entries"] != []
+    ):
+        raise ActivationError("bootstrap audit did not start from empty genesis state")
+    conflicts = data["conflicts"]
+    if not isinstance(conflicts, Mapping) or any(conflicts.values()):
+        raise ActivationError("bootstrap audit contains conflicts")
+    snapshot = data["mapping_snapshot"]
+    if not isinstance(snapshot, list) or not snapshot:
+        raise ActivationError("bootstrap mapping snapshot is incomplete")
+    payload = data["approval_payload"]
+    if not isinstance(payload, Mapping):
+        raise ActivationError("bootstrap approval payload is invalid")
+    candidate = data["candidate_workbook"]
+    if not isinstance(candidate, Mapping):
+        raise ActivationError("bootstrap candidate workbook is invalid")
+    expected_payload = {
+        "intent": BOOTSTRAP_INTENT,
+        "manifest_id": data["manifest_id"],
+        "candidate_workbook_path": candidate.get("path"),
+        "candidate_workbook_sha256": candidate.get("sha256"),
+        "candidate_structural_fingerprint": candidate.get("structural_fingerprint"),
+        "mapping_snapshot_sha256": sha256_bytes(canonical_json_bytes(snapshot)),
+        "future_cases_only": True,
+        "historical_repricing_authorized": False,
+    }
+    if dict(payload) != expected_payload:
+        raise ActivationError("bootstrap approval payload/top-level audit mismatch")
+    expected_fingerprint = sha256_bytes(canonical_json_bytes(payload))
+    if data["approval_fingerprint"] != expected_fingerprint:
+        raise ActivationError("bootstrap approval fingerprint mismatch")
+
+
 def validate_approval(
     approval: Mapping[str, Any],
     *,
@@ -166,6 +252,29 @@ def _build_manifest(
             "manifest_id": predecessor["manifest_id"],
             "manifest_sha256": predecessor["manifest_sha256"],
         },
+        "workbook": {
+            "path": candidate["path"],
+            "sha256": candidate["sha256"],
+            "structural_fingerprint": candidate["structural_fingerprint"],
+        },
+        "mapping_snapshot": audit["mapping_snapshot"],
+        "approval": dict(approval),
+        "scope": {
+            "future_cases_only": True,
+            "historical_repricing_authorized": False,
+        },
+    }
+
+
+def _build_bootstrap_manifest(
+    audit: Mapping[str, Any], approval: Mapping[str, Any]
+) -> dict[str, Any]:
+    candidate = cast(Mapping[str, Any], audit["candidate_workbook"])
+    return {
+        "schema_version": MANIFEST_SCHEMA,
+        "manifest_id": audit["manifest_id"],
+        "created_at": approval["approved_at"],
+        "predecessor": None,
         "workbook": {
             "path": candidate["path"],
             "sha256": candidate["sha256"],
@@ -318,6 +427,33 @@ def _replace_selector_atomically(path: Path, content: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _create_selector_atomically(path: Path, content: bytes) -> None:
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = -1
+    try:
+        if path.exists():
+            raise ActivationError("bootstrap selector already exists")
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+        )
+        with os.fdopen(descriptor, "wb") as output:
+            descriptor = -1
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.link(temporary, path)
+    except FileExistsError as exc:
+        raise ActivationError("bootstrap selector already exists") from exc
+    except OSError as exc:
+        raise ActivationError("bootstrap selector atomic creation failed") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def activate(
     *,
     candidate_audit_json: Path,
@@ -426,8 +562,172 @@ def activate(
     )
 
 
+def bootstrap_activate(
+    *,
+    candidate_audit_json: Path,
+    approval_json: Path,
+    active_selector: Path = DEFAULT_ACTIVE_SELECTOR,
+    approved_successor: PriceBaseline = SUCCESSOR,
+    selector_publish_fn: Callable[[Path, bytes], None] = _create_selector_atomically,
+) -> ActivationResult:
+    audit_file = candidate_audit_json.resolve(strict=False)
+    approval_file = approval_json.resolve(strict=False)
+    selector_file = active_selector.resolve(strict=False)
+    audit_raw, audit = _load(audit_file, "bootstrap audit")
+    approval_raw, approval = _load(approval_file, "bootstrap approval")
+    validate_bootstrap_audit(audit)
+    audit_sha = sha256_bytes(audit_raw)
+    validate_approval(
+        approval,
+        audit_sha256=audit_sha,
+        audit_fingerprint=cast(str, audit["approval_fingerprint"]),
+    )
+
+    genesis = cast(Mapping[str, Any], audit["genesis_state"])
+    manifest_dir = selector_file.parent / "manifests"
+    if (
+        genesis.get("canonical_root") != str(selector_file.parent)
+        or genesis.get("selector_path") != str(selector_file)
+        or genesis.get("manifest_dir") != str(manifest_dir)
+    ):
+        raise ActivationError("bootstrap audit canonical paths mismatch")
+    if not selector_file.parent.is_dir():
+        raise ActivationError("canonical price root does not exist")
+    if selector_file.exists():
+        raise ActivationError("bootstrap selector already exists")
+
+    candidate = cast(Mapping[str, Any], audit["candidate_workbook"])
+    candidate_path = Path(cast(str, candidate["path"])).resolve(strict=False)
+    if candidate_path != approved_successor.path.resolve(strict=False):
+        raise ActivationError("bootstrap workbook path is not static successor")
+    if candidate.get("sha256") != approved_successor.sha256:
+        raise ActivationError("bootstrap workbook SHA is not static successor")
+    try:
+        if sha256_file(candidate_path) != approved_successor.sha256:
+            raise ActivationError("bootstrap workbook SHA-256 drifted")
+        inspection = inspect_workbook(candidate_path)
+        current_snapshot = build_successor_mapping_snapshot(candidate_path)
+    except (CandidateAuditError, OSError) as exc:
+        raise ActivationError(f"bootstrap workbook validation failed: {exc}") from exc
+    if (
+        inspection.formula_cells
+        or inspection.invalid_price_cells
+        or inspection.duplicate_names
+    ):
+        raise ActivationError("bootstrap workbook contains price conflicts")
+    if inspection.structural_fingerprint != candidate.get("structural_fingerprint"):
+        raise ActivationError("bootstrap workbook structural fingerprint drifted")
+    if canonical_json_bytes(current_snapshot) != canonical_json_bytes(
+        audit["mapping_snapshot"]
+    ):
+        raise ActivationError("bootstrap mapping identity or snapshot drifted")
+    verify_snapshot_against_workbook(candidate_path, audit["mapping_snapshot"])
+
+    manifest = _build_bootstrap_manifest(audit, approval)
+    try:
+        validate_manifest(manifest)
+    except BaselineContractError as exc:
+        raise ActivationError(f"bootstrap manifest contract failed: {exc}") from exc
+    manifest_raw = canonical_json_bytes(manifest)
+    manifest_sha = sha256_bytes(manifest_raw)
+    manifest_path = manifest_dir / f"{audit['manifest_id']}.json"
+    if manifest_path.parent != manifest_dir:
+        raise ActivationError("unsafe bootstrap manifest path")
+
+    state_before = bootstrap_state(selector_file)
+    if state_before["selector_exists"] is True:
+        raise ActivationError("bootstrap selector already exists")
+    entries = cast(list[str], state_before["manifest_entries"])
+    recovering_exact_orphan = False
+    if entries:
+        if entries != [manifest_path.name] or not manifest_path.is_file():
+            raise ActivationError("bootstrap manifests directory is not empty")
+        try:
+            if manifest_path.read_bytes() != manifest_raw:
+                raise ActivationError("unrelated bootstrap orphan manifest exists")
+        except OSError as exc:
+            raise ActivationError(
+                "bootstrap orphan manifest could not be read"
+            ) from exc
+        recovering_exact_orphan = True
+
+    if (
+        _read(audit_file, "bootstrap audit") != audit_raw
+        or _read(approval_file, "bootstrap approval") != approval_raw
+        or sha256_file(candidate_path) != approved_successor.sha256
+        or bootstrap_state(selector_file) != state_before
+    ):
+        raise ActivationError("bootstrap input drift detected before publication")
+    try:
+        repeated_snapshot = build_successor_mapping_snapshot(candidate_path)
+    except CandidateAuditError as exc:
+        raise ActivationError(f"bootstrap mapping recheck failed: {exc}") from exc
+    if canonical_json_bytes(repeated_snapshot) != canonical_json_bytes(
+        audit["mapping_snapshot"]
+    ):
+        raise ActivationError("bootstrap mapping drift before publication")
+
+    if not recovering_exact_orphan:
+        try:
+            manifest_dir.mkdir(exist_ok=True)
+        except OSError as exc:
+            raise ActivationError(
+                "bootstrap manifest directory could not be created"
+            ) from exc
+        _write_immutable(manifest_path, manifest_raw)
+    if _read(manifest_path, "bootstrap manifest") != manifest_raw:
+        raise ActivationError("bootstrap manifest byte verification failed")
+    if sha256_file(manifest_path) != manifest_sha:
+        raise ActivationError("bootstrap manifest SHA-256 verification failed")
+
+    selector = {
+        "schema_version": SELECTOR_SCHEMA,
+        "manifest_id": audit["manifest_id"],
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha,
+        "activated_at": approval["approved_at"],
+        "approval_id": approval["approval_id"],
+    }
+    try:
+        validate_selector(selector)
+    except BaselineContractError as exc:
+        raise ActivationError(f"bootstrap selector contract failed: {exc}") from exc
+    selector_raw = canonical_json_bytes(selector)
+    expected_live_state = bootstrap_state(selector_file)
+    if (
+        expected_live_state["selector_exists"] is True
+        or expected_live_state["manifest_entries"] != [manifest_path.name]
+        or _read(audit_file, "bootstrap audit") != audit_raw
+        or _read(approval_file, "bootstrap approval") != approval_raw
+        or sha256_file(candidate_path) != approved_successor.sha256
+        or _read(manifest_path, "bootstrap manifest") != manifest_raw
+    ):
+        raise ActivationError("bootstrap input drift before selector creation")
+    selector_publish_fn(selector_file, selector_raw)
+    if _read(selector_file, "bootstrap selector") != selector_raw:
+        raise ActivationError("bootstrap selector byte verification failed")
+    resolved = resolve_active_price_baseline(selector_file)
+    if (
+        resolved.manifest_sha256 != manifest_sha
+        or resolved.path != candidate_path
+        or resolved.mapping_snapshot != tuple(audit["mapping_snapshot"])
+    ):
+        raise ActivationError("bootstrap selector chain verification failed")
+    return ActivationResult(
+        manifest_path=manifest_path,
+        manifest_sha256=manifest_sha,
+        selector_path=selector_file,
+        selector_sha256=sha256_bytes(selector_raw),
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Create the first manifest/selector from the static successor binding",
+    )
     parser.add_argument("--candidate-audit-json", type=Path, required=True)
     parser.add_argument("--approval-json", type=Path, required=True)
     parser.add_argument(
@@ -441,15 +741,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        result = activate(
-            candidate_audit_json=args.candidate_audit_json,
-            approval_json=args.approval_json,
-            active_selector=args.active_selector,
+        result = (
+            bootstrap_activate(
+                candidate_audit_json=args.candidate_audit_json,
+                approval_json=args.approval_json,
+                active_selector=args.active_selector,
+            )
+            if args.bootstrap
+            else activate(
+                candidate_audit_json=args.candidate_audit_json,
+                approval_json=args.approval_json,
+                active_selector=args.active_selector,
+            )
         )
     except (ActivationError, OSError) as exc:
         print(f"ACTIVATION HOLD: {exc}")
         return 1
-    print("PRICE_BASELINE_ACTIVATION=PASS")
+    print(
+        "PRICE_BASELINE_BOOTSTRAP=PASS"
+        if args.bootstrap
+        else "PRICE_BASELINE_ACTIVATION=PASS"
+    )
     print(f"MANIFEST={result.manifest_path}")
     print(f"MANIFEST_SHA256={result.manifest_sha256}")
     print(f"SELECTOR={result.selector_path}")

@@ -50,6 +50,22 @@ the complete chain. Tests use synthetic roots only. A successful technical run
 is still `DRAFT / NOT APPROVED`; quote, send, procurement and production remain
 closed.
 
+## First-chain bootstrap
+
+`--bootstrap` is an explicit genesis-only mode for both the auditor and
+activator. It is allowed only when the selector is absent and the manifests
+directory has no entries. Its sole workbook authority is the existing static
+`successor_2026_09_09` path/SHA and mapping catalog. The bootstrap approval
+fingerprint binds the genesis intent, exact workbook path/SHA, structural
+fingerprint, governed mapping snapshot SHA and historical/future scope flags.
+
+The genesis manifest uses `predecessor = null`; its selector is created
+atomically with no-overwrite semantics. If execution stops after publishing the
+manifest but before creating the selector, a retry may recover only the one
+byte-identical manifest produced by the same approved audit and approval. Any
+other orphan or directory entry fails closed. After the selector exists, all
+updates use the ordinary predecessor-bound workflow.
+
 ## Actual ingestion classification of the 16 changed exact names
 
 The bounded A/B workbook scan and current `calc_quote_price_draft.py` lookup

@@ -11,11 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from calc_quote_price_draft import (  # type: ignore[import-not-found]
+    SUCCESSOR_COMPONENT_PRICE_MAPPINGS,
+    build_governed_mapping_snapshot,
+)
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 from price_baseline_contract import (  # type: ignore[import-not-found]
     DEFAULT_ACTIVE_SELECTOR,
+    SUCCESSOR,
     BaselineContractError,
+    PriceBaseline,
     canonical_json_bytes,
     load_json_bytes,
     resolve_active_price_baseline,
@@ -25,6 +31,8 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
 )
 
 AUDIT_SCHEMA = "price_baseline_candidate_audit.v0.1"
+BOOTSTRAP_AUDIT_SCHEMA = "price_baseline_bootstrap_audit.v0.1"
+BOOTSTRAP_INTENT = "FIRST_CHAIN_BOOTSTRAP"
 MAX_SCAN_ROW = 200
 
 
@@ -239,6 +247,157 @@ def diff_all_price_values(
     return changes
 
 
+def bootstrap_state(selector_path: Path) -> dict[str, Any]:
+    selector_file = selector_path.resolve(strict=False)
+    root = selector_file.parent
+    manifest_dir = root / "manifests"
+    manifest_entries: list[str] = []
+    if manifest_dir.is_dir():
+        try:
+            manifest_entries = sorted(entry.name for entry in manifest_dir.iterdir())
+        except OSError as exc:
+            raise CandidateAuditError(
+                "bootstrap manifests directory could not be inspected"
+            ) from exc
+    return {
+        "canonical_root": str(root),
+        "root_exists": root.is_dir(),
+        "selector_path": str(selector_file),
+        "selector_exists": selector_file.exists(),
+        "manifest_dir": str(manifest_dir),
+        "manifest_entries": manifest_entries,
+    }
+
+
+def build_successor_mapping_snapshot(path: Path) -> list[dict[str, Any]]:
+    workbook: Any | None = None
+    try:
+        workbook = load_workbook(
+            path,
+            read_only=True,
+            data_only=False,
+            keep_links=False,
+        )
+        return cast(
+            list[dict[str, Any]],
+            build_governed_mapping_snapshot(
+                workbook,
+                component_mappings=SUCCESSOR_COMPONENT_PRICE_MAPPINGS,
+            ),
+        )
+    except (KeyError, OSError, ValueError) as exc:
+        raise CandidateAuditError(
+            f"static successor mapping snapshot could not be built: {exc}"
+        ) from exc
+    finally:
+        if workbook is not None:
+            workbook.close()
+
+
+def audit_bootstrap_candidate(
+    selector_path: Path,
+    candidate_workbook: Path,
+    *,
+    approved_successor: PriceBaseline = SUCCESSOR,
+) -> dict[str, Any]:
+    selector_file = selector_path.resolve(strict=False)
+    candidate_file = candidate_workbook.resolve(strict=False)
+    state_before = bootstrap_state(selector_file)
+    hold_reasons: list[str] = []
+    conflicts: dict[str, list[str]] = {
+        "formula": [],
+        "missing": [],
+        "duplicate": [],
+        "mapping_identity_drift": [],
+    }
+    if state_before["root_exists"] is not True:
+        hold_reasons.append("canonical price root does not exist")
+    if state_before["selector_exists"] is True:
+        hold_reasons.append("active selector already exists")
+    if state_before["manifest_entries"]:
+        hold_reasons.append("bootstrap manifests directory is not empty")
+    if candidate_file != approved_successor.path.resolve(strict=False):
+        hold_reasons.append("candidate path differs from static successor binding")
+    if (
+        not candidate_file.is_relative_to(selector_file.parent)
+        or candidate_file.suffix.casefold() != ".xlsx"
+    ):
+        hold_reasons.append("candidate workbook is outside canonical price root")
+
+    try:
+        candidate_sha = sha256_file(candidate_file)
+    except OSError:
+        candidate_sha = "not-readable"
+        hold_reasons.append("candidate workbook could not be read")
+    if candidate_sha != approved_successor.sha256:
+        hold_reasons.append("candidate SHA-256 differs from static successor binding")
+
+    inspection: WorkbookInspection | None = None
+    mapping_snapshot: list[dict[str, Any]] = []
+    if (
+        candidate_file == approved_successor.path.resolve(strict=False)
+        and candidate_sha == approved_successor.sha256
+    ):
+        try:
+            inspection = inspect_workbook(candidate_file)
+            conflicts["formula"] = list(inspection.formula_cells)
+            conflicts["missing"] = list(inspection.invalid_price_cells)
+            conflicts["duplicate"] = list(inspection.duplicate_names)
+            mapping_snapshot = build_successor_mapping_snapshot(candidate_file)
+        except CandidateAuditError as exc:
+            conflicts["mapping_identity_drift"].append(str(exc))
+    for category, findings in conflicts.items():
+        if findings:
+            hold_reasons.append(f"{category} conflicts detected")
+    if not mapping_snapshot:
+        hold_reasons.append("governed mapping snapshot is incomplete")
+
+    structural_fingerprint = (
+        inspection.structural_fingerprint if inspection is not None else "not-validated"
+    )
+    manifest_id = (
+        f"PBM-GENESIS-{candidate_sha[:16].upper()}"
+        if candidate_sha != "not-readable"
+        else "PBM-GENESIS-NOT-READABLE"
+    )
+    approval_payload = {
+        "intent": BOOTSTRAP_INTENT,
+        "manifest_id": manifest_id,
+        "candidate_workbook_path": str(candidate_file),
+        "candidate_workbook_sha256": candidate_sha,
+        "candidate_structural_fingerprint": structural_fingerprint,
+        "mapping_snapshot_sha256": sha256_bytes(canonical_json_bytes(mapping_snapshot)),
+        "future_cases_only": True,
+        "historical_repricing_authorized": False,
+    }
+    approval_fingerprint = sha256_bytes(canonical_json_bytes(approval_payload))
+    audit = {
+        "schema_version": BOOTSTRAP_AUDIT_SCHEMA,
+        "intent": BOOTSTRAP_INTENT,
+        "status": "PASS_CANDIDATE_ONLY" if not hold_reasons else "HOLD",
+        "manifest_id": manifest_id,
+        "genesis_state": state_before,
+        "candidate_workbook": {
+            "path": str(candidate_file),
+            "sha256": candidate_sha,
+            "structural_fingerprint": structural_fingerprint,
+        },
+        "price_inventory": (
+            list(inspection.price_names) if inspection is not None else []
+        ),
+        "conflicts": conflicts,
+        "mapping_snapshot": mapping_snapshot,
+        "hold_reasons": hold_reasons,
+        "approval_payload": approval_payload,
+        "approval_fingerprint": approval_fingerprint,
+    }
+    if bootstrap_state(selector_file) != state_before:
+        raise CandidateAuditError("genesis state changed during bootstrap audit")
+    if candidate_sha != "not-readable" and sha256_file(candidate_file) != candidate_sha:
+        raise CandidateAuditError("candidate workbook changed during bootstrap audit")
+    return audit
+
+
 def _manifest_data(path: Path) -> Mapping[str, Any]:
     try:
         raw = path.read_bytes()
@@ -443,6 +602,11 @@ def audit_candidate(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Audit the exact static successor for first-chain bootstrap",
+    )
+    parser.add_argument(
         "--active-selector",
         type=Path,
         default=DEFAULT_ACTIVE_SELECTOR,
@@ -454,7 +618,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        audit = audit_candidate(args.active_selector, args.candidate_workbook)
+        audit = (
+            audit_bootstrap_candidate(args.active_selector, args.candidate_workbook)
+            if args.bootstrap
+            else audit_candidate(args.active_selector, args.candidate_workbook)
+        )
     except (CandidateAuditError, OSError) as exc:
         print(f"AUDIT HOLD: {exc}")
         return 1

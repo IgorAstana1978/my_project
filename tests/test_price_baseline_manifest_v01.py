@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
@@ -512,4 +512,363 @@ def test_manifest_schema_file_is_valid_json() -> None:
     payload = json.loads(schema.read_text(encoding="utf-8"))
     assert payload["properties"]["schema_version"]["const"] == (
         contract.MANIFEST_SCHEMA
+    )
+
+
+def bootstrap_case(tmp_path: Path) -> dict[str, Any]:
+    root = tmp_path / "bootstrap-prices"
+    current = root / "current"
+    current.mkdir(parents=True)
+    workbook = current / "approved-successor.xlsx"
+    write_governed_workbook(workbook)
+    approved = contract.PriceBaseline(
+        contract.SUCCESSOR.version,
+        workbook.resolve(),
+        contract.sha256_file(workbook),
+    )
+    return {
+        "root": root,
+        "workbook": workbook,
+        "selector": root / "active-price-baseline.json",
+        "approved": approved,
+    }
+
+
+def write_bootstrap_audit_and_approval(
+    case: dict[str, Any],
+    tmp_path: Path,
+) -> tuple[dict[str, Any], Path, Path]:
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=case["approved"],
+    )
+    audit_path = tmp_path / "bootstrap-audit.json"
+    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    approval_path = tmp_path / "bootstrap-approval.json"
+    approval_path.write_bytes(
+        contract.canonical_json_bytes(approval_for(audit_path, audit))
+    )
+    return audit, audit_path, approval_path
+
+
+def bootstrap_synthetic_case(
+    case: dict[str, Any],
+    tmp_path: Path,
+) -> tuple[dict[str, Any], activation.ActivationResult]:
+    audit, audit_path, approval_path = write_bootstrap_audit_and_approval(
+        case, tmp_path
+    )
+    result = activation.bootstrap_activate(
+        candidate_audit_json=audit_path,
+        approval_json=approval_path,
+        active_selector=case["selector"],
+        approved_successor=case["approved"],
+    )
+    return audit, result
+
+
+def test_bootstrap_audit_passes_only_exact_static_successor(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=case["approved"],
+    )
+    assert audit["schema_version"] == auditor.BOOTSTRAP_AUDIT_SCHEMA
+    assert audit["intent"] == auditor.BOOTSTRAP_INTENT
+    assert audit["status"] == "PASS_CANDIDATE_ONLY"
+    assert audit["hold_reasons"] == []
+    assert audit["genesis_state"]["selector_exists"] is False
+    assert audit["genesis_state"]["manifest_entries"] == []
+    assert audit["candidate_workbook"]["sha256"] == case["approved"].sha256
+    assert audit["mapping_snapshot"] == build_snapshot(case["workbook"])
+    assert audit["approval_payload"]["intent"] == "FIRST_CHAIN_BOOTSTRAP"
+    assert audit["approval_payload"]["future_cases_only"] is True
+    assert audit["approval_payload"]["historical_repricing_authorized"] is False
+    assert case["selector"].parent != contract.DEFAULT_ACTIVE_SELECTOR.parent
+
+
+def test_bootstrap_creates_genesis_chain_then_ordinary_activation_works(
+    tmp_path: Path,
+) -> None:
+    case = bootstrap_case(tmp_path)
+    bootstrap_audit, bootstrap_result = bootstrap_synthetic_case(case, tmp_path)
+    manifest = json.loads(bootstrap_result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["predecessor"] is None
+    resolved = contract.resolve_active_price_baseline(case["selector"])
+    assert resolved.path == case["workbook"].resolve()
+    assert resolved.manifest_id == bootstrap_audit["manifest_id"]
+
+    candidate = case["root"] / "current" / "ordinary-successor.xlsx"
+    write_governed_workbook(candidate, material_delta=100)
+    ordinary_audit = auditor.audit_candidate(case["selector"], candidate)
+    assert ordinary_audit["status"] == "PASS_CANDIDATE_ONLY"
+    ordinary_audit_path = tmp_path / "ordinary-audit.json"
+    ordinary_audit_path.write_bytes(contract.canonical_json_bytes(ordinary_audit))
+    ordinary_approval_path = tmp_path / "ordinary-approval.json"
+    ordinary_approval_path.write_bytes(
+        contract.canonical_json_bytes(approval_for(ordinary_audit_path, ordinary_audit))
+    )
+    activation.activate(
+        candidate_audit_json=ordinary_audit_path,
+        approval_json=ordinary_approval_path,
+        active_selector=case["selector"],
+    )
+    assert contract.resolve_active_price_baseline(case["selector"]).path == (
+        candidate.resolve()
+    )
+
+
+@pytest.mark.parametrize("existing_kind", ["selector", "manifest"])
+def test_bootstrap_audit_holds_nonempty_genesis_state(
+    tmp_path: Path, existing_kind: str
+) -> None:
+    case = bootstrap_case(tmp_path)
+    if existing_kind == "selector":
+        case["selector"].write_text("existing", encoding="utf-8")
+    else:
+        manifests = case["root"] / "manifests"
+        manifests.mkdir()
+        (manifests / "existing.json").write_text("{}", encoding="utf-8")
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=case["approved"],
+    )
+    assert audit["status"] == "HOLD"
+    assert any(existing_kind in reason for reason in audit["hold_reasons"])
+
+
+def test_bootstrap_audit_holds_wrong_workbook_path_and_sha(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    wrong_path = case["root"] / "current" / "other.xlsx"
+    write_governed_workbook(wrong_path)
+    wrong_path_audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        wrong_path,
+        approved_successor=case["approved"],
+    )
+    assert wrong_path_audit["status"] == "HOLD"
+    assert any("path differs" in reason for reason in wrong_path_audit["hold_reasons"])
+
+    wrong_sha = contract.PriceBaseline(
+        case["approved"].version,
+        case["approved"].path,
+        "0" * 64,
+    )
+    wrong_sha_audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=wrong_sha,
+    )
+    assert wrong_sha_audit["status"] == "HOLD"
+    assert any(
+        "SHA-256 differs" in reason for reason in wrong_sha_audit["hold_reasons"]
+    )
+
+
+def test_bootstrap_audit_holds_mapping_identity_drift(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    workbook = load_workbook(case["workbook"])
+    workbook["КРН"]["A5"] = "different mapping identity"
+    workbook.save(case["workbook"])
+    workbook.close()
+    drift_approved = contract.PriceBaseline(
+        case["approved"].version,
+        case["approved"].path,
+        contract.sha256_file(case["workbook"]),
+    )
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=drift_approved,
+    )
+    assert audit["status"] == "HOLD"
+    assert audit["conflicts"]["mapping_identity_drift"]
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    ["=4500", None, 0, -1, 1.5, "not a price"],
+)
+def test_bootstrap_audit_holds_formula_and_invalid_prices(
+    tmp_path: Path, invalid_value: Any
+) -> None:
+    case = bootstrap_case(tmp_path)
+    workbook = load_workbook(case["workbook"])
+    workbook["КРН"]["B150"] = invalid_value
+    workbook.save(case["workbook"])
+    workbook.close()
+    changed_approved = contract.PriceBaseline(
+        case["approved"].version,
+        case["approved"].path,
+        contract.sha256_file(case["workbook"]),
+    )
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=changed_approved,
+    )
+    assert audit["status"] == "HOLD"
+    category = "formula" if invalid_value == "=4500" else "missing"
+    assert audit["conflicts"][category]
+
+
+def test_bootstrap_audit_holds_duplicate_price_identity(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    workbook = load_workbook(case["workbook"])
+    krn = workbook["КРН"]
+    krn["A149"] = krn["A150"].value
+    krn["B149"] = 7777
+    krn["C149"] = 333
+    workbook.save(case["workbook"])
+    workbook.close()
+    changed_approved = contract.PriceBaseline(
+        case["approved"].version,
+        case["approved"].path,
+        contract.sha256_file(case["workbook"]),
+    )
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"],
+        case["workbook"],
+        approved_successor=changed_approved,
+    )
+    assert audit["status"] == "HOLD"
+    assert audit["conflicts"]["duplicate"]
+
+
+def test_bootstrap_activation_rejects_approval_mismatch(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    audit, audit_path, approval_path = write_bootstrap_audit_and_approval(
+        case, tmp_path
+    )
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["approval_fingerprint"] = "0" * 64
+    approval_path.write_bytes(contract.canonical_json_bytes(approval))
+    with pytest.raises(activation.ActivationError, match="candidate content"):
+        activation.bootstrap_activate(
+            candidate_audit_json=audit_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+        )
+    assert audit["status"] == "PASS_CANDIDATE_ONLY"
+
+
+@pytest.mark.parametrize("drift", ["workbook", "audit", "approval", "selector"])
+def test_bootstrap_activation_rejects_toctou_drift(
+    tmp_path: Path, drift: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = bootstrap_case(tmp_path)
+    audit, audit_path, approval_path = write_bootstrap_audit_and_approval(
+        case, tmp_path
+    )
+    if drift == "workbook":
+        workbook = load_workbook(case["workbook"])
+        workbook["КРН"]["B150"] = 8888
+        workbook.save(case["workbook"])
+        workbook.close()
+    elif drift == "audit":
+        audit_path.write_text(
+            audit_path.read_text(encoding="utf-8") + " ", encoding="utf-8"
+        )
+    elif drift == "approval":
+        original_snapshot_builder = activation.build_successor_mapping_snapshot
+        mutated = False
+
+        def mutate_approval_during_activation(path: Path) -> list[dict[str, Any]]:
+            nonlocal mutated
+            snapshot = cast(list[dict[str, Any]], original_snapshot_builder(path))
+            if not mutated:
+                mutated = True
+                approval_path.write_text(
+                    approval_path.read_text(encoding="utf-8") + " ",
+                    encoding="utf-8",
+                )
+            return snapshot
+
+        monkeypatch.setattr(
+            activation,
+            "build_successor_mapping_snapshot",
+            mutate_approval_during_activation,
+        )
+    else:
+        case["selector"].write_text("appeared", encoding="utf-8")
+    with pytest.raises((activation.ActivationError, contract.BaselineContractError)):
+        activation.bootstrap_activate(
+            candidate_audit_json=audit_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+        )
+    assert audit["status"] == "PASS_CANDIDATE_ONLY"
+
+
+def test_bootstrap_exact_orphan_retry_is_deterministic(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    audit, audit_path, approval_path = write_bootstrap_audit_and_approval(
+        case, tmp_path
+    )
+
+    def interrupted_selector_publish(path: Path, content: bytes) -> None:
+        del path, content
+        raise activation.ActivationError("synthetic interruption")
+
+    with pytest.raises(activation.ActivationError, match="synthetic interruption"):
+        activation.bootstrap_activate(
+            candidate_audit_json=audit_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+            selector_publish_fn=interrupted_selector_publish,
+        )
+    assert not case["selector"].exists()
+    manifest_path = case["root"] / "manifests" / f"{audit['manifest_id']}.json"
+    orphan_before = manifest_path.read_bytes()
+
+    result = activation.bootstrap_activate(
+        candidate_audit_json=audit_path,
+        approval_json=approval_path,
+        active_selector=case["selector"],
+        approved_successor=case["approved"],
+    )
+    assert result.manifest_path.read_bytes() == orphan_before
+    assert contract.resolve_active_price_baseline(case["selector"]).path == (
+        case["workbook"].resolve()
+    )
+
+
+def test_bootstrap_rejects_unrelated_orphan_manifest(tmp_path: Path) -> None:
+    case = bootstrap_case(tmp_path)
+    _, audit_path, approval_path = write_bootstrap_audit_and_approval(case, tmp_path)
+    manifests = case["root"] / "manifests"
+    manifests.mkdir()
+    (manifests / "unrelated.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(activation.ActivationError, match="not empty"):
+        activation.bootstrap_activate(
+            candidate_audit_json=audit_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+        )
+
+
+def test_historical_binding_ignores_bootstrap_selector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = bootstrap_case(tmp_path)
+    bootstrap_synthetic_case(case, tmp_path)
+    historical = tmp_path / "historical.xlsx"
+    historical.write_bytes(b"frozen historical bytes")
+    frozen = contract.PriceBaseline(
+        contract.HISTORICAL.version,
+        historical,
+        contract.sha256_file(historical),
+    )
+    monkeypatch.setitem(contract.BASELINES, contract.HISTORICAL.version, frozen)
+    case["selector"].write_text("corrupt bootstrap selector", encoding="utf-8")
+    assert (
+        contract.require_price_baseline(historical, contract.HISTORICAL.version)
+        == frozen
     )
