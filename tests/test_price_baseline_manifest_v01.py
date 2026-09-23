@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,7 +42,7 @@ def write_governed_workbook(
         for row in range(1, calculator.MAX_LOOKUP_ROW + 1)
         if calculator.normalize_workbook_label(krn.cell(row, 1).value) is not None
     }
-    next_row = 40
+    next_row = 20
     for definition in calculator.COMPONENT_DEFINITIONS.values():
         if definition.workbook_label is None:
             continue
@@ -64,7 +65,7 @@ def write_governed_workbook(
         calculator.normalize_workbook_label(krn.cell(row, 12).value)
         for row in range(1, calculator.MAX_LOOKUP_ROW + 1)
     }
-    cabinet_row = 40
+    cabinet_row = 10
     for code, label in calculator.CABINET_DEFINITIONS.items():
         if code == calculator.INVOICE519_SCHE_CABINET_CODE:
             continue
@@ -75,11 +76,175 @@ def write_governed_workbook(
         krn.cell(cabinet_row, 13, 8000 + cabinet_row)
         occupied_cabinet_labels.add(normalized)
         cabinet_row += 1
-    krn["A150"] = "UNUSED PRICE ROW"
-    krn["B150"] = 7777 + unused_delta
-    krn["C150"] = 333
+    krn["A29"] = "UNUSED PRICE ROW"
+    krn["B29"] = 7777 + unused_delta
+    krn["C29"] = 333
     workbook.save(path)
     workbook.close()
+
+
+def add_busbar_labor_block(path: Path, *, first_row: int = 49) -> None:
+    workbook = load_workbook(path)
+    sheet = workbook["ЩР"]
+    for offset, size in enumerate(("3х30", "4х40", "5х50")):
+        row = first_row + offset
+        sheet.cell(row, 1, f"{size} мм шина АЛ")
+        sheet.cell(row, 2, 950 + offset * 100)
+        sheet.cell(row, 3, 0)
+        sheet.cell(row, 6, f"=D{row}*C{row}")
+    labor_row = first_row + 3
+    sheet.cell(labor_row, 1, "Шина за работу")
+    sheet.cell(labor_row, 3, 3000)
+    sheet.cell(labor_row, 6, f"=D{labor_row}*C{labor_row}")
+    workbook.save(path)
+    workbook.close()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1, 1),
+        (6899.999999999999, 6900),
+        (6899.999999999999, 6900),
+        (13799.999999999998, 13800),
+        (14949.999999999998, 14950),
+        (32199.999999999996, 32200),
+        (math.nextafter(6900.0, -math.inf), 6900),
+        (math.nextafter(6900.0, math.inf), 6900),
+        (math.nextafter(math.nextafter(6900.0, math.inf), math.inf), None),
+        (math.nextafter(math.nextafter(6900.0, -math.inf), -math.inf), None),
+        (6899.99, None),
+        (6899.5, None),
+        (6900.0001, None),
+        (0, None),
+        (-1, None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (-float("inf"), None),
+        (True, None),
+        ("6900", None),
+        ("=6900", None),
+    ],
+)
+def test_shared_kzt_literal_normalizer(value: Any, expected: int | None) -> None:
+    assert contract.normalize_kzt_literal(value) == expected
+
+
+@pytest.mark.parametrize("role", ["material", "cabinet", "work"])
+def test_zero_outside_structural_work_class_holds(tmp_path: Path, role: str) -> None:
+    path = tmp_path / "zero-role.xlsx"
+    write_governed_workbook(path)
+    workbook = load_workbook(path)
+    coordinate = {"material": "B29", "cabinet": "M10", "work": "C29"}[role]
+    workbook["КРН"][coordinate] = 0
+    workbook.save(path)
+    workbook.close()
+    inspection = auditor.inspect_workbook(path)
+    assert any(coordinate in finding for finding in inspection.invalid_price_cells)
+
+
+@pytest.mark.parametrize(
+    "drift", ["none", "labor_label", "labor_rate", "labor_formula", "busbar_label"]
+)
+def test_busbar_zero_requires_separate_labor_structure(
+    tmp_path: Path, drift: str
+) -> None:
+    path = tmp_path / "busbar.xlsx"
+    write_governed_workbook(path)
+    add_busbar_labor_block(path)
+    workbook = load_workbook(path)
+    sheet = workbook["ЩР"]
+    if drift == "labor_label":
+        sheet["A52"] = "other labor"
+    elif drift == "labor_rate":
+        sheet["C52"] = None
+    elif drift == "labor_formula":
+        sheet["F52"] = "=0"
+    elif drift == "busbar_label":
+        sheet["A50"] = "ordinary component"
+    workbook.save(path)
+    workbook.close()
+    inspection = auditor.inspect_workbook(path)
+    zero_findings = [
+        finding for finding in inspection.invalid_price_cells if "ЩР!C49" in finding
+    ]
+    assert bool(zero_findings) is (drift != "none")
+    assert (
+        sum(
+            cell.endswith("C49") or cell.endswith("C50") or cell.endswith("C51")
+            for entry in inspection.price_names
+            for cell in entry["price_cells"]
+        )
+        == 3
+    )
+
+
+def test_auditor_and_activator_share_ulp_literal_semantics(
+    active_chain: dict[str, Path], tmp_path: Path
+) -> None:
+    candidate = write_candidate(active_chain, tmp_path)
+    workbook = load_workbook(candidate)
+    workbook["КРН"]["B5"] = math.nextafter(4600.0, -math.inf)
+    workbook.save(candidate)
+    workbook.close()
+    audit = auditor.audit_candidate(active_chain["selector"], candidate)
+    assert audit["status"] == "PASS_CANDIDATE_ONLY"
+    activation.verify_snapshot_against_workbook(candidate, audit["mapping_snapshot"])
+    assert not auditor.inspect_workbook(candidate).invalid_price_cells
+
+
+@pytest.mark.parametrize("change", ["added", "removed"])
+def test_unused_genuine_price_identity_change_holds(
+    active_chain: dict[str, Path], tmp_path: Path, change: str
+) -> None:
+    candidate = write_candidate(active_chain, tmp_path)
+    workbook = load_workbook(candidate)
+    sheet = workbook["КРН"]
+    if change == "added":
+        sheet["A6"] = "NEW UNUSED PRICE"
+        sheet["B6"] = 1234
+        sheet["C6"] = 234
+    else:
+        sheet["A29"] = None
+        sheet["B29"] = None
+        sheet["C29"] = None
+    workbook.save(candidate)
+    workbook.close()
+    audit = auditor.audit_candidate(active_chain["selector"], candidate)
+    assert audit["status"] == "HOLD"
+    assert "price-bearing names were added or removed" in audit["hold_reasons"]
+    assert audit["added_names"] if change == "added" else audit["removed_names"]
+
+
+def test_unproven_region_values_do_not_define_prices(tmp_path: Path) -> None:
+    path = tmp_path / "outside-price-regions.xlsx"
+    write_governed_workbook(path)
+    workbook = load_workbook(path)
+    side = workbook.create_sheet("ВРУ250А")
+    side["A2"] = "BASE MATERIAL"
+    side["B2"] = 1000
+    side["J2"] = "BASE CABINET"
+    side["K2"] = 5000
+    side["J5"] = "800х600 dimension"
+    side["K5"] = "2м"
+    side["A16"] = "OUTSIDE MATERIAL"
+    side["B16"] = 1200
+    side["A17"] = "OUTSIDE FORMULA"
+    side["B17"] = "=2*1000"
+    side["J12"] = "OUTSIDE CABINET"
+    side["K12"] = 5500
+    side["J13"] = "OUTSIDE CABINET FORMULA"
+    side["K13"] = "=2*1000"
+    workbook.save(path)
+    workbook.close()
+    inspection = auditor.inspect_workbook(path)
+    assert [
+        (entry["kind"], entry["row"])
+        for entry in inspection.price_names
+        if entry["sheet"] == "ВРУ250А"
+    ] == [("component", 2), ("cabinet", 2)]
+    assert not inspection.formula_cells
+    assert not inspection.invalid_price_cells
 
 
 def build_snapshot(path: Path) -> list[dict[str, Any]]:
@@ -231,12 +396,12 @@ def test_unused_price_row_change_is_visible_without_becoming_mapping_authority(
         {
             "kind": "component",
             "sheet": "КРН",
-            "row": 150,
+            "row": 29,
             "label": "UNUSED PRICE ROW",
-            "label_cell": "КРН!A150",
-            "price_cells": ["КРН!B150", "КРН!C150"],
-            "before": {"КРН!B150": 7777, "КРН!C150": 333},
-            "after": {"КРН!B150": 7877, "КРН!C150": 333},
+            "label_cell": "КРН!A29",
+            "price_cells": ["КРН!B29", "КРН!C29"],
+            "before": {"КРН!B29": 7777, "КРН!C29": 333},
+            "after": {"КРН!B29": 7877, "КРН!C29": 333},
             "currently_governed": False,
             "governed_mapping_ids": [],
         }
@@ -255,7 +420,7 @@ def test_unused_price_row_change_is_visible_without_becoming_mapping_authority(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
     )
     workbook = load_workbook(candidate)
-    workbook["КРН"]["B150"] = 7977
+    workbook["КРН"]["B29"] = 7977
     workbook.save(candidate)
     workbook.close()
     with pytest.raises(activation.ActivationError, match="SHA-256 drifted"):
@@ -276,7 +441,7 @@ def test_unused_price_row_invalid_value_holds_without_mapping_expansion(
     candidate = active_chain["root"] / "current" / "unused-invalid.xlsx"
     write_governed_workbook(candidate)
     workbook = load_workbook(candidate)
-    workbook["КРН"]["B150"] = invalid_value
+    workbook["КРН"]["B29"] = invalid_value
     workbook.save(candidate)
     workbook.close()
 
@@ -286,11 +451,11 @@ def test_unused_price_row_invalid_value_holds_without_mapping_expansion(
     assert audit["status"] == "HOLD"
     assert "missing conflicts detected" in audit["hold_reasons"]
     assert any(
-        finding.startswith("КРН!B150:") for finding in audit["conflicts"]["missing"]
+        finding.startswith("КРН!B29:") for finding in audit["conflicts"]["missing"]
     )
     assert audit["changed_prices"][0]["kind"] == "component"
-    assert audit["changed_prices"][0]["row"] == 150
-    assert audit["changed_prices"][0]["after"]["КРН!B150"] == invalid_value
+    assert audit["changed_prices"][0]["row"] == 29
+    assert audit["changed_prices"][0]["after"]["КРН!B29"] == invalid_value
     assert audit["changed_prices"][0]["currently_governed"] is False
     assert audit["changed_prices"][0]["governed_mapping_ids"] == []
     assert audit["mapping_snapshot"] == [
@@ -312,9 +477,9 @@ def test_candidate_audit_holds_formula_identity_and_duplicate_drift(
     elif drift == "identity":
         krn["A5"] = "different technical identity"
     else:
-        krn["A100"] = krn["A5"].value
-        krn["B100"] = krn["B5"].value
-        krn["C100"] = krn["C5"].value
+        krn["A6"] = krn["A5"].value
+        krn["B6"] = krn["B5"].value
+        krn["C6"] = krn["C5"].value
     workbook.save(candidate)
     workbook.close()
     audit = auditor.audit_candidate(active_chain["selector"], candidate)
@@ -697,7 +862,7 @@ def test_bootstrap_audit_holds_formula_and_invalid_prices(
 ) -> None:
     case = bootstrap_case(tmp_path)
     workbook = load_workbook(case["workbook"])
-    workbook["КРН"]["B150"] = invalid_value
+    workbook["КРН"]["B29"] = invalid_value
     workbook.save(case["workbook"])
     workbook.close()
     changed_approved = contract.PriceBaseline(
@@ -719,9 +884,9 @@ def test_bootstrap_audit_holds_duplicate_price_identity(tmp_path: Path) -> None:
     case = bootstrap_case(tmp_path)
     workbook = load_workbook(case["workbook"])
     krn = workbook["КРН"]
-    krn["A149"] = krn["A150"].value
-    krn["B149"] = 7777
-    krn["C149"] = 333
+    krn["A6"] = krn["A29"].value
+    krn["B6"] = 7777
+    krn["C6"] = 333
     workbook.save(case["workbook"])
     workbook.close()
     changed_approved = contract.PriceBaseline(
@@ -766,7 +931,7 @@ def test_bootstrap_activation_rejects_toctou_drift(
     )
     if drift == "workbook":
         workbook = load_workbook(case["workbook"])
-        workbook["КРН"]["B150"] = 8888
+        workbook["КРН"]["B29"] = 8888
         workbook.save(case["workbook"])
         workbook.close()
     elif drift == "audit":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -57,6 +58,34 @@ BASELINES = {item.version: item for item in (HISTORICAL, SUCCESSOR)}
 
 class BaselineContractError(ValueError):
     """An active price-baseline chain is missing, corrupt, or drifted."""
+
+
+def normalize_kzt_literal(value: Any, *, allow_zero: bool = False) -> int | None:
+    """Accept integer KZT or one IEEE-754 neighbor of an exact integer."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 or (allow_zero and value == 0) else None
+    if not isinstance(value, float) or not math.isfinite(value):
+        return None
+    if value == 0:
+        return 0 if allow_zero else None
+    if value < 0:
+        return None
+    if value.is_integer():
+        return int(value)
+    for candidate in (math.floor(value), math.ceil(value)):
+        if (
+            candidate > 0
+            and float(candidate) == candidate
+            and value
+            in (
+                math.nextafter(float(candidate), -math.inf),
+                math.nextafter(float(candidate), math.inf),
+            )
+        ):
+            return candidate
+    return None
 
 
 def sha256_bytes(value: bytes) -> str:

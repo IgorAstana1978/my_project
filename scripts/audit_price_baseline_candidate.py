@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
+import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -24,6 +26,7 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
     PriceBaseline,
     canonical_json_bytes,
     load_json_bytes,
+    normalize_kzt_literal,
     resolve_active_price_baseline,
     sha256_bytes,
     sha256_file,
@@ -33,7 +36,44 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
 AUDIT_SCHEMA = "price_baseline_candidate_audit.v0.1"
 BOOTSTRAP_AUDIT_SCHEMA = "price_baseline_bootstrap_audit.v0.1"
 BOOTSTRAP_INTENT = "FIRST_CHAIN_BOOTSTRAP"
-MAX_SCAN_ROW = 200
+# Bounded source-table footprints, not calculator mappings. The side tables
+# use different columns and include non-price dimension/header blocks.
+MATERIAL_REGIONS: dict[str, tuple[int, int]] = {
+    "ВРУ250А": (2, 15),
+    "ВРУ630А": (2, 15),
+    "ВРУ400А": (2, 15),
+    "ВРУ-расп.": (2, 10),
+    "ВРУ-ВА": (2, 29),
+    "КРН": (2, 29),
+    "ЩР": (2, 52),
+    "АВР Г-Г": (2, 41),
+    "АВР Г-Д": (2, 47),
+    "АВР-Г-Г-Д": (2, 45),
+    "ШРС": (2, 21),
+    "ЩЭ": (2, 19),
+    "БАУО рассч": (6, 14),
+    "Я5111": (2, 20),
+    "ЯУО9601": (2, 24),
+    "ЯУО9602": (2, 23),
+}
+WORK_SHEETS = frozenset({"ВРУ-ВА", "КРН", "ЩР", "ЩЭ"})
+CABINET_REGIONS: dict[str, tuple[int, int, tuple[tuple[int, int], ...]]] = {
+    "ВРУ250А": (10, 11, ((2, 4), (10, 11))),
+    "ВРУ630А": (10, 11, ((2, 4),)),
+    "ВРУ400А": (10, 11, ((2, 4), (10, 11))),
+    "ВРУ-расп.": (10, 11, ((2, 4), (8, 9))),
+    "ВРУ-ВА": (12, 13, ((5, 6),)),
+    "КРН": (12, 13, ((3, 24),)),
+    "ЩР": (12, 13, ((3, 14),)),
+    "АВР Г-Г": (11, 12, ((2, 7), (12, 21), (27, 31), (33, 37))),
+    "АВР Г-Д": (11, 12, ((2, 7), (10, 19))),
+    "АВР-Г-Г-Д": (10, 11, ((2, 8), (11, 20), (25, 29), (31, 35))),
+    "ШРС": (10, 11, ((3, 4), (6, 8))),
+    "Я5111": (10, 11, ((3, 4), (7, 8))),
+    "ЯУО9601": (10, 11, ((3, 6),)),
+    "ЯУО9602": (10, 11, ((3, 6),)),
+}
+BUSBAR_LABEL = re.compile(r"\d+\s*[xх×]\s*\d+\s*мм.*шина\s+АЛ", re.I)
 
 
 class CandidateAuditError(RuntimeError):
@@ -58,16 +98,36 @@ def normalize_label(value: Any) -> str | None:
 
 
 def positive_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, float):
-        return int(value) if value > 0 and value.is_integer() else None
-    return None
+    return cast(int | None, normalize_kzt_literal(value))
+
+
+def _separate_busbar_labor_row(
+    sheet: str, row: int, value: Callable[[int, int], Any]
+) -> bool:
+    if sheet != "ЩР":
+        return False
+    label = normalize_label(value(row, 1))
+    if label is None or BUSBAR_LABEL.search(label) is None:
+        return False
+    next_row = row + 1
+    upper_row = MATERIAL_REGIONS[sheet][1]
+    while next_row <= upper_row:
+        next_label = normalize_label(value(next_row, 1))
+        if next_label is None or BUSBAR_LABEL.search(next_label) is None:
+            break
+        next_row += 1
+    return (
+        normalize_label(value(next_row, 1)) == "Шина за работу"
+        and value(next_row, 2) is None
+        and normalize_kzt_literal(value(next_row, 3)) is not None
+        and value(next_row, 6) == f"=D{next_row}*C{next_row}"
+        and value(row, 6) == f"=D{row}*C{row}"
+    )
 
 
 def inspected_price_value(value: Any) -> Any:
+    if isinstance(value, float) and not math.isfinite(value):
+        return {"type": "float", "text": repr(value)}
     if value is None or isinstance(value, bool | int | float | str):
         return value
     return {"type": type(value).__name__, "text": str(value)}
@@ -90,62 +150,107 @@ def inspect_workbook(path: Path) -> WorkbookInspection:
     try:
         sheet_order = tuple(workbook.sheetnames)
         for worksheet in workbook.worksheets:
-            for row in range(1, MAX_SCAN_ROW + 1):
-                for kind, label_column, price_columns in (
-                    ("component", 1, (2, 3)),
-                    ("cabinet", 12, (13,)),
-                ):
-                    raw_label = worksheet.cell(row, label_column).value
-                    label = normalize_label(raw_label)
-                    raw_prices = [
-                        worksheet.cell(row, column).value for column in price_columns
-                    ]
-                    if label is None or not any(
-                        value is not None for value in raw_prices
-                    ):
+            sheet = worksheet.title
+            last_material = MATERIAL_REGIONS.get(sheet, (0, 0))[1]
+            last_cabinet = max(
+                (end for _, end in CABINET_REGIONS.get(sheet, (0, 0, ()))[2]),
+                default=0,
+            )
+            last_row = max(last_material, last_cabinet)
+            if last_row == 0:
+                continue
+            row_values = {
+                row: tuple(cell.value for cell in cells)
+                for row, cells in enumerate(
+                    worksheet.iter_rows(min_row=1, max_row=last_row, max_col=13),
+                    start=1,
+                )
+            }
+
+            def cell_value(
+                row: int,
+                column: int,
+                *,
+                _rows: dict[int, tuple[Any, ...]] = row_values,
+            ) -> Any:
+                return _rows.get(row, (None,) * 13)[column - 1]
+
+            regions: list[tuple[str, int, int, tuple[int, ...]]] = []
+            if sheet in MATERIAL_REGIONS:
+                first, last = MATERIAL_REGIONS[sheet]
+                for row in range(first, last + 1):
+                    label = normalize_label(cell_value(row, 1))
+                    material = cell_value(row, 2)
+                    work = cell_value(row, 3) if sheet in WORK_SHEETS else None
+                    if label is None or (material is None and work is None):
                         continue
-                    cells = [
-                        f"{worksheet.title}!{get_column_letter(column)}{row}"
-                        for column in price_columns
-                    ]
-                    formulas.extend(
-                        cell
-                        for cell, value in zip(cells, raw_prices, strict=True)
-                        if isinstance(value, str) and value.startswith("=")
+                    work_only = (
+                        sheet == "ЩР" and label == "Шина за работу" and material is None
                     )
-                    for cell, value in zip(cells, raw_prices, strict=True):
-                        if isinstance(value, str) and value.startswith("="):
-                            continue
-                        if positive_int(value) is None:
-                            rendered = json.dumps(
-                                inspected_price_value(value),
-                                ensure_ascii=False,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            )
-                            invalid_prices.append(
-                                f"{cell}: required positive integer literal price "
-                                f"is missing or invalid: {rendered}"
-                            )
-                    names.append(
-                        {
-                            "kind": kind,
-                            "sheet": worksheet.title,
-                            "row": row,
-                            "label": label,
-                            "label_cell": (
-                                f"{worksheet.title}!"
-                                f"{get_column_letter(label_column)}{row}"
-                            ),
-                            "price_cells": cells,
-                            "price_values": {
-                                cell: inspected_price_value(value)
-                                for cell, value in zip(cells, raw_prices, strict=True)
-                            },
-                        }
+                    columns: tuple[int, ...] = () if work_only else (2,)
+                    if sheet in WORK_SHEETS and (
+                        work is not None or sheet in {"КРН", "ЩР", "ЩЭ"}
+                    ):
+                        columns += (3,)
+                    regions.append(("component", row, 1, columns))
+            if sheet in CABINET_REGIONS:
+                label_col, price_col, intervals = CABINET_REGIONS[sheet]
+                for first, last in intervals:
+                    for row in range(first, last + 1):
+                        label = normalize_label(cell_value(row, label_col))
+                        price = cell_value(row, price_col)
+                        if label is not None and (price is not None or sheet != "КРН"):
+                            regions.append(("cabinet", row, label_col, (price_col,)))
+            for kind, row, label_column, price_columns in regions:
+                label = normalize_label(cell_value(row, label_column))
+                assert label is not None
+                cells = [
+                    f"{sheet}!{get_column_letter(column)}{row}"
+                    for column in price_columns
+                ]
+                raw_prices = [cell_value(row, column) for column in price_columns]
+                for column, cell, raw_value in zip(
+                    price_columns, cells, raw_prices, strict=True
+                ):
+                    if isinstance(raw_value, str) and raw_value.startswith("="):
+                        formulas.append(cell)
+                        continue
+                    allow_zero = (
+                        kind == "component"
+                        and column == 3
+                        and raw_value == 0
+                        and not isinstance(raw_value, bool)
+                        and _separate_busbar_labor_row(sheet, row, cell_value)
                     )
+                    if normalize_kzt_literal(raw_value, allow_zero=allow_zero) is None:
+                        rendered = json.dumps(
+                            inspected_price_value(raw_value),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        )
+                        invalid_prices.append(
+                            f"{cell}: required integer KZT literal price "
+                            f"is missing or invalid: {rendered}"
+                        )
+                names.append(
+                    {
+                        "kind": kind,
+                        "sheet": sheet,
+                        "row": row,
+                        "label": label,
+                        "label_cell": f"{sheet}!{get_column_letter(label_column)}{row}",
+                        "price_cells": cells,
+                        "price_values": {
+                            cell: inspected_price_value(value)
+                            for cell, value in zip(cells, raw_prices, strict=True)
+                        },
+                    }
+                )
         counts = Counter(
-            (entry["kind"], entry["sheet"], entry["label"]) for entry in names
+            (entry["kind"], entry["sheet"], entry["label"])
+            for entry in names
+            if entry["sheet"] in {"КРН", "ЩР"}
         )
         duplicates = [
             f"{kind}:{sheet}:{label}"

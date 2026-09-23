@@ -30,6 +30,7 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
     PriceBaseline,
     canonical_json_bytes,
     load_json_bytes,
+    normalize_kzt_literal,
     resolve_active_price_baseline,
     sha256_bytes,
     sha256_file,
@@ -296,16 +297,6 @@ def _normalized_label(value: Any) -> str | None:
     return normalized or None
 
 
-def _positive_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, float):
-        return int(value) if value > 0 and value.is_integer() else None
-    return None
-
-
 def verify_snapshot_against_workbook(
     workbook_path: Path,
     snapshot: Any,
@@ -342,7 +333,7 @@ def verify_snapshot_against_workbook(
                 raw_value = worksheet[cell].value
                 if isinstance(raw_value, str) and raw_value.startswith("="):
                     raise ActivationError("formula price is forbidden")
-                value = _positive_int(raw_value)
+                value = normalize_kzt_literal(raw_value)
                 if value is None:
                     raise ActivationError("mapping price is missing or invalid")
                 values.append(value)
@@ -492,8 +483,18 @@ def activate(
     try:
         if sha256_file(candidate_path) != candidate["sha256"]:
             raise ActivationError("candidate workbook SHA-256 drifted")
+        inspection = inspect_workbook(candidate_path)
     except OSError as exc:
         raise ActivationError("candidate workbook could not be rechecked") from exc
+    except CandidateAuditError as exc:
+        raise ActivationError(f"candidate workbook inspection failed: {exc}") from exc
+    if (
+        inspection.formula_cells
+        or inspection.invalid_price_cells
+        or inspection.duplicate_names
+        or inspection.structural_fingerprint != candidate["structural_fingerprint"]
+    ):
+        raise ActivationError("candidate price inventory drift or conflict")
 
     manifest = _build_manifest(audit, approval)
     try:
