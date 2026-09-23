@@ -1,4 +1,4 @@
-"""Read-only audit of a candidate workbook against the active approved manifest."""
+"""Audit a candidate workbook; publication is an explicit opt-in."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import argparse
 import copy
 import json
 import math
+import os
 import re
+import sys
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -20,10 +22,13 @@ from calc_quote_price_draft import (  # type: ignore[import-not-found]
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 from price_baseline_contract import (  # type: ignore[import-not-found]
+    BOOTSTRAP_AUDIT_SCHEMA,
+    CANDIDATE_AUDIT_SCHEMA,
     DEFAULT_ACTIVE_SELECTOR,
     SUCCESSOR,
     BaselineContractError,
     PriceBaseline,
+    audit_artifact_path,
     canonical_json_bytes,
     load_json_bytes,
     normalize_kzt_literal,
@@ -33,8 +38,7 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
     validate_manifest,
 )
 
-AUDIT_SCHEMA = "price_baseline_candidate_audit.v0.1"
-BOOTSTRAP_AUDIT_SCHEMA = "price_baseline_bootstrap_audit.v0.1"
+AUDIT_SCHEMA = CANDIDATE_AUDIT_SCHEMA
 BOOTSTRAP_INTENT = "FIRST_CHAIN_BOOTSTRAP"
 # Bounded source-table footprints, not calculator mappings. The side tables
 # use different columns and include non-price dimension/header blocks.
@@ -704,6 +708,68 @@ def audit_candidate(
     return audit
 
 
+def materialize_audit_artifact(selector_path: Path, audit: Mapping[str, Any]) -> Path:
+    """Create only the canonical immutable PASS audit, or verify exact reuse."""
+    if audit.get("status") != "PASS_CANDIDATE_ONLY":
+        raise CandidateAuditError("only a PASS audit can be materialized")
+    try:
+        path = cast(Path, audit_artifact_path(selector_path, audit))
+    except BaselineContractError as exc:
+        raise CandidateAuditError(str(exc)) from exc
+    candidate = cast(Mapping[str, Any], audit["candidate_workbook"])
+    candidate_path = Path(cast(str, candidate["path"]))
+    try:
+        if sha256_file(candidate_path) != candidate["sha256"]:
+            raise CandidateAuditError(
+                "candidate workbook drifted before audit publication"
+            )
+    except OSError as exc:
+        raise CandidateAuditError("candidate workbook could not be rechecked") from exc
+    if audit["schema_version"] == BOOTSTRAP_AUDIT_SCHEMA:
+        if bootstrap_state(selector_path) != audit["genesis_state"]:
+            raise CandidateAuditError("genesis state drifted before audit publication")
+    else:
+        try:
+            active = resolve_active_price_baseline(selector_path)
+        except (BaselineContractError, OSError) as exc:
+            raise CandidateAuditError("active predecessor is invalid") from exc
+        predecessor = cast(Mapping[str, Any], audit["predecessor"])
+        if (
+            active.manifest_id != predecessor.get("manifest_id")
+            or str(active.manifest_path) != predecessor.get("manifest_path")
+            or active.manifest_sha256 != predecessor.get("manifest_sha256")
+        ):
+            raise CandidateAuditError(
+                "active predecessor drifted before audit publication"
+            )
+
+    directory = path.parent
+    if not directory.parent.is_dir() or directory.is_symlink():
+        raise CandidateAuditError("canonical audit root is invalid")
+    try:
+        directory.mkdir(exist_ok=True)
+        if directory.is_symlink() or not directory.is_dir():
+            raise CandidateAuditError("canonical audit directory is invalid")
+        raw = canonical_json_bytes(audit)
+        try:
+            with path.open("xb") as output:
+                output.write(raw)
+                output.flush()
+                os.fsync(output.fileno())
+        except FileExistsError as exc:
+            if path.is_symlink() or not path.is_file() or path.read_bytes() != raw:
+                raise CandidateAuditError(
+                    "existing audit artifact differs from exact bytes"
+                ) from exc
+        if path.is_symlink() or path.read_bytes() != raw:
+            raise CandidateAuditError("published audit artifact bytes differ")
+    except OSError as exc:
+        raise CandidateAuditError(
+            "audit artifact could not be created or verified"
+        ) from exc
+    return path
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -717,6 +783,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_ACTIVE_SELECTOR,
     )
     parser.add_argument("--candidate-workbook", type=Path, required=True)
+    parser.add_argument(
+        "--materialize-audit",
+        action="store_true",
+        help="Create or verify the deterministic immutable PASS audit artifact",
+    )
     return parser.parse_args(argv)
 
 
@@ -731,7 +802,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (CandidateAuditError, OSError) as exc:
         print(f"AUDIT HOLD: {exc}")
         return 1
-    print(json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True))
+    if args.materialize_audit:
+        try:
+            path = materialize_audit_artifact(args.active_selector, audit)
+        except CandidateAuditError as exc:
+            print(f"AUDIT HOLD: {exc}", file=sys.stderr)
+            return 1
+        print(f"AUDIT ARTIFACT: {path}", file=sys.stderr)
+    sys.stdout.buffer.write(canonical_json_bytes(audit))
     return 0 if audit["status"] == "PASS_CANDIDATE_ONLY" else 1
 
 

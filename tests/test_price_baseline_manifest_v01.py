@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
@@ -413,8 +415,7 @@ def test_unused_price_row_change_is_visible_without_becoming_mapping_authority(
         contract.sha256_file(candidate)
     )
 
-    audit_path = tmp_path / "unused-row-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(active_chain["selector"], audit)
     approval_path = tmp_path / "unused-row-approval.json"
     approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
@@ -508,8 +509,7 @@ def activate_candidate(
 ) -> tuple[Path, dict[str, Any], activation.ActivationResult]:
     candidate = write_candidate(active_chain, tmp_path)
     audit = auditor.audit_candidate(active_chain["selector"], candidate)
-    audit_path = tmp_path / "candidate-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(active_chain["selector"], audit)
     approval_path = tmp_path / "approval.json"
     approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
@@ -534,7 +534,9 @@ def test_activation_is_immutable_atomic_and_exactly_approved(
     assert resolved.approval_id == "IGOR-BASELINE-CANDIDATE"
     with pytest.raises(activation.ActivationError):
         activation.activate(
-            candidate_audit_json=tmp_path / "candidate-audit.json",
+            candidate_audit_json=contract.audit_artifact_path(
+                active_chain["selector"], audit
+            ),
             approval_json=tmp_path / "approval.json",
             active_selector=active_chain["selector"],
         )
@@ -545,8 +547,7 @@ def test_activation_rejects_approval_not_bound_to_exact_audit(
 ) -> None:
     candidate = write_candidate(active_chain, tmp_path)
     audit = auditor.audit_candidate(active_chain["selector"], candidate)
-    audit_path = tmp_path / "candidate-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(active_chain["selector"], audit)
     approval = approval_for(audit_path, audit)
     approval["candidate_audit_sha256"] = "0" * 64
     approval_path = tmp_path / "approval.json"
@@ -557,6 +558,28 @@ def test_activation_rejects_approval_not_bound_to_exact_audit(
             approval_json=approval_path,
             active_selector=active_chain["selector"],
         )
+
+
+def test_ordinary_activation_rejects_arbitrary_audit_path(
+    active_chain: dict[str, Path], tmp_path: Path
+) -> None:
+    candidate = write_candidate(active_chain, tmp_path)
+    audit = auditor.audit_candidate(active_chain["selector"], candidate)
+    canonical = auditor.materialize_audit_artifact(active_chain["selector"], audit)
+    wrong = tmp_path / "arbitrary-audit.json"
+    wrong.write_bytes(canonical.read_bytes())
+    approval_path = tmp_path / "approval.json"
+    approval_path.write_bytes(contract.canonical_json_bytes(approval_for(wrong, audit)))
+    with pytest.raises(activation.ActivationError, match="canonical path"):
+        activation.activate(
+            candidate_audit_json=wrong,
+            approval_json=approval_path,
+            active_selector=active_chain["selector"],
+        )
+    assert (
+        contract.resolve_active_price_baseline(active_chain["selector"]).manifest_id
+        == "PBM-INITIAL"
+    )
 
 
 def test_activation_rejects_mapping_identity_change_even_when_approved(
@@ -574,8 +597,7 @@ def test_activation_rejects_mapping_identity_change_even_when_approved(
     audit["approval_fingerprint"] = contract.sha256_bytes(
         contract.canonical_json_bytes(audit["approval_payload"])
     )
-    audit_path = tmp_path / "candidate-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(active_chain["selector"], audit)
     approval_path = tmp_path / "approval.json"
     approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
@@ -593,8 +615,7 @@ def test_activation_rejects_workbook_toctou_drift(
 ) -> None:
     candidate = write_candidate(active_chain, tmp_path)
     audit = auditor.audit_candidate(active_chain["selector"], candidate)
-    audit_path = tmp_path / "candidate-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(active_chain["selector"], audit)
     approval_path = tmp_path / "approval.json"
     approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
@@ -708,13 +729,115 @@ def write_bootstrap_audit_and_approval(
         case["workbook"],
         approved_successor=case["approved"],
     )
-    audit_path = tmp_path / "bootstrap-audit.json"
-    audit_path.write_bytes(contract.canonical_json_bytes(audit))
+    audit_path = auditor.materialize_audit_artifact(case["selector"], audit)
     approval_path = tmp_path / "bootstrap-approval.json"
     approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(audit_path, audit))
     )
     return audit, audit_path, approval_path
+
+
+def test_bootstrap_audit_artifact_is_deterministic_immutable_and_canonical(
+    tmp_path: Path,
+) -> None:
+    case = bootstrap_case(tmp_path)
+    audit = auditor.audit_bootstrap_candidate(
+        case["selector"], case["workbook"], approved_successor=case["approved"]
+    )
+    expected = contract.audit_artifact_path(case["selector"], audit)
+    assert expected.parent == case["root"] / "audits"
+    assert audit["manifest_id"] in expected.name
+    assert audit["candidate_workbook"]["sha256"] in expected.name
+    assert not expected.exists()
+
+    path = auditor.materialize_audit_artifact(case["selector"], audit)
+    raw = contract.canonical_json_bytes(audit)
+    assert path == expected
+    assert path.read_bytes() == raw
+    assert contract.sha256_file(path) == contract.sha256_bytes(raw)
+    assert auditor.materialize_audit_artifact(case["selector"], audit) == path
+    assert path.read_bytes() == raw
+
+    different = json.loads(raw)
+    different["approval_fingerprint"] = "0" * 64
+    with pytest.raises(
+        auditor.CandidateAuditError, match="existing audit artifact differs"
+    ):
+        auditor.materialize_audit_artifact(case["selector"], different)
+    assert path.read_bytes() == raw
+    assert not case["selector"].exists()
+    assert not (case["root"] / "manifests").exists()
+
+
+def test_bootstrap_activation_rejects_noncanonical_audit_path_and_bytes(
+    tmp_path: Path,
+) -> None:
+    case = bootstrap_case(tmp_path)
+    audit, audit_path, approval_path = write_bootstrap_audit_and_approval(
+        case, tmp_path
+    )
+    wrong_path = tmp_path / "arbitrary-audit.json"
+    wrong_path.write_bytes(audit_path.read_bytes())
+    with pytest.raises(activation.ActivationError, match="canonical path"):
+        activation.bootstrap_activate(
+            candidate_audit_json=wrong_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+        )
+
+    audit_path.write_bytes(audit_path.read_bytes() + b" ")
+    approval_path.write_bytes(
+        contract.canonical_json_bytes(approval_for(audit_path, audit))
+    )
+    with pytest.raises(activation.ActivationError, match="canonical JSON bytes"):
+        activation.bootstrap_activate(
+            candidate_audit_json=audit_path,
+            approval_json=approval_path,
+            active_selector=case["selector"],
+            approved_successor=case["approved"],
+        )
+    assert not case["selector"].exists()
+    assert not (case["root"] / "manifests").exists()
+
+
+def test_candidate_auditor_cli_materializes_only_canonical_bytes(
+    active_chain: dict[str, Path], tmp_path: Path
+) -> None:
+    candidate = write_candidate(active_chain, tmp_path)
+    script = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "audit_price_baseline_candidate.py"
+    )
+    command = [
+        sys.executable,
+        str(script),
+        "--active-selector",
+        str(active_chain["selector"]),
+        "--candidate-workbook",
+        str(candidate),
+    ]
+    preview = subprocess.run(
+        command,
+        capture_output=True,
+        check=False,
+    )
+    assert preview.returncode == 0, preview.stderr.decode(errors="replace")
+    audit = json.loads(preview.stdout)
+    path = contract.audit_artifact_path(active_chain["selector"], audit)
+    assert preview.stdout == contract.canonical_json_bytes(audit)
+    assert not path.exists()
+
+    result = subprocess.run(
+        command + ["--materialize-audit"], capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert result.stdout == preview.stdout == path.read_bytes()
+    assert audit["status"] == "PASS_CANDIDATE_ONLY"
+    assert not (
+        active_chain["root"] / "manifests" / f"{audit['manifest_id']}.json"
+    ).exists()
 
 
 def bootstrap_synthetic_case(
@@ -769,8 +892,9 @@ def test_bootstrap_creates_genesis_chain_then_ordinary_activation_works(
     write_governed_workbook(candidate, material_delta=100)
     ordinary_audit = auditor.audit_candidate(case["selector"], candidate)
     assert ordinary_audit["status"] == "PASS_CANDIDATE_ONLY"
-    ordinary_audit_path = tmp_path / "ordinary-audit.json"
-    ordinary_audit_path.write_bytes(contract.canonical_json_bytes(ordinary_audit))
+    ordinary_audit_path = auditor.materialize_audit_artifact(
+        case["selector"], ordinary_audit
+    )
     ordinary_approval_path = tmp_path / "ordinary-approval.json"
     ordinary_approval_path.write_bytes(
         contract.canonical_json_bytes(approval_for(ordinary_audit_path, ordinary_audit))

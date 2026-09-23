@@ -15,6 +15,8 @@ from typing import Any, cast
 MANIFEST_SCHEMA = "price_baseline_manifest.v0.1"
 SELECTOR_SCHEMA = "active_price_baseline_selector.v0.1"
 APPROVAL_SCHEMA = "price_baseline_approval.v0.1"
+CANDIDATE_AUDIT_SCHEMA = "price_baseline_candidate_audit.v0.1"
+BOOTSTRAP_AUDIT_SCHEMA = "price_baseline_bootstrap_audit.v0.1"
 APPROVAL_AUTHORITY = "IGOR_DIRECT_HUMAN_APPROVAL"
 ACTIVE_VERSION = "active_approved"
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -110,6 +112,28 @@ def canonical_json_bytes(value: Any) -> bytes:
         ).encode("utf-8")
         + b"\n"
     )
+
+
+def audit_artifact_path(selector_path: Path, audit: Mapping[str, Any]) -> Path:
+    """Derive the immutable audit location from its governed identity."""
+    schema = audit.get("schema_version")
+    candidate = audit.get("candidate_workbook")
+    if not isinstance(schema, str) or schema not in {
+        CANDIDATE_AUDIT_SCHEMA,
+        BOOTSTRAP_AUDIT_SCHEMA,
+    }:
+        raise BaselineContractError("audit artifact schema is invalid")
+    if not isinstance(candidate, Mapping):
+        raise BaselineContractError("audit artifact workbook is invalid")
+    workbook_sha = candidate.get("sha256")
+    if not isinstance(workbook_sha, str) or SHA256_RE.fullmatch(workbook_sha) is None:
+        raise BaselineContractError("audit artifact workbook SHA-256 is invalid")
+    prefix = "PBM-GENESIS-" if schema == BOOTSTRAP_AUDIT_SCHEMA else "PBM-"
+    manifest_id = prefix + workbook_sha[:16].upper()
+    if audit.get("manifest_id") != manifest_id:
+        raise BaselineContractError("audit artifact manifest identity is invalid")
+    filename = f"{schema}-{manifest_id}-{workbook_sha}.json"
+    return selector_path.resolve(strict=False).parent / "audits" / filename
 
 
 def _duplicate_key_guard(pairs: Sequence[tuple[str, Any]]) -> dict[str, Any]:

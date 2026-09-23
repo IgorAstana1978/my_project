@@ -28,6 +28,7 @@ from price_baseline_contract import (  # type: ignore[import-not-found]
     SUCCESSOR,
     BaselineContractError,
     PriceBaseline,
+    audit_artifact_path,
     canonical_json_bytes,
     load_json_bytes,
     normalize_kzt_literal,
@@ -73,6 +74,26 @@ def _load(path: Path, label: str) -> tuple[bytes, Mapping[str, Any]]:
         return raw, load_json_bytes(raw, label)
     except BaselineContractError as exc:
         raise ActivationError(str(exc)) from exc
+
+
+def verify_audit_artifact(
+    selector_path: Path,
+    audit_path: Path,
+    audit_raw: bytes,
+    audit: Mapping[str, Any],
+) -> None:
+    try:
+        expected = audit_artifact_path(selector_path, audit)
+    except BaselineContractError as exc:
+        raise ActivationError(str(exc)) from exc
+    if (
+        audit_path != expected
+        or audit_path.is_symlink()
+        or audit_path.parent.is_symlink()
+    ):
+        raise ActivationError("audit artifact is not at its canonical path")
+    if audit_raw != canonical_json_bytes(audit):
+        raise ActivationError("audit artifact is not canonical JSON bytes")
 
 
 def validate_audit(data: Mapping[str, Any]) -> None:
@@ -451,12 +472,15 @@ def activate(
     approval_json: Path,
     active_selector: Path = DEFAULT_ACTIVE_SELECTOR,
 ) -> ActivationResult:
+    if candidate_audit_json.is_symlink() or candidate_audit_json.parent.is_symlink():
+        raise ActivationError("audit artifact symlink is forbidden")
     audit_file = candidate_audit_json.resolve(strict=False)
     approval_file = approval_json.resolve(strict=False)
     selector_file = active_selector.resolve(strict=False)
     audit_raw, audit = _load(audit_file, "candidate audit")
     approval_raw, approval = _load(approval_file, "approval")
     validate_audit(audit)
+    verify_audit_artifact(selector_file, audit_file, audit_raw, audit)
     audit_sha = sha256_bytes(audit_raw)
     validate_approval(
         approval,
@@ -571,12 +595,15 @@ def bootstrap_activate(
     approved_successor: PriceBaseline = SUCCESSOR,
     selector_publish_fn: Callable[[Path, bytes], None] = _create_selector_atomically,
 ) -> ActivationResult:
+    if candidate_audit_json.is_symlink() or candidate_audit_json.parent.is_symlink():
+        raise ActivationError("audit artifact symlink is forbidden")
     audit_file = candidate_audit_json.resolve(strict=False)
     approval_file = approval_json.resolve(strict=False)
     selector_file = active_selector.resolve(strict=False)
     audit_raw, audit = _load(audit_file, "bootstrap audit")
     approval_raw, approval = _load(approval_file, "bootstrap approval")
     validate_bootstrap_audit(audit)
+    verify_audit_artifact(selector_file, audit_file, audit_raw, audit)
     audit_sha = sha256_bytes(audit_raw)
     validate_approval(
         approval,

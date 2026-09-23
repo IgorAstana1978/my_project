@@ -38,10 +38,20 @@ expected label and an identity fingerprint. The manifest can approve new price
 values only for the unchanged fingerprint. Label, source, identity, added or
 removed price names, formulas, missing values and duplicates produce `HOLD`.
 
-`audit_price_baseline_candidate.py` is read-only: it verifies the active chain,
-computes candidate workbook SHA and structural/price diffs, and prints a
-content-bound approval payload. It does not publish a manifest or update the
-selector.
+`audit_price_baseline_candidate.py` is read-only by default: it verifies the
+active chain, computes candidate workbook SHA and structural/price diffs, and
+prints canonical UTF-8 JSON bytes with one trailing newline. The explicit
+`--materialize-audit` mode may create only a PASS audit artifact. It does not
+publish a manifest or update the selector.
+
+Immutable audits live beside `current/` and `manifests/` under
+`prices/audits/`. Their deterministic filename is
+`<audit-schema>-<manifest-id>-<full-workbook-sha256>.json`. The materializer
+creates with no-overwrite semantics; an existing file is reusable only when
+its bytes equal the canonical audit bytes exactly. Differing bytes fail closed.
+The activator requires this exact path and exact canonical bytes before it
+checks approval binding. A separate Igor approval remains required to
+materialize a real audit and another separate approval to activate a baseline.
 
 `activate_price_baseline_manifest.py` accepts only an exact audit/approval
 binding, rechecks every input and the workbook snapshot, publishes the manifest
