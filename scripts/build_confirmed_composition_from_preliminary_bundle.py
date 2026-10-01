@@ -19,6 +19,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+from governed_case_intake import VERSION_RE, IntakeError, verify_versioned_extraction
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = Path(__file__).resolve().parent
 CANONICAL_ROOT = Path.home() / "Documents" / "production_ai_cases"
@@ -80,6 +82,8 @@ class CasePaths:
     draft: Path
     review: Path
     output_dir: Path
+    extraction_version: str | None = None
+    binding_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -194,12 +198,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirmation-id", required=True)
     parser.add_argument("--approval-channel", required=True)
     parser.add_argument("--decisions-json", type=Path)
+    parser.add_argument("--extraction-version")
     args = parser.parse_args(argv)
     if args.applied_bundle_json is not None and args.decisions_json is not None:
         parser.error(
             "--decisions-json is preliminary-only and cannot be mixed with "
             "--applied-bundle-json"
         )
+    if args.extraction_version is not None and args.case_id is None:
+        parser.error("--extraction-version requires --case-id")
     return args
 
 
@@ -219,6 +226,7 @@ def resolve_case_paths(
     case_id: str,
     *,
     canonical_root: Path = CANONICAL_ROOT,
+    extraction_version: str | None = None,
 ) -> CasePaths:
     if not valid_case_id(case_id):
         raise WorkflowError(
@@ -228,14 +236,30 @@ def resolve_case_paths(
     case_dir = (root / case_id).resolve(strict=False)
     if case_dir.parent != root or case_dir.name != case_id:
         raise WorkflowError("Case ID does not match the canonical case directory")
+    if (
+        extraction_version is not None
+        and VERSION_RE.fullmatch(extraction_version) is None
+    ):
+        raise WorkflowError("extraction version must match V001-style grammar")
+    input_dir = (
+        case_dir / f"extraction-{extraction_version}"
+        if extraction_version is not None
+        else case_dir
+    )
     return CasePaths(
         case_id=case_id,
         root=root,
         case_dir=case_dir,
-        manifest=case_dir / MANIFEST_NAME,
-        draft=case_dir / DRAFT_NAME,
-        review=case_dir / REVIEW_NAME,
-        output_dir=case_dir / OUTPUT_DIR_NAME,
+        manifest=input_dir / MANIFEST_NAME,
+        draft=input_dir / DRAFT_NAME,
+        review=input_dir / REVIEW_NAME,
+        output_dir=input_dir / OUTPUT_DIR_NAME,
+        extraction_version=extraction_version,
+        binding_path=(
+            input_dir / "version-binding.json"
+            if extraction_version is not None
+            else None
+        ),
     )
 
 
@@ -246,15 +270,42 @@ def validate_case_directory(paths: CasePaths) -> None:
         raise WorkflowError("Case ID does not match the canonical case directory")
     if not paths.case_dir.is_dir():
         raise WorkflowError("canonical Case ID directory does not exist")
+    input_dir = (
+        paths.case_dir / f"extraction-{paths.extraction_version}"
+        if paths.extraction_version is not None
+        else paths.case_dir
+    )
+    if input_dir.parent != paths.case_dir and paths.extraction_version is not None:
+        raise WorkflowError("versioned input is outside the exact Case directory")
+    if not input_dir.is_dir() or input_dir.is_symlink():
+        raise WorkflowError("canonical extraction input directory is missing or unsafe")
+    if paths.output_dir != input_dir / OUTPUT_DIR_NAME:
+        raise WorkflowError("confirmed output is outside the canonical input directory")
     if paths.output_dir.exists():
         raise WorkflowError(
             "confirmed directory already exists; overwrite is forbidden"
         )
     for path in (paths.manifest, paths.draft, paths.review):
-        if path.parent != paths.case_dir:
+        if path.parent != input_dir:
             raise WorkflowError("input is outside the canonical Case ID directory")
         if not path.is_file():
             raise WorkflowError(f"missing canonical input: {path.name}")
+    if paths.extraction_version is not None:
+        if paths.binding_path != input_dir / "version-binding.json":
+            raise WorkflowError(
+                "version binding is outside the canonical input directory"
+            )
+        try:
+            verify_versioned_extraction(
+                input_dir,
+                case_id=paths.case_id,
+                version=paths.extraction_version,
+                base_manifest=paths.case_dir / MANIFEST_NAME,
+            )
+        except IntakeError as error:
+            raise WorkflowError(
+                f"versioned extraction binding failed: {error}"
+            ) from error
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -437,16 +488,21 @@ def load_snapshot(paths: CasePaths) -> InputSnapshot:
     draft = parse_json_object(draft_bytes, DRAFT_NAME)
     validate_existing_contracts(paths)
     check_review_card_consistency(review_bytes, draft)
+    hashes = {
+        MANIFEST_NAME: sha256_bytes(manifest_bytes),
+        DRAFT_NAME: sha256_bytes(draft_bytes),
+        REVIEW_NAME: sha256_bytes(review_bytes),
+    }
+    if paths.binding_path is not None:
+        hashes["version-binding.json"] = sha256_bytes(
+            read_exact_bytes(paths.binding_path)
+        )
     return InputSnapshot(
         paths=paths,
         manifest_bytes=manifest_bytes,
         draft_bytes=draft_bytes,
         review_bytes=review_bytes,
-        hashes={
-            MANIFEST_NAME: sha256_bytes(manifest_bytes),
-            DRAFT_NAME: sha256_bytes(draft_bytes),
-            REVIEW_NAME: sha256_bytes(review_bytes),
-        },
+        hashes=hashes,
         draft=draft,
     )
 
@@ -457,6 +513,11 @@ def assert_snapshot_unchanged(snapshot: InputSnapshot) -> None:
         DRAFT_NAME: sha256_bytes(read_exact_bytes(snapshot.paths.draft)),
         REVIEW_NAME: sha256_bytes(read_exact_bytes(snapshot.paths.review)),
     }
+    if snapshot.paths.binding_path is not None:
+        current["version-binding.json"] = sha256_bytes(
+            read_exact_bytes(snapshot.paths.binding_path)
+        )
+        validate_case_directory(snapshot.paths)
     if current != snapshot.hashes:
         raise WorkflowError("input hash drift detected after Human Approval")
 
@@ -2542,6 +2603,7 @@ def run_builder(
     confirmation_id: str,
     approval_channel: str,
     decisions_json: Path | None = None,
+    extraction_version: str | None = None,
     canonical_root: Path = CANONICAL_ROOT,
     input_fn: InputFunction = input,
     output_fn: OutputFunction = print,
@@ -2554,7 +2616,11 @@ def run_builder(
     try:
         confirmation_id = require_metadata(confirmation_id, "confirmation_id")
         approval_channel = require_metadata(approval_channel, "approval_channel")
-        paths = resolve_case_paths(case_id, canonical_root=canonical_root)
+        paths = resolve_case_paths(
+            case_id,
+            canonical_root=canonical_root,
+            extraction_version=extraction_version,
+        )
         result.output_dir = paths.output_dir
         snapshot = load_snapshot(paths)
         validate_identifier_integrity(snapshot.draft)
@@ -2715,16 +2781,12 @@ def run_applied_builder(
             snapshot=snapshot,
             approval_phrase=approval_phrase,
         )
-        if confirmed_validator is None:
-
-            def validator(path: Path) -> Any:
-                return default_confirmed_validator(
-                    path,
-                    applied_bundle_json=snapshot.paths.applied_bundle,
-                )
-
-        else:
-            validator = confirmed_validator
+        validator: ValidatorFunction = confirmed_validator or (
+            lambda path: default_confirmed_validator(
+                path,
+                applied_bundle_json=snapshot.paths.applied_bundle,
+            )
+        )
         publish_atomically(
             paths=snapshot.paths,
             artifact=artifact,
@@ -2792,6 +2854,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             confirmation_id=args.confirmation_id,
             approval_channel=args.approval_channel,
             decisions_json=args.decisions_json,
+            extraction_version=args.extraction_version,
         )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

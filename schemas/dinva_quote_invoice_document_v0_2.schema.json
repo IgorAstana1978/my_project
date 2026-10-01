@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "document_family", "document_type", "document_id",
-    "document_number", "document_date", "currency", "payer", "object_name",
+    "document_date", "currency", "payer", "object_name",
     "basis", "apparatus_heading", "sections", "items", "document_fingerprint",
     "approved_grand_total_kzt", "vat", "amount_words", "terms", "signatures",
     "approval_provenance"
@@ -16,7 +16,7 @@
     "document_family": {"const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"},
     "document_type": {"enum": ["QUOTE", "INVOICE", "QUOTE_INVOICE"]},
     "document_id": {"type": "string", "minLength": 1},
-    "document_number": {"type": "string", "minLength": 1},
+    "document_number": {"type": ["string", "null"], "minLength": 1},
     "document_date": {"type": "string", "format": "date"},
     "currency": {"const": "KZT"},
     "payer": {"type": "string", "minLength": 1},
@@ -190,6 +190,13 @@
       }
     }
   },
+  "allOf": [{
+    "if": {"properties": {"document_type": {"enum": ["INVOICE", "QUOTE_INVOICE"]}}},
+    "then": {
+      "required": ["document_number"],
+      "properties": {"document_number": {"type": "string", "minLength": 1}}
+    }
+  }],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }

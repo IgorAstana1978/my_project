@@ -36,6 +36,23 @@ CASE-[A-Z0-9]+(?:-[A-Z0-9]+)* и точно совпадать с именем �
 
 ## Запуск
 
+Для immutable versioned extraction обязательно укажи exact версию:
+
+```powershell
+.\.venv\Scripts\python.exe `
+  .\scripts\build_confirmed_composition_from_preliminary_bundle.py `
+  --case-id "<EXISTING-CASE-ID>" `
+  --extraction-version "V001" `
+  --confirmation-id "<CONFIRMATION-ID>" `
+  --approval-channel "igor_local_terminal"
+```
+
+Builder перед чтением проверяет `version-binding.json`, SHA всех пяти
+immutable файлов версии, исходный Case manifest, PDF, точный состав
+requested/excluded строк и отсутствие лишних draft items. Без флага версии
+он по-прежнему читает только исходные три файла Case. Red flags и exact
+Human Approval технического состава остаются обязательными.
+
     .\.venv\Scripts\python.exe `
       .\scripts\build_confirmed_composition_from_preliminary_bundle.py `
       --case-id "CASE-2026-001" `

@@ -1212,6 +1212,8 @@ def test_cli_defaults_unversioned_workbook_to_active_selector(tmp_path: Path) ->
             str(workbook_path),
             "--input-csv",
             str(csv_path),
+            "--active-selector",
+            str(tmp_path / "absent-active-selector.json"),
         ],
         capture_output=True,
         text=True,

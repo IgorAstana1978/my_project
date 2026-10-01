@@ -66,6 +66,46 @@ The final Case directory must not already exist. Existing or partial Case
 directories are never overwritten, merged, repaired, or deleted. A failure in
 that situation requires Igor to inspect the directory manually.
 
+## Governed versioned rerun of an existing Case
+
+For a rotated CAD specification PDF, an existing Case may receive one new
+immutable `extraction-V001` child without changing its original three files.
+The version is explicit; `V001` is an example, and a published version cannot
+be reused. Supply selection comes only from an exact governed intake. The
+intake is preliminary provenance, not technical or commercial approval.
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\extract_mixed_source_composition_case.py `
+  --case-id "<EXISTING-CASE-ID>" `
+  --project-pdf "<SAME-PDF>" `
+  --extraction-version "V001" `
+  --intake-json "<NEW-GOVERNED-INTAKE.json>"
+```
+
+The UTF-8 intake has exact fields `schema_version`, `case_id`,
+`extraction_version`, `project_pdf_path`, `project_pdf_sha256`,
+`base_manifest_sha256`, `client_request`, `human_decisions`,
+`requested_supply`, and `excluded_components`. The schema is
+`governed_case_extraction_intake.v0.1`. Request and decision records contain
+`text`, `source_locator`, and the SHA-256 of the exact UTF-8 text in
+`text_sha256`; supply and exclusion records contain `designation` and a
+positive integer `quantity`. The operator must preserve the actual message
+and decision provenance. A text hash proves byte integrity, not that a client
+or Igor authored the text. Review that authority separately.
+
+The runner validates PDF and original Case manifest hashes, parses rotated
+specification rows, distinguishes requested rows, excluded components, and
+project context, and publishes through an owned staging directory only after
+all five existing extractor checks and the new version binding pass. The
+new child contains the normal manifest/draft/review plus
+`governed-intake.json` and `version-binding.json`. The manifest includes the
+intake hash and source-backed row classifications. Unresolved component,
+cabinet, scheme, low-confidence evidence, and governed decisions remain red
+flags for Igor. The Human Decision text, including any reserved meter-space
+requirement, is preserved in the bound intake; it is not an installed or
+priced component.
+No price or quote permission is created.
+
 ## Checked publication
 
 The wrapper calls the existing Phase 2.32 extractor directly, without a

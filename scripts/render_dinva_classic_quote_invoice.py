@@ -433,7 +433,10 @@ def validate_profile(
 
 
 def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) -> None:
-    exact_keys(document, DOCUMENT_KEYS, "document")
+    require(
+        set(document) in (DOCUMENT_KEYS, DOCUMENT_KEYS - {"document_number"}),
+        "document fields mismatch",
+    )
     require(
         document.get("schema_version") == DOCUMENT_SCHEMA_VERSION,
         "document schema mismatch",
@@ -445,8 +448,13 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
         document.get("document_type") in {"QUOTE", "INVOICE", "QUOTE_INVOICE"},
         "document type mismatch",
     )
-    for field in ("document_id", "document_number", "payer", "apparatus_heading"):
+    for field in ("document_id", "payer", "apparatus_heading"):
         text(document.get(field), field)
+    if (
+        document.get("document_type") != "QUOTE"
+        or document.get("document_number") is not None
+    ):
+        text(document.get("document_number"), "document_number")
     try:
         date.fromisoformat(cast(str, document.get("document_date")))
     except (TypeError, ValueError) as exc:
@@ -1251,9 +1259,13 @@ def render_clean_workbook(
         "INVOICE": "Счёт",
         "QUOTE_INVOICE": "Счёт-КП",
     }
+    number_part = (
+        f" № {document['document_number']}"
+        if document.get("document_number") is not None
+        else ""
+    )
     worksheet["C9"] = (
-        f"{title_by_type[cast(str, document['document_type'])]} № "
-        f"{document['document_number']} от "
+        f"{title_by_type[cast(str, document['document_type'])]}{number_part} от "
         f"{display_document_date(cast(str, document['document_date']))}"
     )
     worksheet["C10"] = f"Плательщик: {document['payer']}"

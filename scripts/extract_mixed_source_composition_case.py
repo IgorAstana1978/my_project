@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -18,6 +20,12 @@ from extract_mixed_source_composition import (
     MANIFEST_NAME,
     REVIEW_NAME,
     run_operator,
+)
+from governed_case_intake import (
+    VERSION_RE,
+    VERSIONED_FILES,
+    load_governed_intake,
+    verify_versioned_extraction,
 )
 from project_spec_extraction import SUPPORTED_WORKBOOK_SUFFIXES
 
@@ -70,7 +78,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--case-id", required=True)
     parser.add_argument("--project-pdf", type=Path)
     parser.add_argument("--spec-workbook", type=Path)
-    return parser.parse_args(argv)
+    parser.add_argument("--extraction-version")
+    parser.add_argument("--intake-json", type=Path)
+    args = parser.parse_args(argv)
+    if (args.extraction_version is None) != (args.intake_json is None):
+        parser.error("--extraction-version and --intake-json are required together")
+    if args.extraction_version is not None and (
+        args.project_pdf is None or args.spec_workbook is not None
+    ):
+        parser.error("versioned extraction requires one project PDF")
+    return args
 
 
 def resolved(path: Path) -> Path:
@@ -359,6 +376,142 @@ def run_case_extraction(
         return result
 
 
+def run_versioned_case_extraction(
+    *,
+    case_id: str,
+    project_pdf: Path,
+    extraction_version: str,
+    intake_json: Path,
+    canonical_root: Path | None = None,
+    operator_fn: Callable[..., Any] = run_operator,
+    rename_fn: RenameFunction = os.rename,
+    uuid_fn: UuidFunction = uuid.uuid4,
+) -> CaseExtractionResult:
+    """Publish an immutable re-extraction without touching the original bundle."""
+    root_value = CANONICAL_ROOT if canonical_root is None else canonical_root
+    result = CaseExtractionResult(
+        case_id=case_id,
+        output_dir=resolved(root_value / case_id / f"extraction-{extraction_version}"),
+        source_mode="pdf_only_versioned",
+    )
+    owner: Path | None = None
+    owner_owned = False
+    published = False
+    try:
+        _, case_dir = resolve_case_directory(case_id, root_value)
+        if VERSION_RE.fullmatch(extraction_version) is None:
+            raise CaseExtractionError(
+                "extraction version must match V001-style grammar"
+            )
+        if not case_dir.is_dir() or is_reparse_like(case_dir):
+            raise CaseExtractionError("canonical Case directory is missing or unsafe")
+        base_files = [case_dir / name for name in EXPECTED_FILES]
+        if any(not path.is_file() or is_reparse_like(path) for path in base_files):
+            raise CaseExtractionError("original immutable Case bundle is incomplete")
+        original_hashes = {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in base_files
+        }
+        pdf = validate_source(
+            project_pdf,
+            label="project PDF",
+            allowed_suffixes={".pdf"},
+            case_dir=case_dir,
+        )
+        intake = load_governed_intake(
+            intake_json,
+            case_id=case_id,
+            version=extraction_version,
+            project_pdf=pdf,
+            base_manifest=case_dir / MANIFEST_NAME,
+        )
+        target = case_dir / f"extraction-{extraction_version}"
+        result.output_dir = target
+        if path_entry_exists(target):
+            raise CaseExtractionError(
+                "versioned extraction already exists; overwrite is forbidden"
+            )
+        owner = case_dir / f".extraction-{extraction_version}-wrapper-{uuid_fn().hex}"
+        if owner.parent != case_dir or path_entry_exists(owner):
+            raise CaseExtractionError(
+                "versioned staging owner is unsafe or already exists"
+            )
+        owner.mkdir()
+        owner_owned = True
+        bundle = owner / "bundle"
+        operator_result = operator_fn(pdf, None, bundle, governed_intake=intake)
+        validate_staging_outputs(bundle, operator_result)
+        manifest_data = json.loads((bundle / MANIFEST_NAME).read_text(encoding="utf-8"))
+        if manifest_data.get("governed_intake_sha256") != intake.sha256:
+            raise CaseExtractionError(
+                "generated manifest is not bound to governed intake"
+            )
+        (bundle / "governed-intake.json").write_bytes(intake.raw)
+        file_hashes = {
+            name: hashlib.sha256((bundle / name).read_bytes()).hexdigest()
+            for name in VERSIONED_FILES
+        }
+        binding = {
+            "schema_version": "versioned_case_extraction_binding.v0.1",
+            "case_id": case_id,
+            "extraction_version": extraction_version,
+            "base_manifest_sha256": intake.base_manifest_sha256,
+            "files": file_hashes,
+        }
+        (bundle / "version-binding.json").write_text(
+            json.dumps(binding, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        expected_names = VERSIONED_FILES | {"version-binding.json"}
+        if {path.name for path in bundle.iterdir()} != expected_names:
+            raise CaseExtractionError("versioned bundle file set mismatch")
+        verify_versioned_extraction(
+            bundle,
+            case_id=case_id,
+            version=extraction_version,
+            base_manifest=case_dir / MANIFEST_NAME,
+            owned_staging=owner,
+        )
+        if any(
+            hashlib.sha256(path.read_bytes()).hexdigest() != original_hashes[path.name]
+            for path in base_files
+        ):
+            raise CaseExtractionError("original immutable Case bundle drifted")
+        if hashlib.sha256(pdf.read_bytes()).hexdigest() != intake.project_pdf_sha256:
+            raise CaseExtractionError("project PDF drifted during versioned extraction")
+        if path_entry_exists(target):
+            raise CaseExtractionError(
+                "versioned target appeared; overwrite is forbidden"
+            )
+        rename_fn(bundle, target)
+        published = True
+        result.created_files = sorted(expected_names)
+        result.output_created = True
+        verify_versioned_extraction(
+            target,
+            case_id=case_id,
+            version=extraction_version,
+            base_manifest=case_dir / MANIFEST_NAME,
+        )
+        cleanup_error = remove_empty_owner_after_publication(owner)
+        if cleanup_error is not None:
+            raise CaseExtractionError(
+                f"published bundle preserved; owner cleanup: {cleanup_error}"
+            )
+        result.status = "PASS"
+    except Exception as error:
+        add_red_flag(result, str(error))
+        if owner is not None and owner_owned and not published:
+            cleanup_error = cleanup_owned_container(owner)
+            if cleanup_error is not None:
+                add_red_flag(result, f"owned staging cleanup failed: {cleanup_error}")
+        if published:
+            add_red_flag(
+                result, "published version was preserved for manual inspection"
+            )
+    return result
+
+
 def format_report(result: CaseExtractionResult) -> str:
     return "\n".join(
         [
@@ -401,11 +554,19 @@ def format_report(result: CaseExtractionResult) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    result = run_case_extraction(
-        case_id=args.case_id,
-        project_pdf=args.project_pdf,
-        spec_workbook=args.spec_workbook,
-    )
+    if args.extraction_version is None:
+        result = run_case_extraction(
+            case_id=args.case_id,
+            project_pdf=args.project_pdf,
+            spec_workbook=args.spec_workbook,
+        )
+    else:
+        result = run_versioned_case_extraction(
+            case_id=args.case_id,
+            project_pdf=args.project_pdf,
+            extraction_version=args.extraction_version,
+            intake_json=args.intake_json,
+        )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1
 

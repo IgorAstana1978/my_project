@@ -385,8 +385,16 @@ def test_frozen_invoice519_profile_rejects_successor_version() -> None:
     ]
 
 
-def test_unversioned_and_unknown_entrypoint_calls_fail_before_input_reads() -> None:
-    calc = calculator.calculate_price_draft(binding.SUCCESSOR.path, Path("missing.csv"))
+def test_unversioned_and_unknown_entrypoint_calls_fail_before_input_reads(
+    tmp_path: Path,
+) -> None:
+    # Exercise an absent selector independently of a live host's activated baseline.
+    absent_selector = tmp_path / "absent-active-selector.json"
+    calc = calculator.calculate_price_draft(
+        binding.SUCCESSOR.path,
+        Path("missing.csv"),
+        active_selector_path=absent_selector,
+    )
     assert calc.status == "FAIL"
     assert calc.red_flags == ["active selector does not exist"]
     calc_unknown = calculator.calculate_price_draft(
@@ -397,7 +405,9 @@ def test_unversioned_and_unknown_entrypoint_calls_fail_before_input_reads() -> N
     assert calc_unknown.status == "FAIL"
     assert calc_unknown.red_flags == ["unknown price baseline version"]
     checked = runner.run_checked_price_calculator_from_completed_draft(
-        Path("missing.json"), binding.SUCCESSOR.path
+        Path("missing.json"),
+        binding.SUCCESSOR.path,
+        active_selector_path=absent_selector,
     )
     assert checked.status == "FAIL"
     assert checked.red_flags == ["active selector does not exist"]

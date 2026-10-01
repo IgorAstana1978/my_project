@@ -16,6 +16,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+from governed_case_intake import GovernedIntake
+from governed_rotated_extraction import build_governed_rotated_artifacts
 from project_spec_extraction import (
     ExtractionArtifacts,
     ExtractionError,
@@ -443,6 +445,7 @@ def run_operator(
     output_dir: Path,
     *,
     section_aware_intake: Path | None = None,
+    governed_intake: GovernedIntake | None = None,
 ) -> OperatorResult:
     result = OperatorResult(output_dir=resolved(output_dir))
     created_output = False
@@ -453,6 +456,12 @@ def run_operator(
             raise ExtractionError(
                 "section-aware intake cannot be combined with v0.1 PDF/workbook inputs"
             )
+        if governed_intake is not None and (
+            project_pdf is None
+            or spec_workbook is not None
+            or section_aware_intake is not None
+        ):
+            raise ExtractionError("governed intake requires exactly one project PDF")
         if (
             project_pdf is None
             and spec_workbook is None
@@ -463,11 +472,14 @@ def run_operator(
         result.output_dir = output
         result.checks["input policy"] = "pass"
 
-        artifacts = (
-            build_section_aware_artifacts(section_aware_intake)
-            if section_aware_intake is not None
-            else build_artifacts(project_pdf, spec_workbook)
-        )
+        if section_aware_intake is not None:
+            artifacts = build_section_aware_artifacts(section_aware_intake)
+        elif governed_intake is not None:
+            artifacts = build_governed_rotated_artifacts(
+                cast(Path, project_pdf), governed_intake
+            )
+        else:
+            artifacts = build_artifacts(project_pdf, spec_workbook)
         result.summary = artifacts.summary
         result.checks["source extraction"] = "pass"
 

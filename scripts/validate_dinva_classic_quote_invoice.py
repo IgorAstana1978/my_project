@@ -151,7 +151,11 @@ def validate_document_contract(
         "signatures",
         "approval_provenance",
     }
-    exact_keys(document, expected_document_keys, "document")
+    require(
+        set(document)
+        in (expected_document_keys, expected_document_keys - {"document_number"}),
+        "document fields mismatch",
+    )
     require(
         document.get("schema_version") == DOCUMENT_SCHEMA_VERSION,
         "document schema mismatch",
@@ -161,8 +165,13 @@ def validate_document_contract(
         document.get("document_type") in {"QUOTE", "INVOICE", "QUOTE_INVOICE"},
         "document type mismatch",
     )
-    for field in ("document_id", "document_number", "payer", "apparatus_heading"):
+    for field in ("document_id", "payer", "apparatus_heading"):
         text(document.get(field), field)
+    if (
+        document.get("document_type") != "QUOTE"
+        or document.get("document_number") is not None
+    ):
+        text(document.get("document_number"), "document_number")
     try:
         date.fromisoformat(cast(str, document.get("document_date")))
     except (TypeError, ValueError) as exc:
@@ -1072,11 +1081,16 @@ def expected_cells(
         "INVOICE": "Счёт",
         "QUOTE_INVOICE": "Счёт-КП",
     }
+    number_part = (
+        f" № {document['document_number']}"
+        if document.get("document_number") is not None
+        else ""
+    )
     cells.update(
         {
             "C9": (
-                f"{title_by_type[cast(str, document['document_type'])]} № "
-                f"{document['document_number']} от "
+                f"{title_by_type[cast(str, document['document_type'])]}"
+                f"{number_part} от "
                 f"{independent_display_date(cast(str, document['document_date']))}"
             ),
             "C10": f"Плательщик: {document['payer']}",
