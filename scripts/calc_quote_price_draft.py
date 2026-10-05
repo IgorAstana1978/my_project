@@ -1802,11 +1802,8 @@ def calculate_price_draft(
         + additional_materials
         + Decimal(work_total)
     )
-    total = int(
-        (base * MATERIAL_MULTIPLIER * FINAL_MULTIPLIER).quantize(
-            Decimal("1"),
-            rounding=ROUND_HALF_UP,
-        )
+    total = canonical_material_work_price(
+        Decimal(cabinet_price), Decimal(material_total), Decimal(work_total), factor
     )
 
     result.cabinet_price = cabinet_price
@@ -1817,6 +1814,19 @@ def calculate_price_draft(
     result.total_preliminary_price = total
     result.status = "PASS"
     return result
+
+
+def canonical_material_work_price(
+    cabinet_cost: Decimal, material: Decimal, work: Decimal, factor: Decimal
+) -> int:
+    """Shared canonical arithmetic for legacy and governed future inputs."""
+    return int(
+        (
+            (cabinet_cost + material * factor + work)
+            * MATERIAL_MULTIPLIER
+            * FINAL_MULTIPLIER
+        ).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+    )
 
 
 def format_amount(value: int | Decimal | None) -> str:

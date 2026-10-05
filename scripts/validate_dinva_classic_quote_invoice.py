@@ -17,6 +17,13 @@ from typing import Any, NoReturn, cast
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
+from dinva_future_content import (
+    DOCUMENT_VERSION as FUTURE_DOCUMENT_VERSION,
+)
+from dinva_future_content import (
+    display_text,
+    validate_future_content,
+)
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from openpyxl.cell.cell import Cell  # type: ignore[import-untyped]
 from openpyxl.styles import Border  # type: ignore[import-untyped]
@@ -151,13 +158,16 @@ def validate_document_contract(
         "signatures",
         "approval_provenance",
     }
+    if document.get("schema_version") == FUTURE_DOCUMENT_VERSION:
+        expected_document_keys.add("presentation_policy")
     require(
         set(document)
         in (expected_document_keys, expected_document_keys - {"document_number"}),
         "document fields mismatch",
     )
     require(
-        document.get("schema_version") == DOCUMENT_SCHEMA_VERSION,
+        document.get("schema_version")
+        in {DOCUMENT_SCHEMA_VERSION, FUTURE_DOCUMENT_VERSION},
         "document schema mismatch",
     )
     require(document.get("document_family") == FAMILY, "document family mismatch")
@@ -224,6 +234,8 @@ def validate_document_contract(
         "approved_line_total_kzt",
         "approval_reference",
     }
+    if document.get("schema_version") == FUTURE_DOCUMENT_VERSION:
+        item_keys.add("display_policy")
     total = 0
     for expected_position, raw_item in enumerate(cast(list[Any], items), start=1):
         item = mapping(raw_item, f"item {expected_position}")
@@ -251,7 +263,8 @@ def validate_document_contract(
         sha256_text(apparatus.get("source_sha256"), "apparatus source SHA-256")
         text(apparatus.get("source_locator"), "apparatus source locator")
         require(
-            apparatus_text in cast(str, item["detailed_technical_composition"]),
+            document.get("schema_version") == FUTURE_DOCUMENT_VERSION
+            or apparatus_text in cast(str, item["detailed_technical_composition"]),
             "apparatus is not represented in detailed composition",
         )
         reference = mapping(item.get("approval_reference"), "approval reference")
@@ -466,6 +479,7 @@ def validate_document_contract(
     require(
         approval.get("client_send_authorized") is False, "client-send boundary is open"
     )
+    validate_future_content(document, test_mode=test_mode(allow_test_profile))
 
 
 def canonical_json(value: object) -> bytes:
@@ -547,7 +561,12 @@ def independent_content_lengths(document: Mapping[str, Any], column: str) -> lis
     if column in field_by_column:
         field = field_by_column[column]
         return [
-            max(len(part) for part in cast(str, item[field]).split("\n"))
+            max(
+                len(part)
+                for part in (
+                    display_text(item) if column == "F" else cast(str, item[field])
+                ).split("\n")
+            )
             for item in items
         ]
     if column == "I":
@@ -629,7 +648,9 @@ def independent_item_height(
         font = mapping(mapping(styles[role], role)["font"], f"{role} font")
         line_counts.append(
             independent_wrapped_lines(
-                cast(str, item[field]), widths[column], float(font["size"])
+                display_text(item) if column == "F" else cast(str, item[field]),
+                widths[column],
+                float(font["size"]),
             )
         )
     required = max(line_counts) * float(rule["line_height_points"]) + float(
@@ -1000,11 +1021,16 @@ def validate_governance(
     )
     require(profile.get("document_family") == FAMILY, "profile family mismatch")
     require(
-        document.get("schema_version") == DOCUMENT_SCHEMA_VERSION,
+        document.get("schema_version")
+        in {DOCUMENT_SCHEMA_VERSION, FUTURE_DOCUMENT_VERSION},
         "document schema mismatch",
     )
     require(document.get("document_family") == FAMILY, "document family mismatch")
     validate_document_contract(document, allow_test_profile=allow_test_profile)
+    require(
+        document.get("schema_version") != FUTURE_DOCUMENT_VERSION or v05,
+        "future content requires Classic v0.5 identity",
+    )
     contract = mapping(profile.get("presentation_contract"), "presentation contract")
     require(
         contract.get("contract_version")
@@ -1170,7 +1196,7 @@ def expected_cells(
             "C": item["name"],
             "D": item["unit"],
             "E": item["quantity"],
-            "F": item["detailed_technical_composition"],
+            "F": display_text(item),
             "G": item["enclosure"],
             "H": item["approved_unit_price_kzt"],
             "I": line_template.format(row=row),
@@ -1282,6 +1308,19 @@ def validate_workbook(
                 )
         for coordinate, style_name in style_names.items():
             actual_style = style_spec(worksheet[coordinate])
+            if (
+                document.get("schema_version") == FUTURE_DOCUMENT_VERSION
+                and coordinate.startswith("C")
+                and style_name == "commercial_line"
+                and int(coordinate[1:]) >= plan["commercial_start"] + 5
+            ):
+                require(
+                    actual_style["alignment"]["horizontal"] == "general",
+                    "canonical commercial alignment drift",
+                )
+                actual_style["alignment"]["horizontal"] = profile_styles[style_name][
+                    "alignment"
+                ]["horizontal"]
             if coordinate in top_borders:
                 # Exact full border checked above, independently of role styles.
                 actual_style["border"] = mapping(profile_styles[style_name], "style")[

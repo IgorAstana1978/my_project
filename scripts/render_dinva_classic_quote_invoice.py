@@ -21,6 +21,13 @@ from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
+from dinva_future_content import (
+    DOCUMENT_VERSION as FUTURE_DOCUMENT_VERSION,
+)
+from dinva_future_content import (
+    display_text,
+    validate_future_content,
+)
 from openpyxl import Workbook  # type: ignore[import-untyped]
 from openpyxl.cell.cell import Cell  # type: ignore[import-untyped]
 from openpyxl.cell.rich_text import (  # type: ignore[import-untyped]
@@ -433,12 +440,18 @@ def validate_profile(
 
 
 def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) -> None:
+    document_keys = DOCUMENT_KEYS | (
+        {"presentation_policy"}
+        if document.get("schema_version") == FUTURE_DOCUMENT_VERSION
+        else set()
+    )
     require(
-        set(document) in (DOCUMENT_KEYS, DOCUMENT_KEYS - {"document_number"}),
+        set(document) in (document_keys, document_keys - {"document_number"}),
         "document fields mismatch",
     )
     require(
-        document.get("schema_version") == DOCUMENT_SCHEMA_VERSION,
+        document.get("schema_version")
+        in {DOCUMENT_SCHEMA_VERSION, FUTURE_DOCUMENT_VERSION},
         "document schema mismatch",
     )
     require(
@@ -505,6 +518,8 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
         "approved_line_total_kzt",
         "approval_reference",
     }
+    if document.get("schema_version") == FUTURE_DOCUMENT_VERSION:
+        expected_item_keys.add("display_policy")
     total = 0
     for expected_position, raw_item in enumerate(cast(list[Any], items), start=1):
         item = mapping(raw_item, f"item {expected_position}")
@@ -533,7 +548,8 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
         sha256_text(apparatus.get("source_sha256"), "apparatus source SHA-256")
         text(apparatus.get("source_locator"), "apparatus source locator")
         require(
-            apparatus_text in composition,
+            document.get("schema_version") == FUTURE_DOCUMENT_VERSION
+            or apparatus_text in composition,
             f"item {expected_position} apparatus is not exactly represented "
             "in detailed composition",
         )
@@ -765,6 +781,7 @@ def validate_document(document: Mapping[str, Any], *, allow_test_profile: bool) 
         approval.get("client_send_authorized") is False,
         "renderer cannot consume sending authorization",
     )
+    validate_future_content(document, test_mode=test_mode(allow_test_profile))
 
 
 def color_from_spec(spec: Mapping[str, Any] | None) -> Color | None:
@@ -825,7 +842,14 @@ def content_lengths(document: Mapping[str, Any], column: str) -> list[int]:
     items = cast(list[Mapping[str, Any]], document["items"])
     if column in fields:
         return [
-            max(len(part) for part in cast(str, item[fields[column]]).split("\n"))
+            max(
+                len(part)
+                for part in (
+                    display_text(item)
+                    if column == "F"
+                    else cast(str, item[fields[column]])
+                ).split("\n")
+            )
             for item in items
         ]
     if column == "I":
@@ -908,7 +932,9 @@ def content_row_height(
         font = mapping(style["font"], f"{style_name} font")
         lines.append(
             wrapped_line_count(
-                cast(str, item[field]), float(widths[column]), float(font["size"])
+                display_text(item) if column == "F" else cast(str, item[field]),
+                float(widths[column]),
+                float(font["size"]),
             )
         )
     line_height = float(rule["line_height_points"])
@@ -1367,7 +1393,7 @@ def render_clean_workbook(
             "C": item["name"],
             "D": item["unit"],
             "E": item["quantity"],
-            "F": item["detailed_technical_composition"],
+            "F": display_text(item),
             "G": item["enclosure"],
             "H": item["approved_unit_price_kzt"],
             "I": line_template.format(row=row),
@@ -1412,6 +1438,13 @@ def render_clean_workbook(
             worksheet[f"C{row}"],
             mapping(styles["commercial_line"], "commercial line style"),
         )
+        if document.get("schema_version") == FUTURE_DOCUMENT_VERSION and offset >= 5:
+            # Canonical C27:C29 general alignment; retain all other v0.5 styles.
+            from copy import copy
+
+            alignment = copy(worksheet[f"C{row}"].alignment)
+            alignment.horizontal = "general"
+            worksheet[f"C{row}"].alignment = alignment
     signatures = mapping(document["signatures"], "signatures")
     director_row = cast(int, plan["director_row"])
     executor_row = cast(int, plan["executor_row"])
@@ -1724,6 +1757,11 @@ def render(
     )
     validate_profile(profile, allow_test_profile=allow_test_profile)
     validate_document(document, allow_test_profile=allow_test_profile)
+    require(
+        document.get("schema_version") != FUTURE_DOCUMENT_VERSION
+        or profile.get("schema_version") == "dinva_classic_presentation_profile.v0.5",
+        "future content requires Classic v0.5 identity",
+    )
     output_path = validate_output_path(output)
     candidate = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.candidate.xlsx"

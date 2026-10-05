@@ -215,6 +215,7 @@ class ValidationResult:
         }
     )
     red_flags: list[str] = field(default_factory=list)
+    future_bound: bool = False
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -478,16 +479,21 @@ def validate_operator_completion(data: Any, result: ValidationResult) -> None:
         return
 
     valid = True
+    completion_fields = (
+        OPERATOR_COMPLETION_FIELDS[:-1]
+        if result.future_bound
+        else OPERATOR_COMPLETION_FIELDS
+    )
     if not require_fields(
         completion,
-        OPERATOR_COMPLETION_FIELDS,
+        completion_fields,
         "operator_completion",
         result,
     ):
         valid = False
     if not reject_unknown_fields(
         completion,
-        OPERATOR_COMPLETION_FIELDS,
+        completion_fields,
         "operator_completion",
         result,
     ):
@@ -499,7 +505,10 @@ def validate_operator_completion(data: Any, result: ValidationResult) -> None:
             result,
         ):
             valid = False
-    if completion.get("consumables_factor_confirmed_by_igor") is not True:
+    if (
+        not result.future_bound
+        and completion.get("consumables_factor_confirmed_by_igor") is not True
+    ):
         valid = False
         add_red_flag(
             result,
@@ -580,7 +589,10 @@ def validate_row(data: Any, path: str, result: ValidationResult) -> bool:
     if install_type == "manual_review_required":
         valid = False
         add_red_flag(result, f"manual_review_required is not allowed: {path}")
-    elif install_type not in INSTALL_TYPES:
+    elif install_type not in INSTALL_TYPES and not (
+        result.future_bound
+        and install_type in __import__("future_case_hardening").FUTURE_INSTALL_TYPES
+    ):
         valid = False
         add_red_flag(result, f"install_type is not allowed: {path}")
     return valid
@@ -1176,6 +1188,17 @@ def validate_completed_price_calculator_input_draft(
         result.status = "PASS" if all_checks_pass and not result.red_flags else "FAIL"
         return result
     validate_schema_constants(data, result)
+    future = "future_context" in data.get(
+        "source", {}
+    ) or "future_technical_binding" in data.get("source", {})
+    if future:
+        from future_case_hardening import validate_future_draft
+
+        try:
+            validate_future_draft(data)
+            result.future_bound = True
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            add_red_flag(result, f"future source/classification: {exc}")
     calculator_format = validate_calculator_format(
         data.get("calculator_input_format"),
         result,

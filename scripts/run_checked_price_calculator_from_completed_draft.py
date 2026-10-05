@@ -13,6 +13,7 @@ import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
@@ -396,6 +397,7 @@ class CheckedRunResult:
     group_summaries: dict[str, int] = field(default_factory=dict)
     preliminary_project_total: int | None = None
     non_approval_flags: dict[str, bool] = field(default_factory=dict)
+    future_rule_applications: list[dict[str, Any]] = field(default_factory=list)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -412,6 +414,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Exact workbook path; omit for the active approved manifest",
     )
     parser.add_argument("--custom-sche-metal-workbook", type=Path)
+    parser.add_argument("--future-cost-inputs", type=Path)
+    parser.add_argument("--future-cost-inputs-sha256")
     parser.add_argument("--pricing-profile", type=Path)
     parser.add_argument(
         "--expected-pricing-profile-sha256",
@@ -2545,6 +2549,8 @@ def run_checked_price_calculator_from_completed_draft(
     expected_pricing_profile_sha256: str | None = None,
     price_baseline_version: str | None = None,
     active_selector_path: Path = DEFAULT_ACTIVE_SELECTOR,
+    future_cost_inputs: Path | None = None,
+    expected_future_cost_inputs_sha256: str | None = None,
 ) -> CheckedRunResult:
     requested_workbook = (
         resolved(price_workbook) if price_workbook is not None else None
@@ -2558,6 +2564,11 @@ def run_checked_price_calculator_from_completed_draft(
     profile_mode = (
         pricing_profile_path is not None or expected_pricing_profile_sha256 is not None
     )
+    if profile_mode and (
+        future_cost_inputs is not None or expected_future_cost_inputs_sha256 is not None
+    ):
+        add_red_flag(result, "future input cannot enter frozen Invoice519 profile")
+        return result
     if profile_mode and price_baseline_version not in (None, HISTORICAL.version):
         add_red_flag(
             result, "frozen Invoice519 profile rejects successor price baseline"
@@ -2643,6 +2654,28 @@ def run_checked_price_calculator_from_completed_draft(
     if not run_completed_input_validation(result):
         return result
 
+    if future_cost_inputs is not None or expected_future_cost_inputs_sha256 is not None:
+        if profile_mode or result.price_baseline_version != ACTIVE_VERSION:
+            add_red_flag(result, "future rules require active non-historical baseline")
+            return result
+        return run_future_bound_calculation(
+            result, future_cost_inputs, expected_future_cost_inputs_sha256
+        )
+    preliminary = load_completed_input_json(result)
+    if preliminary is not None and (
+        "future_context" in preliminary.get("source", {})
+        or "future_technical_binding" in preliminary.get("source", {})
+    ):
+        add_red_flag(result, "future cost inputs and exact SHA required")
+        return result
+    if result.price_baseline_version != HISTORICAL.version:
+        add_red_flag(
+            result,
+            "active future run requires source-bound technical "
+            "family/classification and cost inputs",
+        )
+        return result
+
     try:
         data = load_completed_input_json(result)
         if data is None:
@@ -2717,6 +2750,140 @@ def run_checked_price_calculator_from_completed_draft(
 
     all_checks_pass = all(status == "pass" for status in result.checks.values())
     result.status = "PASS" if all_checks_pass and not result.red_flags else "FAIL"
+    return result
+
+
+def run_future_bound_calculation(
+    result: CheckedRunResult, costs_path: Path | None, expected_sha: str | None
+) -> CheckedRunResult:
+    """Future branch of the existing checked runner; no parallel publication path."""
+    from future_case_hardening import (
+        bound_value,
+        calculate_future_price,
+        require,
+        validate_future_draft,
+    )
+
+    try:
+        require(
+            costs_path is not None and expected_sha is not None,
+            "future cost binding incomplete",
+        )
+        costs_path = costs_path.resolve()
+        draft_raw = result.completed_input_json.read_bytes()
+        cost_raw = costs_path.read_bytes()
+        require(
+            hashlib.sha256(cost_raw).hexdigest() == expected_sha,
+            "future cost inputs SHA drift",
+        )
+        data = json.loads(draft_raw, object_pairs_hook=reject_duplicate_keys)
+        projected = validate_future_draft(data)
+        costs = json.loads(cost_raw, object_pairs_hook=reject_duplicate_keys)
+        require(
+            set(costs) == {"case_id", "items"}
+            and costs["case_id"] == projected["context"]["case_id"],
+            "cost Case binding mismatch",
+        )
+        cost_by_id = {i["item_id"]: i for i in costs["items"]}
+        require(
+            len(cost_by_id) == len(costs["items"])
+            and set(cost_by_id) == {i["item_id"] for i in projected["items"]},
+            "cost item inventory mismatch",
+        )
+        for item, application in zip(
+            projected["items"], projected["applications"], strict=True
+        ):
+            inputs = cost_by_id[item["item_id"]]
+            require(
+                set(inputs) == {"item_id", "cabinet_cost", "work_source"},
+                "cost item fields mismatch",
+            )
+            calculated = calculate_future_price(
+                projected["context"],
+                bom=application["bom"],
+                cabinet_cost=inputs["cabinet_cost"],
+                work_source=inputs["work_source"],
+                selector=result.active_selector_path,
+                rules=application["rules"],
+            )
+            result.item_summaries.append(
+                # Every item must remain on the initially selected exact chain.
+                ItemCalculationSummary(
+                    product_name=item["product_name"],
+                    input_rows_count=len(application["bom"]),
+                    cabinet=item["cabinet"]["cabinet_label"],
+                    cabinet_price=calculated["cabinet_cost_kzt"],
+                    component_material_total=calculated["material_kzt"],
+                    work_total=calculated["work_kzt"],
+                    additional_materials_total=str(
+                        Decimal(calculated["material_kzt"])
+                        * (Decimal(calculated["K"]) - 1)
+                    ),
+                    total_preliminary_price=calculated["unit_price_kzt"],
+                )
+            )
+            require(
+                calculated["workbook_sha256"] == result.price_baseline_sha256
+                and calculated["manifest_sha256"]
+                == result.price_baseline_manifest_sha256,
+                "future baseline changed between item calculations",
+            )
+            result.future_rule_applications.append(
+                {
+                    **application,
+                    "price": calculated,
+                    "physical_multiplicity": item["quantity"],
+                }
+            )
+        require(
+            result.completed_input_json.read_bytes() == draft_raw
+            and costs_path.read_bytes() == cost_raw,
+            "future inputs changed during calculation",
+        )
+        validate_future_draft(data)
+        for application in result.future_rule_applications:
+            for record in application["price"]["cost_inputs"].values():
+                bound_value(record)
+        final_baseline = require_price_baseline(
+            result.price_workbook,
+            ACTIVE_VERSION,
+            active_selector_path=result.active_selector_path,
+        )
+        require(
+            final_baseline.sha256 == result.price_baseline_sha256
+            and final_baseline.manifest_sha256 == result.price_baseline_manifest_sha256,
+            "future baseline final drift",
+        )
+        result.overall_preliminary_total = sum(
+            s.total_preliminary_price * item["quantity"]
+            for s, item in zip(result.item_summaries, projected["items"], strict=True)
+        )
+        result.input_sha_provenance = {
+            "completed_input": hashlib.sha256(draft_raw).hexdigest(),
+            "cost_inputs": expected_sha,
+            "confirmed_composition": data["source"]["future_technical_binding"][
+                "sha256"
+            ],
+        }
+        result.checks.update(
+            {
+                "CSV bridge": "pass",
+                "calculator execution": "pass",
+                "source-bound PTO/PPN/K": "pass",
+            }
+        )
+        result.non_approval_flags = {
+            "price_approved_by_igor": False,
+            "client_send_authorized": False,
+            "production_authorized": False,
+        }
+        result.status = (
+            "PASS"
+            if all(s == "pass" for s in result.checks.values()) and not result.red_flags
+            else "FAIL"
+        )
+    except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
+        add_red_flag(result, f"future governed calculation HOLD: {exc}")
     return result
 
 
@@ -3054,6 +3221,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         expected_pricing_profile_sha256=args.expected_pricing_profile_sha256,
         price_baseline_version=args.price_baseline_version,
         active_selector_path=args.active_selector,
+        future_cost_inputs=args.future_cost_inputs,
+        expected_future_cost_inputs_sha256=args.future_cost_inputs_sha256,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

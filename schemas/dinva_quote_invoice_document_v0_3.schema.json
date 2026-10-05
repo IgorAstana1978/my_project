@@ -1,0 +1,567 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dinva_quote_invoice_document_v0_3.schema.json",
+  "title": "DINVA future canonical 744-1 content document v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "document_family",
+    "document_type",
+    "document_id",
+    "document_date",
+    "currency",
+    "payer",
+    "object_name",
+    "basis",
+    "apparatus_heading",
+    "sections",
+    "items",
+    "document_fingerprint",
+    "approved_grand_total_kzt",
+    "vat",
+    "amount_words",
+    "terms",
+    "signatures",
+    "approval_provenance",
+    "presentation_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "dinva_quote_invoice_document.v0.3"
+    },
+    "document_family": {
+      "const": "DINVA_CLASSIC_QUOTE_INVOICE_V0_1"
+    },
+    "document_type": {
+      "enum": [
+        "QUOTE",
+        "INVOICE",
+        "QUOTE_INVOICE"
+      ]
+    },
+    "document_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_number": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "document_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "currency": {
+      "const": "KZT"
+    },
+    "payer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "object_name": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "basis": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "apparatus_heading": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_fingerprint": {
+      "$ref": "#/$defs/sha256"
+    },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "label",
+          "first_position",
+          "last_position"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "first_position": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "last_position": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "position",
+          "name",
+          "unit",
+          "quantity",
+          "detailed_technical_composition",
+          "apparatus",
+          "enclosure",
+          "approved_unit_price_kzt",
+          "approved_line_total_kzt",
+          "approval_reference",
+          "display_policy"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "detailed_technical_composition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "apparatus": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "text",
+              "source_role",
+              "source_sha256",
+              "source_locator"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_role": {
+                "const": "AUTHORITATIVE_DOCUMENT_TEXT_SOURCE"
+              },
+              "source_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "source_locator": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "enclosure": {
+            "type": "string",
+            "minLength": 1
+          },
+          "approved_unit_price_kzt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approved_line_total_kzt": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "approval_reference": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "pricing",
+              "technical",
+              "enclosure"
+            ],
+            "properties": {
+              "pricing": {
+                "type": "string",
+                "minLength": 1
+              },
+              "technical": {
+                "type": "string",
+                "minLength": 1
+              },
+              "enclosure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "display_policy": {
+            "const": "DINVA_744_1_CONTENT_V1"
+          }
+        }
+      }
+    },
+    "approved_grand_total_kzt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "vat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rate_percent",
+        "included",
+        "approved_amount_kzt",
+        "approved_text"
+      ],
+      "properties": {
+        "rate_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "included": {
+          "type": "boolean"
+        },
+        "approved_amount_kzt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approved_text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "amount_words": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "amount_kzt",
+        "approved_text"
+      ],
+      "properties": {
+        "amount_kzt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "approved_text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "terms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "payment",
+        "delivery",
+        "manufacturing_lead_time",
+        "manufacturing_lead_time_provenance",
+        "validity",
+        "commercial_lines"
+      ],
+      "properties": {
+        "payment": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "delivery": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manufacturing_lead_time": {
+          "type": "string",
+          "minLength": 1
+        },
+        "manufacturing_lead_time_provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "source_order",
+            "source_text",
+            "normalized_text",
+            "source_sha256",
+            "source_locator",
+            "normalization_rule",
+            "approval_reference"
+          ],
+          "properties": {
+            "source_order": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "source_text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "normalized_text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "source_locator": {
+              "type": "string",
+              "minLength": 1
+            },
+            "normalization_rule": {
+              "type": "string",
+              "minLength": 1
+            },
+            "approval_reference": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "validity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commercial_lines": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source_order",
+              "text",
+              "source_sha256",
+              "source_locator"
+            ],
+            "properties": {
+              "source_order": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source_sha256": {
+                "$ref": "#/$defs/sha256"
+              },
+              "source_locator": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "signatures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "director_title",
+        "director_name",
+        "executor_label",
+        "executor_title",
+        "executor_name",
+        "executor_full_text"
+      ],
+      "properties": {
+        "director_title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "director_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executor_label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executor_title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executor_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executor_full_text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "approval_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "authority",
+        "approval_id",
+        "approved_at",
+        "approval_scope",
+        "approved_document_fingerprint",
+        "source_bindings",
+        "source_sha256s",
+        "rendering_authorized",
+        "client_send_authorized"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "DRAFT_UNAPPROVED",
+            "APPROVED"
+          ]
+        },
+        "authority": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approved_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "approval_scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approved_document_fingerprint": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/sha256"
+            }
+          ]
+        },
+        "source_bindings": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "role",
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "$ref": "#/$defs/sha256"
+              }
+            }
+          }
+        },
+        "source_sha256s": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/sha256"
+          }
+        },
+        "rendering_authorized": {
+          "type": "boolean"
+        },
+        "client_send_authorized": {
+          "const": false
+        }
+      }
+    },
+    "presentation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "policy_sha256",
+        "canonical_sha256",
+        "source_sha256"
+      ],
+      "properties": {
+        "policy_id": {
+          "const": "DINVA_744_1_CONTENT_V1"
+        },
+        "policy_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "canonical_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "document_type": {
+            "enum": [
+              "INVOICE",
+              "QUOTE_INVOICE"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "document_number"
+        ],
+        "properties": {
+          "document_number": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

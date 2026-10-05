@@ -291,6 +291,35 @@ def build_output_payload(
     }
 
     forbidden_paths = find_forbidden_output_keys(payload)
+    if "future_context" in data:
+        from future_case_hardening import future_input_projection
+        from price_baseline_contract import sha256_file
+
+        try:
+            binding = {
+                "path": str(result.confirmed_composition_json.resolve()),
+                "sha256": sha256_file(result.confirmed_composition_json),
+            }
+            projected = future_input_projection(binding)
+            payload["source"].update(
+                future_technical_binding=binding, future_context=projected["context"]
+            )
+            payload["items"] = projected["items"]
+            payload["calculator_input_format"].update(
+                rows=projected["rows"],
+                missing_required_fields=[],
+                missing_required_fields_note=(
+                    "K derives from source-bound technical "
+                    "family and Igor's reusable policy."
+                ),
+            )
+            payload["next_required_human_actions"] = [
+                "Operator completes/reviews this source-bound technical input; "
+                "pricing/export/downstream remain closed."
+            ]
+        except (ValueError, KeyError, TypeError, OSError) as exc:
+            add_red_flag(result, f"future technical rules: {exc}")
+            return None
     if forbidden_paths:
         add_red_flag(
             result,

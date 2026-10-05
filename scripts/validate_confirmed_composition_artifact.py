@@ -921,7 +921,10 @@ def validate_schema_constants(
     valid = True
     if not require_fields(data, ROOT_FIELDS, "", result):
         valid = False
-    if not reject_unknown_fields(data, ROOT_FIELDS, "", result):
+    allowed_root = ROOT_FIELDS + (
+        ("future_context",) if "future_context" in data else ()
+    )
+    if not reject_unknown_fields(data, allowed_root, "", result):
         valid = False
     if data.get("schema_version") != SCHEMA_VERSION:
         valid = False
@@ -1039,7 +1042,9 @@ def validate_cabinet(data: Any, path: str, result: ValidationResult) -> bool:
     return valid
 
 
-def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
+def validate_component(
+    data: Any, path: str, result: ValidationResult, *, future: bool = False
+) -> bool:
     component = require_mapping(data, path, result)
     if component is None:
         return False
@@ -1067,13 +1072,22 @@ def validate_component(data: Any, path: str, result: ValidationResult) -> bool:
     if install_type == "manual_review_required":
         valid = False
         add_red_flag(result, f"manual_review_required is not allowed: {path}")
-    elif install_type not in INSTALL_TYPES:
+    elif install_type not in INSTALL_TYPES and not (
+        future
+        and install_type in __import__("future_case_hardening").FUTURE_INSTALL_TYPES
+    ):
         valid = False
         add_red_flag(result, f"install_type is not allowed: {path}")
     return valid
 
 
-def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
+def validate_item(
+    data: Any,
+    path: str,
+    result: ValidationResult,
+    *,
+    future_context: Mapping[str, Any] | None = None,
+) -> bool:
     item = require_mapping(data, path, result)
     if item is None:
         return False
@@ -1081,7 +1095,10 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
     valid = True
     if not require_fields(item, ITEM_FIELDS, path, result):
         valid = False
-    if not reject_unknown_fields(item, ITEM_FIELDS, path, result):
+    allowed_item = ITEM_FIELDS + (
+        ("technical_classification",) if future_context is not None else ()
+    )
+    if not reject_unknown_fields(item, allowed_item, path, result):
         valid = False
     for field_name in (
         "item_id",
@@ -1117,13 +1134,32 @@ def validate_item(data: Any, path: str, result: ValidationResult) -> bool:
         add_red_flag(result, f"field must be a non-empty list: {path}.components")
     else:
         for index, component in enumerate(component_list):
-            if not validate_component(component, f"{path}.components[{index}]", result):
+            if not validate_component(
+                component,
+                f"{path}.components[{index}]",
+                result,
+                future=future_context is not None,
+            ):
                 valid = False
+
+    if future_context is not None and valid:
+        from future_case_hardening import validate_technical_item
+
+        try:
+            validate_technical_item(future_context, item)
+        except (ValueError, KeyError, TypeError) as exc:
+            add_red_flag(result, f"future technical classification: {exc}")
+            valid = False
 
     return valid
 
 
-def validate_items(data: Any, result: ValidationResult) -> None:
+def validate_items(
+    data: Any,
+    result: ValidationResult,
+    *,
+    future_context: Mapping[str, Any] | None = None,
+) -> None:
     item_list = require_list(data, "items", result)
     if item_list is None:
         return
@@ -1133,7 +1169,9 @@ def validate_items(data: Any, result: ValidationResult) -> None:
 
     valid = True
     for index, item in enumerate(item_list):
-        if not validate_item(item, f"items[{index}]", result):
+        if not validate_item(
+            item, f"items[{index}]", result, future_context=future_context
+        ):
             valid = False
 
     result.checks["items"] = "pass" if valid else "fail"
@@ -1381,7 +1419,15 @@ def validate_confirmed_composition_artifact(
     validate_schema_constants(data, result)
     validate_source_links(data.get("source_links"), result)
     validate_safety(data.get("safety"), result)
-    validate_items(data.get("items"), result)
+    future_context = data.get("future_context")
+    if "future_context" in data:
+        from future_case_hardening import future_only
+
+        try:
+            future_only(future_context)
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            add_red_flag(result, f"future context: {exc}")
+    validate_items(data.get("items"), result, future_context=future_context)
 
     all_checks_pass = all(status == "pass" for status in result.checks.values())
     result.status = "PASS" if all_checks_pass and not result.red_flags else "FAIL"
