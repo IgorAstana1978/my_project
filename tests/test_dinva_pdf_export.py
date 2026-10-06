@@ -266,29 +266,30 @@ def test_pdf_preflight_exact_subject_and_closed_output(
     before = {p.name for p in tmp_path.iterdir()}
     exporter.recheck(plan)
     out = tmp_path / "synthetic.pdf"
-    standalone = exporter.subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(exporter.NATIVE_ENGINE),
-            "-Workbook",
-            str(plan["workbook"]),
-            "-Output",
-            str(out),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert (
-        standalone.returncode != 0
-        and not out.exists()
-        and "DIRECT_NATIVE_PDF_EXPORT_CLOSED" in standalone.stderr
-    )
+    if os.name == "nt":
+        standalone = exporter.subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(exporter.NATIVE_ENGINE),
+                "-Workbook",
+                str(plan["workbook"]),
+                "-Output",
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert (
+            standalone.returncode != 0
+            and not out.exists()
+            and "DIRECT_NATIVE_PDF_EXPORT_CLOSED" in standalone.stderr
+        )
     with pytest.raises(ValueError, match="^NOT_IMPLEMENTED_PENDING_WU5$"):
         exporter.export(plan, out, "wrong")
     assert not out.exists() and {p.name for p in tmp_path.iterdir()} == before
