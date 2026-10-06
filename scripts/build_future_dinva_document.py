@@ -1,4 +1,4 @@
-"""Future content adapter over the preserved WU3 bridge core; read-only preflight."""
+"""Future content adapter with separate exact governed v0.3 publication."""
 
 from __future__ import annotations
 
@@ -100,6 +100,13 @@ def preflight(
         "real source must be outside Git",
     )
     source = case.payload()
+    from build_future_case_document_source import COMPOSITION_ROLE, verify_source
+
+    chain = None
+    if not bridge.renderer.test_mode(allow_test_profile) or any(
+        b["role"] == COMPOSITION_ROLE for b in source["source_bindings"]
+    ):
+        chain = verify_source(case)
     decision = bridge.obj(approval.payload(), bridge.APPROVAL_KEYS, "approval")
     require(
         decision["schema_version"] == bridge.APPROVAL_SCHEMA
@@ -170,6 +177,19 @@ def preflight(
         bindings.append(
             {"role": b["role"], "path": str(snap.path), "sha256": snap.sha256}
         )
+    if chain is not None:
+        known = {(b["path"], b["sha256"]) for b in bindings}
+        for index, snap in enumerate(chain.snapshots):
+            if (str(snap.path), snap.sha256) in known:
+                continue
+            role = f"FUTURE_FLOW_SOURCE_{index}"
+            require(role not in roles, "duplicate/reserved future source role")
+            roles.add(role)
+            known.add((str(snap.path), snap.sha256))
+            snapshots.append(snap)
+            bindings.append(
+                {"role": role, "path": str(snap.path), "sha256": snap.sha256}
+            )
     document = prepare_core(source, bindings[0])
     fp = bridge.renderer.document_fingerprint(document)
     require(
@@ -193,6 +213,8 @@ def preflight(
         document, allow_test_profile=allow_test_profile
     )
     plan = bridge.Plan(document, tuple(snapshots))
+    if chain is not None:
+        plan = bridge.Plan(document, (*plan.snapshots, *chain.snapshots))
     plan.recheck()
     return plan
 
@@ -260,19 +282,74 @@ def preview_accepted(
     }
 
 
+def publication_authorization(plan: bridge.Plan, output: Path) -> str:
+    return (
+        "IGOR_DINVA_FUTURE_DOCUMENT_PUBLICATION_AUTHORIZED"
+        "|ACTION=IMMUTABLE_DOCUMENT_V0_3_PUBLICATION"
+        f"|CASE_SHA256={plan.snapshots[0].sha256}"
+        f"|APPROVAL_SHA256={plan.snapshots[1].sha256}"
+        f"|DOCUMENT_FINGERPRINT={plan.document['document_fingerprint']}"
+        f"|DOCUMENT_SHA256={bridge.digest(plan.encoded)}"
+        f"|OUTPUT_PATH_SHA256={bridge.digest(str(output.resolve()).encode('utf-8'))}"
+    )
+
+
+def publish(
+    candidate: bridge.Plan,
+    output: Path,
+    authorization: str,
+    *,
+    allow_test_profile: bool = False,
+) -> Path:
+    from build_future_case_document_source import publish_exact, verify_source
+
+    def regenerate() -> bridge.Plan:
+        chain = verify_source(candidate.snapshots[0])
+        fresh = preflight(
+            candidate.snapshots[0],
+            candidate.snapshots[1],
+            allow_test_profile=allow_test_profile,
+        )
+        return bridge.Plan(fresh.document, (*fresh.snapshots, *chain.snapshots))
+
+    fresh = regenerate()
+    require(fresh.encoded == candidate.encoded, "future document changed after review")
+    return publish_exact(
+        fresh,
+        output,
+        authorization,
+        publication_authorization(fresh, output),
+        regenerate,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("case-source", "case-approval"):
         parser.add_argument("--" + name, type=Path, required=True)
         parser.add_argument("--" + name + "-sha256", required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--authorization")
     args = parser.parse_args()
     try:
         plan = preflight(
             bridge.load(args.case_source, args.case_source_sha256),
             bridge.load(args.case_approval, args.case_approval_sha256),
         )
+        if args.output is not None:
+            bridge.output_path(plan, args.output)
         print("FUTURE_DOCUMENT_PREFLIGHT=PASS; PUBLICATION=CLOSED")
         print("CANDIDATE_SHA256=" + bridge.digest(plan.encoded))
+        if args.publish:
+            require(args.output is not None, "exact publication output required")
+            publish(plan, args.output, args.authorization or "")
+            print("FUTURE_DOCUMENT_PUBLICATION=PASS; CLIENT_SEND=CLOSED")
+        else:
+            require(
+                args.authorization is None,
+                "authorization requires explicit publication",
+            )
         return 0
     except (ValueError, OSError, KeyError) as exc:
         print(f"HOLD: {exc}")

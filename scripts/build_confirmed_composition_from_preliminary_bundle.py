@@ -168,6 +168,7 @@ class CompositionState:
     unresolved_issue_ids: set[str] = field(default_factory=set)
     supply_boundary: str = ""
     batch_decisions: dict[str, Any] | None = None
+    future_review: DecisionsInputSnapshot | None = None
 
 
 @dataclass
@@ -199,6 +200,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--approval-channel", required=True)
     parser.add_argument("--decisions-json", type=Path)
     parser.add_argument("--extraction-version")
+    parser.add_argument("--future-review-json", type=Path)
+    parser.add_argument("--future-review-sha256")
     args = parser.parse_args(argv)
     if args.applied_bundle_json is not None and args.decisions_json is not None:
         parser.error(
@@ -207,6 +210,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         )
     if args.extraction_version is not None and args.case_id is None:
         parser.error("--extraction-version requires --case-id")
+    if (args.future_review_json is None) != (args.future_review_sha256 is None):
+        parser.error("future review path and SHA are required together")
+    if args.future_review_json is not None and (
+        args.case_id is None or args.decisions_json is None
+    ):
+        parser.error("future review requires Case batch decisions")
     return args
 
 
@@ -1731,6 +1740,7 @@ def apply_batch_decisions(
     decisions_snapshot: DecisionsInputSnapshot,
     *,
     case_id: str,
+    future_mode: bool = False,
 ) -> CompositionState:
     data = exact_object(
         decisions_snapshot.data,
@@ -1884,7 +1894,12 @@ def apply_batch_decisions(
             install_type = strict_nonempty_string(
                 group.get("install_type"), "install_type"
             )
-            if install_type not in INSTALL_TYPES:
+            from future_case_hardening import FUTURE_INSTALL_TYPES
+
+            allowed_install_types = INSTALL_TYPES | (
+                FUTURE_INSTALL_TYPES if future_mode else set()
+            )
+            if install_type not in allowed_install_types:
                 raise WorkflowError("batch install_type is not allowed")
             acknowledged_flags = unique_strings(
                 group.get("acknowledged_red_flags"),
@@ -2072,6 +2087,82 @@ def apply_batch_decisions(
     return state
 
 
+def attach_future_review(
+    review: DecisionsInputSnapshot,
+    snapshot: InputSnapshot,
+    state: CompositionState,
+) -> None:
+    """Attach exact reviewed facts before the existing Human composition gate."""
+    from future_case_hardening import override, validate_technical_item
+
+    try:
+        data = exact_object(
+            review.data,
+            "future review",
+            {
+                "schema_version",
+                "case_id",
+                "draft_id",
+                "input_sha256",
+                "future_context",
+                "items",
+            },
+        )
+        if data["schema_version"] != "future_composition_review.v0.1":
+            raise WorkflowError("future review schema mismatch")
+        validate_decisions_binding(
+            {**data, "schema_version": DECISIONS_INPUT_SCHEMA},
+            case_id=snapshot.paths.case_id,
+            snapshot=snapshot,
+        )
+        entries = exact_list(data["items"], "future review items")
+        if [e["item_id"] for e in entries] != [i["item_id"] for i in state.items]:
+            raise WorkflowError("future review ordered item inventory mismatch")
+        if state.batch_decisions is None:
+            raise WorkflowError("future review requires reviewed batch facts")
+        for item, entry, decision in zip(
+            state.items, entries, state.batch_decisions["item_decisions"], strict=True
+        ):
+            exact_object(
+                entry, "future review item", {"item_id", "technical_classification"}
+            )
+            item["technical_classification"] = copy.deepcopy(
+                entry["technical_classification"]
+            )
+            validate_technical_item(data["future_context"], item)
+            brand, _ = override(
+                "automation_brand", "EKF", item["technical_classification"]["overrides"]
+            )
+            if brand != decision["manufacturer"]:
+                raise WorkflowError(
+                    "reviewed manufacturer conflicts with "
+                    "future pricing brand authority"
+                )
+        state.future_review = review
+    except (ValueError, KeyError, TypeError) as exc:
+        raise WorkflowError(f"future review: {exc}") from exc
+
+
+def recheck_future_inputs(
+    snapshot: InputSnapshot,
+    decisions: DecisionsInputSnapshot | None,
+    review: DecisionsInputSnapshot,
+) -> None:
+    assert_snapshot_unchanged(snapshot)
+    if decisions is not None:
+        assert_decisions_unchanged(decisions)
+    assert_decisions_unchanged(review)
+    from future_case_hardening import bound_value
+
+    try:
+        for item in review.data["items"]:
+            for fields in item["technical_classification"]["overrides"].values():
+                for record in fields.values():
+                    bound_value(record)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        raise WorkflowError(f"future override source drift: {exc}") from exc
+
+
 def ensure_candidate_complete(state: CompositionState) -> None:
     if not state.items:
         raise WorkflowError("confirmed composition must contain at least one item")
@@ -2107,7 +2198,12 @@ def ensure_candidate_complete(state: CompositionState) -> None:
                         f"items[{item_index}].components[{component_index}]."
                         f"{field_name}"
                     )
-            if component.get("install_type") not in INSTALL_TYPES:
+            from future_case_hardening import FUTURE_INSTALL_TYPES
+
+            allowed_install_types = INSTALL_TYPES | (
+                FUTURE_INSTALL_TYPES if state.future_review is not None else set()
+            )
+            if component.get("install_type") not in allowed_install_types:
                 raise WorkflowError("confirmed install_type is not allowed")
 
 
@@ -2166,6 +2262,14 @@ def render_final_summary(
                 f"qty={component.get('quantity')}; "
                 f"install_type={component.get('install_type')}"
             )
+        if state.future_review is not None:
+            lines.append(
+                json.dumps(item["technical_classification"], ensure_ascii=False)
+            )
+    if state.future_review is not None:
+        lines.append(
+            json.dumps(state.future_review.data["future_context"], ensure_ascii=False)
+        )
     sections = (
         ("Corrected values", state.corrected_values),
         ("Resolved conflicts", state.resolved_conflicts),
@@ -2226,7 +2330,7 @@ def build_confirmed_artifact(
             f"Technical composition confirmed by Igor under {confirmation_id}."
         )
         items.append(item)
-    return {
+    artifact = {
         "schema_version": "confirmed_composition_artifact.v0.1",
         "confirmation_id": confirmation_id,
         "confirmed_by": "Igor",
@@ -2251,6 +2355,12 @@ def build_confirmed_artifact(
         "notes": [],
         "next_allowed_step": "build_price_calculator_input_draft",
     }
+    if state.future_review is not None:
+        artifact["future_context"] = copy.deepcopy(
+            state.future_review.data["future_context"]
+        )
+        artifact["notes"] = [state.supply_boundary]
+    return artifact
 
 
 def build_confirmed_artifact_from_applied_bundle(
@@ -2352,6 +2462,12 @@ def build_decision_record(
         record["record_type"] = "igor_composition_decisions.v0.2"
         record["decision_mode"] = "batch_json"
         record["batch_decisions"] = state.batch_decisions
+    if state.future_review is not None:
+        record["future_review"] = {
+            "path": str(state.future_review.path),
+            "sha256": state.future_review.sha256,
+            "reviewed_facts": copy.deepcopy(state.future_review.data),
+        }
     return record
 
 
@@ -2555,6 +2671,7 @@ def publish_atomically(
     record_factory: Callable[[str], Mapping[str, Any]],
     receipt_factory: Callable[[Mapping[str, Any], str], str],
     confirmed_validator: ValidatorFunction = default_confirmed_validator,
+    recheck: Callable[[], None] | None = None,
 ) -> tuple[str, str]:
     if paths.output_dir.exists():
         raise WorkflowError(
@@ -2580,6 +2697,8 @@ def publish_atomically(
         receipt = receipt_factory(record, decision_hash).encode("utf-8")
         write_fsynced(staging / DECISIONS_NAME, decision_bytes)
         write_fsynced(staging / RECEIPT_NAME, receipt)
+        if recheck is not None:
+            recheck()
         os.rename(staging, paths.output_dir)
         return artifact_hash, decision_hash
     except Exception as exc:
@@ -2603,6 +2722,8 @@ def run_builder(
     confirmation_id: str,
     approval_channel: str,
     decisions_json: Path | None = None,
+    future_review_json: Path | None = None,
+    future_review_sha256: str | None = None,
     extraction_version: str | None = None,
     canonical_root: Path = CANONICAL_ROOT,
     input_fn: InputFunction = input,
@@ -2628,6 +2749,23 @@ def run_builder(
         decisions_snapshot = (
             load_decisions_input(decisions_json) if decisions_json is not None else None
         )
+        if (future_review_json is None) != (future_review_sha256 is None):
+            raise WorkflowError("future review path and SHA are required together")
+        review = None
+        if future_review_json is not None:
+            if decisions_snapshot is None:
+                raise WorkflowError("future review requires batch decisions")
+            review = load_decisions_input(future_review_json)
+            if review.sha256 != future_review_sha256:
+                raise WorkflowError("future review SHA mismatch")
+            from future_case_hardening import future_only
+
+            try:
+                future_only(review.data["future_context"])
+                if review.data["future_context"]["case_id"] != case_id:
+                    raise ValueError("future review Case mismatch")
+            except (ValueError, KeyError, TypeError) as exc:
+                raise WorkflowError(str(exc)) from exc
         if decisions_snapshot is None:
             preliminary_red_flags = collect_preliminary_red_flags(snapshot.draft)
             if preliminary_red_flags:
@@ -2652,7 +2790,10 @@ def run_builder(
                 snapshot,
                 decisions_snapshot,
                 case_id=case_id,
+                future_mode=review is not None,
             )
+        if review is not None:
+            attach_future_review(review, snapshot, state)
         ensure_ready_for_approval(state)
         output_fn(
             render_final_summary(
@@ -2669,6 +2810,8 @@ def run_builder(
         assert_snapshot_unchanged(snapshot)
         if decisions_snapshot is not None:
             assert_decisions_unchanged(decisions_snapshot)
+        if review is not None:
+            assert_decisions_unchanged(review)
         confirmed_at_value = now_fn()
         if confirmed_at_value.tzinfo is None or confirmed_at_value.utcoffset() is None:
             raise WorkflowError("confirmed_at must be timezone-aware")
@@ -2698,6 +2841,11 @@ def run_builder(
                 state=state,
             ),
             confirmed_validator=confirmed_validator,
+            recheck=(
+                (lambda: recheck_future_inputs(snapshot, decisions_snapshot, review))
+                if review is not None
+                else None
+            ),
         )
         result.status = "PASS"
         result.output_created = True
@@ -2854,6 +3002,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             confirmation_id=args.confirmation_id,
             approval_channel=args.approval_channel,
             decisions_json=args.decisions_json,
+            future_review_json=args.future_review_json,
+            future_review_sha256=args.future_review_sha256,
             extraction_version=args.extraction_version,
         )
     print(format_report(result))

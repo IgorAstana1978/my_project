@@ -97,7 +97,8 @@ write, activation entrypoint or use of the ordinary main-workbook activator.
 
 `build_future_dinva_document.py` reuses the preserved WU3 bridge core/snapshots,
 then prepares `dinva_quote_invoice_document.v0.3`. Original WU3 producer bytes
-and legacy v0.2 behavior stay unchanged. CLI is read-only preflight only:
+and legacy v0.2 behavior stay unchanged. Default CLI is read-only preflight;
+the separate WU6 publication mode is described below:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/build_future_dinva_document.py `
@@ -134,8 +135,130 @@ required. Existing layout algorithms/fonts/assets are retained; only the last
 three commercial lines receive proven canonical general alignment.
 
 New real source/approval/document JSON and real XLSX require separate exact
-Human Approval. This implementation does not materialize them. No tests or
+Human Approval. WU4 did not materialize them. No tests or
 preflight may approve or replace the accepted laboratory quote.
+
+## WU6 reusable future XLSX joins
+
+Only an explicit NEW_FUTURE Case participates. Historical Cases, Invoice519,
+and the accepted laboratory Case are excluded. No pricing formula, renderer,
+canonical layout, PDF or downstream boundary changes are involved.
+
+### Reviewed composition input
+
+The existing `build_confirmed_composition_from_preliminary_bundle.py` batch
+flow adds `--future-review-json` and `--future-review-sha256` together. Both
+require `--case-id` and existing `--decisions-json`. The reviewed primary input
+has schema `future_composition_review.v0.1`, exact `case_id`, `draft_id`,
+`input_sha256` (the same manifest/draft/review hashes as the batch decisions),
+`future_context`, and ordered `items`, each exactly `item_id` and
+`technical_classification`. It does not assert commercial approval.
+
+The existing classification validator checks those facts against the final
+component IDs/types. Reviewed batch manufacturer must match the existing
+source-bound future brand policy/override; a mismatch HOLDs before Human review.
+Override sources are reread before composition publication. Additional types are allowed only in
+this explicit mode. Classification and context appear in the final composition
+summary before the existing exact Human confirmation phrase. The immutable
+confirmed artifact carries the reviewed context/classification and supply
+boundary in notes; its decision audit records the reviewed input path/SHA/facts.
+Both primary inputs and the extraction bundle are reread before publication.
+PASS is not direct Igor authority to execute this command on a real Case.
+
+### Deterministic intermediate producers
+
+`build_future_case_document_source.py` has three modes. Each input argument
+requires its matching `--<name>-sha256`. `--output` must name a new JSON outside
+Git, with an existing parent. Default execution is read-only preflight and
+prints candidate SHA; it neither creates a file nor issues an authorization.
+
+1. `pricing-input --confirmed <JSON> --operator <JSON>` builds the completed
+   calculator input using the existing input builder. The primary operator
+   record contains exactly `completed_by`, timezone-bearing `completed_at`,
+   `completion_note`; it must not claim price or Igor approval.
+2. `calculation --completed <JSON> --costs <JSON> [--selector <JSON>]` invokes
+   the existing checked runner and emits `checked_future_pricing_result.v0.1`.
+   Costs retain the existing exact per-item ENCLOSURE_COST/work source contract.
+   The result contains ordered item IDs/quantities/unit prices/line totals/grand
+   total, rule applications and exact bound inputs. It is DRAFT_NOT_APPROVED.
+3. `document-source --confirmed <JSON> --calculated <JSON> --reviewed <JSON>`
+   rebuilds and compares the checked result, then prepares the existing future
+   document source. The reviewed primary business input has schema
+   `future_document_review.v0.1`, `case_id`, existing bridge `metadata`/`terms`,
+   `approved_grand_total_kzt`, `source_bindings` (including CANONICAL_744_1),
+   and ordered `items`. Each reviewed item contains exactly `item_id`,
+   `quantity`, `approved_unit_price_kzt`, `approved_line_total_kzt`, `unit`,
+   `technical_display`. Display facts remain explicitly reviewed source facts;
+   no NLP, quantity inference, manufacturer/rating choice or substitution occurs.
+   Each reviewed apparatus display also names its exact `component_id`. IDs
+   must cover confirmed components once in source order and quantities must
+   agree (an explicitly classified FUSE_GROUP expands to three physical units).
+   The producer removes this input-only ID from the existing document display
+   shape. Notes have no component ID/count and require exact engineering text.
+
+The producer copies names, enclosure and complete component text from confirmed
+composition, including supply notes; it copies exact checked prices. Reviewed
+IDs/quantities/prices/totals must agree. Metadata, amount words and commercial
+conditions require their original authoritative review; no historical conditions
+are inherited. The existing v0.3 adapter validates the eight canonical rows.
+
+Each candidate can be materialized only by separate `--publish --authorization`
+execution after direct Igor approval for the exact action, inputs, output and
+no-overwrite intent. The token is ordered:
+`IGOR_FUTURE_FLOW_ARTIFACT_PUBLICATION_AUTHORIZED|ACTION=<mode>|CANDIDATE_SHA256=<SHA>|INPUTS_SHA256=<SHA>|OUTPUT_PATH_SHA256=<SHA>`.
+INPUTS_SHA256 covers the canonical encoded ordered path/SHA snapshot bindings,
+including producer policy. OUTPUT_PATH_SHA256 covers UTF-8 resolved absolute path.
+The Python API exposes the same binding for synthetic acceptance; it is not a
+Human approval generator. All intermediate JSON is produced by these commands,
+rather than assembled by an operator.
+
+### Price/terms Human gate and approved v0.3 publication
+
+After reviewing the exact generated source, Igor must separately approve its
+composition, prices, terms/lead time and rendering. Supply the existing separate
+`dinva_case_document_approval.v0.1` input with exact source SHA and business
+fingerprint, provenance and all existing required flags. Neither producer nor
+calculator manufactures that approval. Client send must remain false.
+
+Production `build_future_dinva_document.py` preflight now requires the full
+bound composition/calculation/business-review graph. It regenerates the source
+and compares exact bytes, including lead time. The verified calculation leaf snapshots
+are also direct document provenance bindings, so the unchanged renderer and
+independent validator reread them after publication; changed prices, costs,
+selector, overrides or producer policy HOLD before rendering.
+The explicitly gated old synthetic
+content/layout preview remains available; an unbound preview cannot publish.
+
+After separate exact direct publication approval, invoke the existing four
+case-source/case-approval path/SHA arguments plus `--output <NEW_JSON> --publish
+--authorization <EXACT_TOKEN>`. The ordered token is:
+`IGOR_DINVA_FUTURE_DOCUMENT_PUBLICATION_AUTHORIZED|ACTION=IMMUTABLE_DOCUMENT_V0_3_PUBLICATION|CASE_SHA256=<SHA>|APPROVAL_SHA256=<SHA>|DOCUMENT_FINGERPRINT=<SHA>|DOCUMENT_SHA256=<SHA>|OUTPUT_PATH_SHA256=<SHA>`.
+
+Publication regenerates the plan, rejects in-memory modification, stages/fsyncs
+exact bytes, rereads the full input graph, and hard-links without overwrite.
+It rereads after publication and rolls back only an output whose identity proves
+ownership. Existing/foreign/raced outputs are never deleted. Publication does
+not render XLSX or permit downstream actions.
+
+After the separate exact renderer authorization, feed the published v0.3 JSON
+and SHA to the Classic v0.5 renderer and independent XLSX validator.
+The WU6 renderer safety fix changes ownership/rollback only. A successful link
+records the candidate's device/inode identity and requires an available nonzero
+inode before link; final identity is checked before
+and after validation. Rollback deletes final output only after successful link
+and a matching actual lstat identity. Pre-existing/raced/foreign replacement or
+unverifiable outputs are preserved. Layout/content/style/formulas, document
+contracts and Human authorization requirements remain unchanged.
+Igor's native Excel visual review remains mandatory. No real execution is
+authorized by tests, JSON flags, preflight PASS or this runbook.
+
+Synthetic acceptance in `tests/test_future_case_xlsx_flow.py` starts from a new
+bundle and reviewed primary inputs, uses every intermediate producer, pauses at
+the simulated composition and price/terms gates, publishes v0.3 and renders a
+validated temporary XLSX. Negative cases cover missing gates, exact SHA drift,
+item/quantity/price/total/lead-time mismatches, frozen Cases, overwrite, subject
+substitution, foreign publication races and owned rollback. No accepted artifact
+is modified and no real Case/approval/price/XLSX participates.
 
 ## PDF exporter and independent validation
 

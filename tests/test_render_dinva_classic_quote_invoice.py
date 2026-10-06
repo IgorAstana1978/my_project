@@ -949,6 +949,7 @@ def test_renderer_no_overwrite_outside_git_cleanup_and_toctou(
     output.write_bytes(b"occupied")
     with pytest.raises(case["renderer"].RendererError, match="already exists"):
         render_case(case, output)
+    assert output.read_bytes() == b"occupied"
     case["renderer"].PROJECT_ROOT = tmp_path / "synthetic-repo"
     with pytest.raises(case["renderer"].RendererError, match="outside Git"):
         render_case(case, tmp_path / "synthetic-repo" / "inside.xlsx")
@@ -964,4 +965,164 @@ def test_renderer_no_overwrite_outside_git_cleanup_and_toctou(
     with pytest.raises(case["renderer"].RendererError, match="changed during render"):
         render_case(case, final)
     assert not final.exists()
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+@pytest.mark.parametrize("failure", ["validation", "profile_drift", "document_drift"])
+def test_renderer_rolls_back_only_owned_post_link_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    renderer = case["renderer"]
+    validator = renderer.load_validator()
+    output = tmp_path / "owned.xlsx"
+    visited = []
+
+    def validate(path: Path, *args: Any, **kwargs: Any) -> None:
+        validator.validate_or_raise(path, *args, **kwargs)
+        if path == output:
+            assert output.exists()
+            visited.append(path)
+            if failure == "validation":
+                raise ValueError("synthetic post-link validation failure")
+            case[
+                "profile_path" if failure == "profile_drift" else "document_path"
+            ].write_bytes(b"changed")
+
+    monkeypatch.setattr(
+        renderer, "load_validator", lambda: SimpleNamespace(validate_or_raise=validate)
+    )
+    with pytest.raises(renderer.RendererError, match="failure|changed after publish"):
+        render_case(case, output)
+    assert visited == [output]
+    assert not output.exists()
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+def test_renderer_preserves_foreign_output_appearing_before_publish_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    renderer = case["renderer"]
+    validator = renderer.load_validator()
+    output = tmp_path / "foreign.xlsx"
+    foreign = b"FOREIGN - DO NOT REMOVE"
+
+    def validate(path: Path, *args: Any, **kwargs: Any) -> None:
+        validator.validate_or_raise(path, *args, **kwargs)
+        output.write_bytes(foreign)
+
+    monkeypatch.setattr(
+        renderer, "load_validator", lambda: SimpleNamespace(validate_or_raise=validate)
+    )
+    with pytest.raises(renderer.RendererError, match="appeared before atomic publish"):
+        render_case(case, output)
+    assert output.read_bytes() == foreign
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+def test_renderer_preserves_foreign_replacement_after_successful_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    renderer = case["renderer"]
+    output = tmp_path / "foreign.xlsx"
+    real_link = renderer.os.link
+    foreign = b"FOREIGN REPLACEMENT"
+
+    def replace(source: Path, target: Path) -> None:
+        real_link(source, target)
+        replacement = tmp_path / "replacement.xlsx"
+        replacement.write_bytes(foreign)
+        replacement.replace(target)
+
+    monkeypatch.setattr(renderer.os, "link", replace)
+    with pytest.raises(renderer.RendererError, match="ownership changed"):
+        render_case(case, output)
+    assert output.read_bytes() == foreign
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+def test_renderer_preserves_output_when_identity_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    output = tmp_path / "unverifiable.xlsx"
+    real_lstat = Path.lstat
+
+    def deny(path: Path) -> Any:
+        if path == output:
+            raise PermissionError("synthetic identity unavailable")
+        return real_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", deny)
+    with pytest.raises(case["renderer"].RendererError, match="identity unavailable"):
+        render_case(case, output)
+    assert output.exists()
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+def test_renderer_preserves_replacement_during_post_link_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    renderer = case["renderer"]
+    validator = renderer.load_validator()
+    output = tmp_path / "replaced.xlsx"
+    preserved = []
+
+    def validate(path: Path, *args: Any, **kwargs: Any) -> None:
+        validator.validate_or_raise(path, *args, **kwargs)
+        if path == output:
+            replacement = tmp_path / "foreign-replacement.xlsx"
+            content = output.read_bytes()
+            preserved.append(content)
+            replacement.write_bytes(content)
+            replacement.replace(output)
+
+    monkeypatch.setattr(
+        renderer, "load_validator", lambda: SimpleNamespace(validate_or_raise=validate)
+    )
+    with pytest.raises(renderer.RendererError, match="ownership changed"):
+        render_case(case, output)
+    assert preserved == [output.read_bytes()]
+    assert not list(tmp_path.glob(".*.candidate.xlsx"))
+
+
+def test_renderer_requires_available_identity_before_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
+    case = make_case(tmp_path)
+    output = tmp_path / "never.xlsx"
+    real_stat = Path.stat
+
+    def unavailable(path: Path, *args: Any, **kwargs: Any) -> Any:
+        value = real_stat(path, *args, **kwargs)
+        if path.name.endswith(".candidate.xlsx"):
+            fields = list(value)
+            fields[1] = 0
+            return case["renderer"].os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(Path, "stat", unavailable)
+    monkeypatch.setattr(
+        case["renderer"].os,
+        "link",
+        lambda *_: pytest.fail("unknown identity must not publish"),
+    )
+    with pytest.raises(case["renderer"].RendererError, match="identity unavailable"):
+        render_case(case, output)
+    assert not output.exists()
     assert not list(tmp_path.glob(".*.candidate.xlsx"))

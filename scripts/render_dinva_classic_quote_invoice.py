@@ -1766,6 +1766,7 @@ def render(
     candidate = output_path.with_name(
         f".{output_path.stem}.{uuid.uuid4().hex}.candidate.xlsx"
     )
+    published_identity: tuple[int, int] | None = None
     try:
         render_clean_workbook(
             profile,
@@ -1790,7 +1791,15 @@ def render(
             document_file.read_bytes() == document_raw, "document changed during render"
         )
         require(not output_path.exists(), "output appeared before atomic publish")
+        candidate_stat = candidate.stat()
+        require(candidate_stat.st_ino != 0, "candidate file identity unavailable")
         os.link(candidate, output_path)
+        published_identity = (candidate_stat.st_dev, candidate_stat.st_ino)
+        published_stat = output_path.lstat()
+        require(
+            (published_stat.st_dev, published_stat.st_ino) == published_identity,
+            "output ownership changed after publish",
+        )
         validator.validate_or_raise(
             output_path,
             profile,
@@ -1805,8 +1814,21 @@ def render(
         require(
             document_file.read_bytes() == document_raw, "document changed after publish"
         )
+        published_stat = output_path.lstat()
+        require(
+            (published_stat.st_dev, published_stat.st_ino) == published_identity,
+            "output ownership changed after publish",
+        )
     except (OSError, RendererError, ValueError) as exc:
-        output_path.unlink(missing_ok=True)
+        if published_identity is not None:
+            try:
+                rollback_stat = output_path.lstat()
+            except OSError:
+                # Without actual file identity, ownership cannot be proven.
+                pass
+            else:
+                if (rollback_stat.st_dev, rollback_stat.st_ino) == published_identity:
+                    output_path.unlink(missing_ok=True)
         if isinstance(exc, RendererError):
             raise
         raise RendererError(f"clean render failed: {exc}") from exc
