@@ -26,6 +26,7 @@ from dinva_future_content import (
 )
 from dinva_future_content import (
     display_text,
+    lead_time_header,
     validate_future_content,
 )
 from openpyxl import Workbook  # type: ignore[import-untyped]
@@ -1303,7 +1304,7 @@ def render_clean_workbook(
         )
     worksheet["G9"] = mapping(fixed["warning"], "warning block")["G9"]
     terms = mapping(document["terms"], "terms")
-    worksheet["G10"] = f"Срок изготовления {terms['manufacturing_lead_time']}"
+    worksheet["G10"] = lead_time_header(terms["manufacturing_lead_time"])
     apply_style(worksheet["C9"], mapping(styles["document_title"], "title style"))
     apply_style(worksheet["C10"], mapping(styles["payer"], "payer style"))
     apply_style(worksheet["G9"], mapping(styles["warning"], "warning style"))

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from pathlib import Path
@@ -32,6 +33,8 @@ CATEGORIES = {
     "PN-2 250A": ("ВРУ-расп.", 6, "ПН-2 250А"),
     "PN-2 400A": ("ВРУ-расп.", 7, "ПН-2 400А"),
     "MCCB 3P 16-63A": ("АВР Г-Г", 13, "ВА55/57/59, АМ1 3 полюсные от 16 до 63А"),
+    "MCCB 3P 80-100A": ("ЩР", 9, "ВА55/57/59, АМ1 от 80 до 100А"),
+    "MCB 3P D 10-63A": ("ЩР", 16, "ВА47 3Р D 10-63A"),
     "CONTACTOR 65A": ("АВР Г-Г", 25, "Контактор 65А"),
     "CONTACTOR <=80A": ("АВР Г-Г", 26, "Контактор до 80А"),
     "RKF-8": ("АВР Г-Г", 4, "Реле контроля напряжения RKF-8"),
@@ -44,6 +47,7 @@ CATEGORIES = {
     "CT <=800/5": ("ВРУ630А", 4, "ТТ до 800/5"),
     "AL 5x50": ("ВРУ630А", 5, "5х50 мм (м.п.= 0,7125 кг) - 665А шина АЛ"),
 }
+ORDINARY_SHR_CATEGORIES = {"MCCB 3P 80-100A", "MCB 3P D 10-63A"}
 FUTURE_INSTALL_TYPES = {
     "fuse_1p",
     "fuse_group_3p",
@@ -64,6 +68,41 @@ CLASS_FIELDS = {
     "interlocks",
     "overrides",
 }
+
+
+def check_protection_category(component: Mapping[str, Any], category: str) -> None:
+    """Match an explicit electrical signature to its exact approved price band."""
+    kind = component["install_type"]
+    require(
+        category in CATEGORIES
+        and (
+            (kind in MCCB_INSTALL_TYPES and category.startswith("MCCB "))
+            or (kind.startswith("modular_") and category.startswith("MCB "))
+        ),
+        "protection type/category conflict",
+    )
+    if category not in ORDINARY_SHR_CATEGORIES | {"MCCB 3P 16-63A"}:
+        return  # Existing unrelated categories retain their governed semantics.
+    label = component["component_label"].upper()
+    poles = re.findall(r"(?<!\w)([1-4])\s*[PР](?!\w)", label)
+    ratings = re.findall(
+        r"(?<!\w)(?:([BCD])\s*(\d+)(?:\s*[AА])?|(\d+)\s*[AА])(?!\w)", label
+    )
+    require(len(poles) == 1 and poles[0] == "3", "protection poles unproven")
+    require(len(ratings) == 1, "protection rating ambiguous/missing")
+    curve, trip_rating, plain_rating = ratings[0]
+    rating = int(trip_rating or plain_rating)
+    if category == "MCB 3P D 10-63A":
+        require(
+            kind == "modular_3p" and curve == "D" and 10 <= rating <= 63,
+            "D characteristic/type/rating conflict",
+        )
+    else:
+        lower, upper = (80, 100) if category == "MCCB 3P 80-100A" else (16, 63)
+        require(
+            kind == "mccb_up_to_100a" and not curve and lower <= rating <= upper,
+            "MCCB type/rating range conflict",
+        )
 
 
 def validate_technical_item(
@@ -114,6 +153,8 @@ def validate_technical_item(
     for c in components:
         role = t["roles"][c["component_id"]]
         number(c["quantity"])
+        if t["categories"].get(c["component_id"]) in ORDINARY_SHR_CATEGORIES:
+            require(role == "POWER_BREAKER", "ordinary protection role conflict")
         if role in {"POWER_BREAKER", "CONTROL_BREAKER"}:
             kind = c["install_type"]
             require(
@@ -121,14 +162,7 @@ def validate_technical_item(
                 "protection apparatus kind unproven",
             )
             category = t["categories"][c["component_id"]]
-            require(
-                category in CATEGORIES
-                and (
-                    (kind in MCCB_INSTALL_TYPES and category == "MCCB 3P 16-63A")
-                    or (kind.startswith("modular_") and category.startswith("MCB "))
-                ),
-                "protection type/category conflict",
-            )
+            check_protection_category(c, category)
         elif role == "CONTACTOR":
             require(
                 c["install_type"] == "contactor"
@@ -567,6 +601,54 @@ def check_avr_bom(rules: Mapping[str, Any], bom: Sequence[Mapping[str, Any]]) ->
         )
 
 
+def ordinary_enclosure_cost(
+    workbook: Any, baseline: Any, rules: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Cost aliases do not replace the approved physical enclosure description."""
+    _, item = load_technical_binding(rules["context"], rules["technical_binding"])
+    code = item["cabinet"]["cabinet_code"]
+    if code == "CAB-KRN-18":
+        ws = workbook["КРН"]
+        label = "Корпус КРН-18 265х440х100"
+        require(" ".join(str(ws["L7"].value).split()) == label, "KRN-18 identity drift")
+        cost = number(ws["M7"].value)
+        entries = [
+            e
+            for e in baseline.mapping_snapshot
+            if e["mapping_id"] == "CABINET-DYNAMIC-CAB-KRN-18"
+        ]
+        require(
+            len(entries) == 1
+            and entries[0]["source"]
+            == {
+                "sheet": "КРН",
+                "row": 7,
+                "label_cell": "КРН!L7",
+                "price_cells": ["КРН!M7"],
+            }
+            and number(entries[0]["prices"]["price_kzt"]) == cost,
+            "KRN-18 approved snapshot/source mismatch",
+        )
+        return {
+            "source_role": "ENCLOSURE_COST",
+            "source_locator": "КРН!M7",
+            "label_locator": "КРН!L7",
+            "label": label,
+            "cost_kzt": str(cost),
+            "workbook_path": str(baseline.path),
+            "workbook_sha256": baseline.sha256,
+            "manifest_sha256": baseline.manifest_sha256,
+        }
+    require(
+        code == "METAL-500X400X250-D22" and rules["enclosure_mm"] == [500, 400, 250],
+        "ordinary enclosure exact cost mapping required",
+    )
+    # The fixed approved metal bytes remain independent of the main price selector.
+    from governed_metal_cost import GENESIS_PATH, GENESIS_SHA, inspect_cost_d22
+
+    return inspect_cost_d22(GENESIS_PATH, GENESIS_SHA)
+
+
 def calculate_future_price(
     context: Mapping[str, Any],
     *,
@@ -577,7 +659,7 @@ def calculate_future_price(
     selector: Path,
     rules: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """DRAFT calculation; input cost/flat work must carry exact source bindings."""
+    """DRAFT calculation; new ordinary mappings verify cost and per-device work."""
     future_only(context)
     require(family is None or family == rules["family"], "technical family conflict")
     family = rules["family"]
@@ -588,8 +670,17 @@ def calculate_future_price(
     cost = number(bound_value(cabinet_cost), zero=True)
     work = number(bound_value(work_source), zero=True)
     baseline = resolve_active_price_baseline(selector)
+    ordinary = any(line["category"] in ORDINARY_SHR_CATEGORIES for line in bom)
+    require(
+        not ordinary
+        or family == "ЩР"
+        and all(line["category"] in ORDINARY_SHR_CATEGORIES for line in bom),
+        "ordinary ЩР mappings cannot mix with other sheet/category authority",
+    )
     rows = []
     material = Decimal(0)
+    device_work = Decimal(0)
+    cabinet_source = None
     with_baseline = load_workbook(baseline.path, read_only=True, data_only=False)
     try:
         for line in bom:
@@ -607,16 +698,39 @@ def calculate_future_price(
             rows.append(
                 {
                     "category": category,
+                    "component_id": line["component_id"],
                     "quantity": str(quantity),
                     "unit_material_kzt": str(price),
                     "locator": f"{sheet}!B{row}",
                 }
+            )
+            if ordinary:
+                unit_work = number(ws.cell(row, 3).value)
+                device_work += unit_work * quantity
+                rows[-1].update(
+                    unit_work_kzt=str(unit_work),
+                    work_locator=f"{sheet}!C{row}",
+                    label_locator=f"{sheet}!A{row}",
+                    label=label,
+                )
+        if ordinary:
+            require(work == device_work, "per-device work/source total mismatch")
+            cabinet_source = ordinary_enclosure_cost(with_baseline, baseline, rules)
+            require(
+                number(cabinet_source["cost_kzt"]) == cost,
+                "enclosure cost/source mismatch",
             )
     finally:
         with_baseline.close()
     require(sha256_file(baseline.path) == baseline.sha256, "workbook drift")
     current = resolve_active_price_baseline(selector)
     require(current == baseline, "baseline changed during calculation")
+    if cabinet_source is not None:
+        require(
+            sha256_file(Path(cabinet_source["workbook_path"]))
+            == cabinet_source["workbook_sha256"],
+            "enclosure workbook changed during calculation",
+        )
     require(
         number(bound_value(cabinet_cost), zero=True) == cost
         and number(bound_value(work_source), zero=True) == work,
@@ -639,4 +753,5 @@ def calculate_future_price(
         "workbook_sha256": baseline.sha256,
         "manifest_sha256": baseline.manifest_sha256,
         "client_send_authorized": False,
+        **({"cabinet_source": cabinet_source} if ordinary else {}),
     }

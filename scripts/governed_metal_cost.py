@@ -1,4 +1,4 @@
-"""Read-only D52 adapter for the existing manifest/selector contracts.
+"""Read-only D52/D22 cost adapters for exact approved workbook sources.
 
 No materialization or activation entrypoint. Historical D82 resolver is untouched.
 """
@@ -57,48 +57,90 @@ IDENTITY = {
     "price_inputs": ["B2", "B3"],
     "excluded_sales_outputs": ["B52", "C52"],
 }
+D22_IDENTITY = {
+    "mapping_id": "METAL-500X400X250-D22-COST",
+    "source_role": "ENCLOSURE_COST",
+    "sheet": "Лист1",
+    "row": 22,
+    "label": "500х400х250 ",
+    "formulas": {
+        "D22": "=ROUNDUP((M22+N22)*R22+O22+P22+S22+Q22,0)",
+        "H22": "=E22/1000",
+        "I22": "=F22/1000",
+        "J22": "=G22/1000",
+        "K22": "=H22*I22*3+H22*J22*2+I22*J22*2",
+        "L22": "=K22*$B$1*8.42",
+        "M22": "=L22*$B$2",
+        "N22": "=K22*2*0.25*$B$3*1.33",
+        "Q22": "=1250",
+    },
+    "identity_values": {
+        "B1": 1,
+        "E22": 500,
+        "F22": 400,
+        "G22": 250,
+        "O22": 2500,
+        "P22": 400,
+        "R22": 1.05,
+        "S22": 1500,
+    },
+    "price_inputs": ["B2", "B3"],
+    "excluded_sales_outputs": ["B22", "C22"],
+}
 
 
 def inspect_cost(workbook: Path, expected_sha256: str) -> dict[str, Any]:
+    return _inspect_cost(workbook, expected_sha256, IDENTITY)
+
+
+def inspect_cost_d22(workbook: Path, expected_sha256: str) -> dict[str, Any]:
+    return _inspect_cost(workbook, expected_sha256, D22_IDENTITY)
+
+
+def _inspect_cost(
+    workbook: Path, expected_sha256: str, identity: dict[str, Any]
+) -> dict[str, Any]:
     raw_sha = sha256_file(workbook)
     require(raw_sha == expected_sha256, "metal workbook SHA drift")
     book = load_workbook(workbook, read_only=True, data_only=False, keep_links=False)
     try:
         require(book.sheetnames == ["Лист1"], "metal sheet identity drift")
         s = book["Лист1"]
-        require(s["A52"].value == LABEL, "metal label identity drift")
-        for cell, formula in FORMULAS.items():
+        row = identity["row"]
+        values = identity["identity_values"]
+        require(s[f"A{row}"].value == identity["label"], "metal label identity drift")
+        for cell, formula in identity["formulas"].items():
             require(s[cell].value == formula, f"metal formula drift: {cell}")
-        for cell, value in IDENTITY_VALUES.items():
+        for cell, value in values.items():
             require(
                 number(s[cell].value) == Decimal(str(value)),
                 f"metal identity drift: {cell}",
             )
         metal, paint = number(s["B2"].value), number(s["B3"].value)
-        h, w, d = (Decimal(x) / 1000 for x in (1700, 800, 500))
+        h, w, d = (Decimal(values[f"{column}{row}"]) / 1000 for column in "EFG")
         area = h * w * 3 + h * d * 2 + w * d * 2
         mass = area * Decimal("8.42")
         base = (
             (mass * metal + area * 2 * Decimal("0.25") * paint * Decimal("1.33"))
-            * Decimal("1.05")
-            + 6750
-            + 3500
-            + 2000
+            * Decimal(str(values[f"R{row}"]))
+            + values[f"O{row}"]
+            + values[f"P{row}"]
+            + values[f"S{row}"]
             + 1250
         ).quantize(Decimal(1), rounding=ROUND_UP)
     finally:
         book.close()
     require(sha256_file(workbook) == raw_sha, "metal changed during resolution")
     entry = {
-        "mapping_id": IDENTITY["mapping_id"],
+        "mapping_id": identity["mapping_id"],
         "mapping_kind": "cabinet_dynamic",
-        "identity": IDENTITY,
-        "identity_fingerprint": mapping_identity_fingerprint(IDENTITY),
+        "identity": identity,
+        "identity_fingerprint": mapping_identity_fingerprint(identity),
         "source": {
             "sheet": "Лист1",
-            "row": 52,
-            "label_cell": "Лист1!A52",
-            "price_cells": ["Лист1!D52"],
+            "row": row,
+            "label_cell": f"Лист1!A{row}",
+            "price_cells": [f"Лист1!D{row}"],
         },
         "prices": {"price_kzt": int(base)},
     }
@@ -106,11 +148,11 @@ def inspect_cost(workbook: Path, expected_sha256: str) -> dict[str, Any]:
     return {
         "workbook_path": str(workbook.resolve()),
         "workbook_sha256": raw_sha,
-        "structural_fingerprint": mapping_identity_fingerprint(IDENTITY),
+        "structural_fingerprint": mapping_identity_fingerprint(identity),
         "mapping_snapshot": [entry],
         "cost_kzt": int(base),
         "source_role": "ENCLOSURE_COST",
-        "source_locator": "Лист1!D52",
+        "source_locator": f"Лист1!D{row}",
         "price_inputs": {"B2": str(metal), "B3": str(paint)},
     }
 

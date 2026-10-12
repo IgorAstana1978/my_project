@@ -27,6 +27,28 @@ def component(
     }
 
 
+FULL_LEAD = (
+    "Предположительный срок изготовления 10–12 рабочих дней с первого рабочего дня "
+    "после дня поступления средств на расчётный счёт; точный срок изготовления "
+    "уточнять после оплаты."
+)
+
+
+def test_complete_approved_lead_clause_is_preserved_exactly() -> None:
+    terms = {"manufacturing_lead_time": FULL_LEAD, "delivery": "EXW г. Астана"}
+    lines = content.commercial_block(terms)
+    assert len(lines) == 8
+    assert " ".join(line.strip() for line in lines[5:7]) == FULL_LEAD
+    assert content.lead_time_header(FULL_LEAD) == FULL_LEAD
+    assert content.lead_time_header("10–12 рабочих дней") == (
+        "Срок изготовления 10–12 рабочих дней"
+    )
+    with pytest.raises(ValueError, match="unsupported"):
+        content.commercial_block(
+            {**terms, "manufacturing_lead_time": FULL_LEAD + " Extra"}
+        )
+
+
 def make_plan(
     tmp_path: Path,
     monkeypatch: Any,
@@ -34,9 +56,12 @@ def make_plan(
     native: bool = False,
     case_id: str = "CASE-NEW-FUTURE",
     count: int = 1,
+    lead: str | None = None,
 ) -> tuple[Any, Any]:
     monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
     s = source_payload(tmp_path, case_id, count)
+    if lead is not None:
+        s["terms"]["manufacturing_lead_time"] = lead
     if native:
         s["metadata"]["document_number"] = None
         s["items"][0]["enclosure"] = "600×400×250 мм"
@@ -230,10 +255,11 @@ def test_independent_content_tamper_rejected(
         bridge.validator.validate_document_contract(d, allow_test_profile=True)
 
 
+@pytest.mark.parametrize("lead", [None, FULL_LEAD])
 def test_v05_render_uses_display_and_canonical_bottom_alignment(
-    tmp_path: Path, monkeypatch: Any
+    tmp_path: Path, monkeypatch: Any, lead: str | None
 ) -> None:
-    plan, _ = make_plan(tmp_path, monkeypatch)
+    plan, _ = make_plan(tmp_path, monkeypatch, lead=lead)
     _, profile, _ = print_successor(tmp_path, monkeypatch)
     pp = tmp_path / "profile.json"
     ps = canonical_file(pp, profile)
@@ -253,6 +279,8 @@ def test_v05_render_uses_display_and_canonical_bottom_alignment(
     )
     w = load_workbook(out)
     s = w.active
+    if lead is not None:
+        assert s["G10"].value == lead
     assert s["F17"].value == plan.document["items"][0]["apparatus"]["text"]
     for row in range(21, 29):
         assert (

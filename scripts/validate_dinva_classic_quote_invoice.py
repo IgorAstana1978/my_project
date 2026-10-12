@@ -22,6 +22,7 @@ from dinva_future_content import (
 )
 from dinva_future_content import (
     display_text,
+    lead_time_header,
     validate_future_content,
 )
 from openpyxl import load_workbook  # type: ignore[import-untyped]
@@ -1121,7 +1122,7 @@ def expected_cells(
             ),
             "C10": f"Плательщик: {document['payer']}",
             "G9": mapping(fixed["warning"], "warning block")["G9"],
-            "G10": f"Срок изготовления {terms['manufacturing_lead_time']}",
+            "G10": lead_time_header(terms["manufacturing_lead_time"]),
         }
     )
     if document["object_name"] is not None:

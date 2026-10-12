@@ -112,6 +112,15 @@ def technical_display(components: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def lead_time_header(lead: str) -> str:
+    """A complete approved clause already contains its own heading."""
+    return (
+        lead
+        if lead.startswith("Предположительный срок изготовления ")
+        else f"Срок изготовления {lead}"
+    )
+
+
 def commercial_block(terms: Mapping[str, Any]) -> list[str]:
     lead, delivery = terms["manufacturing_lead_time"], terms["delivery"]
     validity = terms.get("validity") or "3 банковских дней"
@@ -122,6 +131,20 @@ def commercial_block(terms: Mapping[str, Any]) -> list[str]:
         ),
         "commercial values missing or multiline",
     )
+    lead_rows = [
+        f" Предположительный срок изготовления {lead}  с первого рабочего дня "
+        "после дня поступления средств ",
+        " на расчетный счет, точный срок изготовления уточнять после оплаты.",
+    ]
+    if lead.startswith("Предположительный срок изготовления "):
+        parts = re.fullmatch(
+            r"(.+ после дня поступления средств) "
+            r"(на расч[её]тный сч[её]т[;,] точный срок изготовления "
+            r"уточнять после оплаты\.)",
+            lead,
+        )
+        require(parts is not None, "complete approved lead clause unsupported")
+        lead_rows = [f" {parts[1]} ", f" {parts[2]}"]
     return [
         f" Коммерческое предложение действительно в течение {validity}",
         " Электрооборудование обмену и возврату не подлежит",
@@ -134,11 +157,7 @@ def commercial_block(terms: Mapping[str, Any]) -> list[str]:
             " Оплата данного счёта/КП подразумевает полное согласие плательщика "
             "с предложенной спецификацией."
         ),
-        (
-            f" Предположительный срок изготовления {lead}  с первого рабочего дня "
-            "после дня поступления средств "
-        ),
-        " на расчетный счет, точный срок изготовления уточнять после оплаты.",
+        *lead_rows,
         f" Примечание: условия поставки {delivery}",
     ]
 

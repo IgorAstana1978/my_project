@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -63,9 +64,11 @@ def _evidence(value: Any, name: str) -> str:
     return body
 
 
-def _scope_rows(value: Any, name: str) -> tuple[tuple[str, int], ...]:
-    if not isinstance(value, list) or not value:
-        raise IntakeError(f"{name} must be a non-empty list")
+def _scope_rows(
+    value: Any, name: str, *, allow_empty: bool = False
+) -> tuple[tuple[str, int], ...]:
+    if not isinstance(value, list) or not value and not allow_empty:
+        raise IntakeError(f"{name} must be an explicit valid scope list")
     rows: list[tuple[str, int]] = []
     for index, raw in enumerate(value):
         row = _object(raw, f"{name}[{index}]", {"designation", "quantity"})
@@ -147,7 +150,9 @@ def load_governed_intake(
         for index, decision in enumerate(decisions)
     ]
     requested = _scope_rows(root["requested_supply"], "requested_supply")
-    excluded = _scope_rows(root["excluded_components"], "excluded_components")
+    excluded = _scope_rows(
+        root["excluded_components"], "excluded_components", allow_empty=True
+    )
     if {name.casefold() for name, _ in requested} & {
         name.casefold() for name, _ in excluded
     }:
@@ -192,6 +197,150 @@ def _unsafe_reparse(path: Path) -> bool:
     return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
 
 
+def _verify_confirmed_output(
+    directory: Path, case_id: str, files: dict[str, Any]
+) -> None:
+    """Accept only the canonical producer's bound artifact/audit/receipt triple."""
+    # Lazy imports avoid the producer -> intake import cycle. No apply is invoked.
+    import build_confirmed_composition_from_preliminary_bundle as builder
+    from validate_confirmed_composition_artifact import (
+        validate_confirmed_composition_artifact,
+    )
+
+    folder = directory / builder.OUTPUT_DIR_NAME
+    names = {builder.ARTIFACT_NAME, builder.DECISIONS_NAME, builder.RECEIPT_NAME}
+    try:
+        if (
+            not folder.is_dir()
+            or _unsafe_reparse(folder)
+            or folder.resolve(strict=True).parent != directory.resolve(strict=True)
+        ):
+            raise IntakeError("confirmed directory is missing or unsafe")
+        if {p.name for p in folder.iterdir()} != names:
+            raise IntakeError("confirmed output file set mismatch")
+        for name in names:
+            path = folder / name
+            if not path.is_file() or _unsafe_reparse(path):
+                raise IntakeError(f"confirmed output is missing or unsafe: {name}")
+        raw = {name: (folder / name).read_bytes() for name in names}
+        artifact = json.loads(raw[builder.ARTIFACT_NAME], object_pairs_hook=_pairs)
+        audit = json.loads(raw[builder.DECISIONS_NAME], object_pairs_hook=_pairs)
+        validation = validate_confirmed_composition_artifact(
+            folder / builder.ARTIFACT_NAME
+        )
+        if validation.status != "PASS":
+            raise IntakeError("confirmed artifact validation failed")
+        links = dict(
+            zip(
+                ("raw_input_sha256", "preliminary_draft_sha256", "review_card_sha256"),
+                (
+                    files[builder.MANIFEST_NAME],
+                    files[builder.DRAFT_NAME],
+                    files[builder.REVIEW_NAME],
+                ),
+                strict=True,
+            )
+        )
+        if artifact["source_links"] != links or audit["case_id"] != case_id:
+            raise IntakeError("confirmed Case/source binding mismatch")
+        if any(
+            audit[key] != artifact[key]
+            for key in ("confirmation_id", "confirmed_by", "confirmed_at")
+        ):
+            raise IntakeError("confirmed audit/artifact identity mismatch")
+        transfers = [
+            builder.AutomaticTransfer(
+                **_object(
+                    row,
+                    "automatic transfer",
+                    {"source_path", "target_path", "final_value"},
+                )
+            )
+            for row in audit["automatic_transfers"]
+        ]
+        state = builder.CompositionState(
+            items=copy.deepcopy(artifact["items"]),
+            automatic_transfers=transfers,
+            issues=[],
+            preliminary_red_flags=[],
+            supply_boundary=audit["supply_boundary_decision"],
+            batch_decisions=audit.get("batch_decisions"),
+        )
+        for field in (
+            "corrected_values",
+            "resolved_conflicts",
+            "accepted_nontechnical_assumptions",
+            "not_applicable_technical_details",
+            "removed_values",
+        ):
+            if not isinstance(audit[field], list):
+                raise IntakeError("confirmed audit detail must be a list")
+            setattr(state, field, audit[field])
+        inputs = {name: (directory / name).read_bytes() for name in VERSIONED_FILES}
+        snapshot = builder.InputSnapshot(
+            paths=builder.resolve_case_paths(
+                case_id,
+                canonical_root=directory.parent.parent,
+                extraction_version=directory.name.removeprefix("extraction-"),
+            ),
+            manifest_bytes=inputs[builder.MANIFEST_NAME],
+            draft_bytes=inputs[builder.DRAFT_NAME],
+            review_bytes=inputs[builder.REVIEW_NAME],
+            hashes=files,
+            draft=json.loads(inputs[builder.DRAFT_NAME], object_pairs_hook=_pairs),
+        )
+        if "future_review" in audit:
+            record = _object(
+                audit["future_review"],
+                "confirmed future review",
+                {"path", "sha256", "reviewed_facts"},
+            )
+            path = Path(_text(record["path"], "future review path"))
+            if not path.is_absolute() or not path.is_file() or _unsafe_reparse(path):
+                raise IntakeError("confirmed future review source is unsafe")
+            review = builder.load_decisions_input(path)
+            if (
+                review.sha256 != record["sha256"]
+                or review.data != record["reviewed_facts"]
+            ):
+                raise IntakeError("confirmed future review source drift")
+            if review.data["future_context"] != artifact.get("future_context"):
+                raise IntakeError("confirmed future context mismatch")
+            # Reuse source/classification checks without publication.
+            builder.attach_future_review(review, snapshot, state)
+            if state.items != artifact["items"]:
+                raise IntakeError("confirmed reviewed classification mismatch")
+        expected = builder.build_decision_record(
+            case_id=case_id,
+            confirmation_id=artifact["confirmation_id"],
+            approval_channel=_text(audit["approval_channel"], "approval channel"),
+            confirmed_at=artifact["confirmed_at"],
+            snapshot=snapshot,
+            state=state,
+            artifact_sha256=hashlib.sha256(raw[builder.ARTIFACT_NAME]).hexdigest(),
+        )
+        if audit != expected:
+            raise IntakeError("confirmed canonical audit/source mismatch")
+        receipt = builder.build_receipt(
+            record=audit,
+            decision_json_sha256=hashlib.sha256(
+                raw[builder.DECISIONS_NAME]
+            ).hexdigest(),
+            state=state,
+        ).encode("utf-8")
+        if raw[builder.RECEIPT_NAME] != receipt:
+            raise IntakeError("confirmed canonical receipt mismatch")
+        if _unsafe_reparse(folder) or {p.name for p in folder.iterdir()} != names:
+            raise IntakeError("confirmed output changed during verification")
+        if any(
+            _unsafe_reparse(folder / name) or (folder / name).read_bytes() != raw[name]
+            for name in names
+        ):
+            raise IntakeError("confirmed output changed during verification")
+    except (OSError, ValueError, KeyError, TypeError, builder.WorkflowError) as error:
+        raise IntakeError(f"confirmed output verification failed: {error}") from error
+
+
 def verify_versioned_extraction(
     directory: Path,
     *,
@@ -200,7 +349,7 @@ def verify_versioned_extraction(
     base_manifest: Path,
     owned_staging: Path | None = None,
 ) -> str:
-    """Verify exact immutable intake, outputs, and binding before confirmation."""
+    """Verify immutable intake/binding and optional canonical confirmed output."""
     if VERSION_RE.fullmatch(version) is None:
         raise IntakeError("versioned extraction path/version mismatch")
     if owned_staging is None:
@@ -218,9 +367,18 @@ def verify_versioned_extraction(
         raise IntakeError("versioned staging owner/path mismatch")
     if not directory.is_dir() or _unsafe_reparse(directory):
         raise IntakeError("versioned extraction directory is missing or unsafe")
-    if {entry.name for entry in directory.iterdir()} != VERSIONED_FILES | {
-        "version-binding.json"
-    }:
+    case_directory = directory.parent if owned_staging is None else owned_staging.parent
+    if (
+        _unsafe_reparse(case_directory)
+        or not base_manifest.is_file()
+        or _unsafe_reparse(base_manifest)
+    ):
+        raise IntakeError("versioned Case/base manifest path is unsafe")
+    entries = {entry.name for entry in directory.iterdir()}
+    expected_entries = VERSIONED_FILES | {"version-binding.json"}
+    if owned_staging is None and "confirmed" in entries:
+        expected_entries |= {"confirmed"}
+    if entries != expected_entries:
         raise IntakeError("versioned extraction file set mismatch")
     binding_path = directory / "version-binding.json"
     if not binding_path.is_file() or _unsafe_reparse(binding_path):
@@ -331,4 +489,20 @@ def verify_versioned_extraction(
         if isinstance(item, dict)
     ] != list(intake.requested_supply):
         raise IntakeError("draft items differ from governed requested supply")
+    if "confirmed" in entries:
+        _verify_confirmed_output(directory, case_id, files)
+    if {entry.name for entry in directory.iterdir()} != expected_entries:
+        raise IntakeError("versioned extraction inventory changed during verification")
+    if (
+        _unsafe_reparse(directory)
+        or _unsafe_reparse(binding_path)
+        or binding_path.read_bytes() != binding_bytes
+        or any(
+            _unsafe_reparse(directory / name)
+            or hashlib.sha256((directory / name).read_bytes()).hexdigest()
+            != files[name]
+            for name in VERSIONED_FILES
+        )
+    ):
+        raise IntakeError("versioned bound files changed during verification")
     return hashlib.sha256(binding_bytes).hexdigest()

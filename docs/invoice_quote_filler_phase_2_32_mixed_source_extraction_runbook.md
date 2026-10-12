@@ -93,6 +93,28 @@ positive integer `quantity`. The operator must preserve the actual message
 and decision provenance. A text hash proves byte integrity, not that a client
 or Igor authored the text. Review that authority separately.
 
+An explicit `excluded_components: []` records no named exclusions; the field
+must still be present and be a list. It does not define or approve the supply
+boundary. Requested supply must remain non-empty. Power-board schematics
+(`силового щита`, `ЩС`, `ВА47-29`) retain their QF components when the governed
+specification selects the board. Recognition stays in the governed adapter;
+the frozen `project_spec_extraction.py` policy owner remains byte-identical.
+Coordinates use the existing CTM/page rotation transform; no document offsets
+are used.
+An enclosure label is retained only when explicitly parenthesized next to the
+same schematic board, without inferring a catalog code or dimensions.
+
+The existing SHA-bound Human Decision text can express the narrow correction
+`второй щит: <correct>; <incorrect> в спецификации — ошибка;` (also `=`),
+and an apparatus correction `<rating> = <poles>;` together with each exact
+`<board>: <rating> ×<quantity>;`. These are extraction claims for Human review,
+not technical approval. Specification apparatus model/rating/count must agree
+with the schematic after only those explicit, count-bound pole corrections.
+Other conflicts, incomplete QFs, duplicate apparatus and contradictory
+enclosures fail closed. Applied decisions retain the original intake evidence
+and hash in the manifest; all composition/price/downstream permissions remain
+false. The general preference for schematics does not waive these checks.
+
 The runner validates PDF and original Case manifest hashes, parses rotated
 specification rows, distinguishes requested rows, excluded components, and
 project context, and publishes through an owned staging directory only after
