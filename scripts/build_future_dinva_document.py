@@ -11,6 +11,7 @@ from typing import Any
 import build_dinva_document_from_case as bridge
 import dinva_future_content as content
 from future_case_hardening import future_only, require
+from wu8_governed_sources import cabinet_display
 
 SOURCE_SCHEMA = "dinva_future_case_document_source.v0.1"
 
@@ -40,6 +41,7 @@ def prepare_core(source: dict[str, Any], binding: dict[str, str]) -> dict[str, A
     )
     terms["delivery"] = terms.get("delivery") or bridge.DEFAULT_DELIVERY
     terms["validity"] = terms.get("validity") or "3 банковских дней"
+    content.lead_time_header(terms["manufacturing_lead_time"], future=True)
     lines = content.commercial_block(terms)
     require(
         terms["commercial_lines"] in (None, [], lines),
@@ -64,10 +66,13 @@ def prepare_core(source: dict[str, Any], binding: dict[str, str]) -> dict[str, A
         zip(source["items"], core["items"], strict=True)
     ):
         item["display_policy"] = content.POLICY_ID
+        item["unit"] = "шт."
+        item["enclosure"] = cabinet_display(source, i)
         item["apparatus"].update(
             text=content.technical_display(original["technical_display"]),
             source_locator=f"/items/{i}/technical_display",
         )
+    core["apparatus_heading"] = "Применяемые приборы и аппараты согласно схемы"
     core["terms"]["commercial_lines"] = [
         {
             "source_order": i + 1,
@@ -161,6 +166,10 @@ def preflight(
     for role, path in (
         ("GOVERNED_744_CONTENT_POLICY", Path(content.__file__)),
         ("GOVERNED_FUTURE_DOCUMENT_ADAPTER", Path(__file__)),
+        (
+            "GOVERNED_WU8_SOURCES_POLICY",
+            Path(__file__).with_name("wu8_governed_sources.py"),
+        ),
     ):
         snap = bridge.Snapshot(path.resolve(), path.read_bytes())
         snapshots.append(snap)

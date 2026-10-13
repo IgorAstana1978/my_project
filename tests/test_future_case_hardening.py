@@ -95,7 +95,15 @@ def source_fixture(
     if family == "АВР":
         comps.append(contractor)
         roles["K1"] = "CONTACTOR"
-        cats["K1"] = "CONTACTOR 65A"
+        cats["K1"] = "CONTACTOR AVR Г-Г 65A"
+    if family == "ЩР":
+        comps = [power]
+        roles = {"P1": "POWER_BREAKER"}
+        cats = {"P1": "MCCB SHR 3P 16-63A"}
+        item["cabinet"] = {
+            "cabinet_code": "METAL-500X400X250-D22",
+            "cabinet_label": "500×400×250 IP31",
+        }
     item["components"] = comps
     item["technical_classification"] = {
         "family": family,
@@ -380,13 +388,50 @@ def price_chain(tmp_path: Path, monkeypatch: Any) -> Path:
     w = Workbook()
     w.remove(w.active)
     for sheet, row, label in f.CATEGORIES.values():
+        if row == 0:
+            continue
         s = w[sheet] if sheet in w.sheetnames else w.create_sheet(sheet)
         s.cell(row, 1, label)
         s.cell(row, 2, 2100)
+        s.cell(row, 3, 3000)
+    w["АВР Г-Г"]["K3"] = "АВР до 100А "
+    w["АВР Г-Г"]["L3"] = 6000
+    cabinet = w.create_sheet("КРН")
+    cabinet_rows = {
+        "CAB-KRN-12": (6, "265х330х100"),
+        "CAB-KRN-18": (7, "265х440х100"),
+        "CAB-KRN-24": (8, "395х330х100"),
+    }
+    for code, (row, size) in cabinet_rows.items():
+        cabinet[f"L{row}"] = f"Корпус {code[4:].replace('KRN', 'КРН')} {size} "
+        cabinet[f"M{row}"] = 10000
     w.save(p)
     w.close()
-    baseline = PriceBaseline("active_approved", p, sha256_file(p))
+    baseline = PriceBaseline(
+        "active_approved",
+        p,
+        sha256_file(p),
+        mapping_snapshot=tuple(
+            {
+                "mapping_id": f"CABINET-DYNAMIC-{code}",
+                "source": {
+                    "sheet": "КРН",
+                    "row": row,
+                    "label_cell": f"КРН!L{row}",
+                    "price_cells": [f"КРН!M{row}"],
+                },
+                "prices": {"price_kzt": 10000},
+            }
+            for code, (row, _) in cabinet_rows.items()
+        ),
+    )
     monkeypatch.setattr(f, "resolve_active_price_baseline", lambda _: baseline)
+    monkeypatch.setattr(f.governed_sources, "MAIN_SHA", baseline.sha256)
+    from test_future_shr_pricing import metal22
+
+    metal = metal22(tmp_path)
+    monkeypatch.setattr(m, "GENESIS_PATH", metal)
+    monkeypatch.setattr(m, "GENESIS_SHA", sha256_file(metal))
     monkeypatch.setattr(
         runner, "resolve_price_baseline", lambda *_args, **_kwargs: baseline
     )
@@ -400,7 +445,18 @@ def price_chain(tmp_path: Path, monkeypatch: Any) -> Path:
 def test_existing_composition_to_checked_price_path(
     tmp_path: Path, monkeypatch: Any, family: str, k: Decimal
 ) -> None:
-    bound, _ = source_fixture(tmp_path, family)
+    bound, source = source_fixture(tmp_path, family)
+    if family.startswith("ВРУ"):
+        # This K-factor fixture explicitly confirms its small named cabinet;
+        # do not contradict the separate default 1700x800x500 engineering rule.
+        source["items"][0]["technical_classification"]["overrides"] = {
+            "human": {
+                "enclosure_mm": binding(
+                    tmp_path, "cabinet-override.json", [395, 330, 100]
+                )
+            }
+        }
+        bound = save_source(tmp_path, source)
     source_path = Path(bound["path"])
     source_before = source_path.read_bytes()
     draft_path = tmp_path / "draft.json"
@@ -414,7 +470,11 @@ def test_existing_composition_to_checked_price_path(
     }
     draft_path.write_text(json.dumps(data), encoding="utf-8")
     prices = price_chain(tmp_path, monkeypatch)
-    cabinet = {**binding(tmp_path, "cost.json", 10000), "role": "ENCLOSURE_COST"}
+    cabinet_value = 12770 if family == "ЩР" else 10000
+    cabinet = {
+        **binding(tmp_path, "cost.json", cabinet_value),
+        "role": "ENCLOSURE_COST",
+    }
     work = binding(tmp_path, "work.json", 6000)
     costs_path = tmp_path / "inputs.json"
     costs_path.write_text(
@@ -440,9 +500,9 @@ def test_existing_composition_to_checked_price_path(
     assert applied["price"]["K"] == str(k)
     material = sum(Decimal(c["quantity"]) * 2100 for c in applied["bom"])
     expected = int(
-        ((10000 + material * k + 6000) * Decimal("1.25") * Decimal("1.15")).quantize(
-            Decimal(1), rounding=ROUND_HALF_UP
-        )
+        (
+            (cabinet_value + material * k + 6000) * Decimal("1.25") * Decimal("1.15")
+        ).quantize(Decimal(1), rounding=ROUND_HALF_UP)
     )
     assert run.overall_preliminary_total == expected
     if family in {"ВРУ_FUSE", "ШРС"}:

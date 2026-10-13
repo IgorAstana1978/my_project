@@ -628,8 +628,16 @@ def independent_widths(
     return result
 
 
-def independent_wrapped_lines(value: str, width: float, font_size: float) -> int:
+def independent_wrapped_lines(
+    value: str, width: float, font_size: float, *, word_wrap: bool = False
+) -> int:
     capacity = max(1, int(width * 11.0 / font_size * 0.94))
+    if word_wrap:
+        lines = 0
+        for paragraph in value.split("\n"):
+            wrapped = textwrap.TextWrapper(width=capacity, break_on_hyphens=False)
+            lines += max(1, len(wrapped.wrap(paragraph)))
+        return lines
     return sum(max(1, ceil(len(part) / capacity)) for part in value.split("\n"))
 
 
@@ -652,6 +660,7 @@ def independent_item_height(
                 display_text(item) if column == "F" else cast(str, item[field]),
                 widths[column],
                 float(font["size"]),
+                word_wrap=column == "G" and "display_policy" in item,
             )
         )
     required = max(line_counts) * float(rule["line_height_points"]) + float(
@@ -1122,7 +1131,11 @@ def expected_cells(
             ),
             "C10": f"Плательщик: {document['payer']}",
             "G9": mapping(fixed["warning"], "warning block")["G9"],
-            "G10": lead_time_header(terms["manufacturing_lead_time"]),
+            "G10": lead_time_header(
+                terms["manufacturing_lead_time"],
+                future=document["schema_version"]
+                == "dinva_quote_invoice_document.v0.3",
+            ),
         }
     )
     if document["object_name"] is not None:

@@ -911,8 +911,15 @@ def adaptive_column_widths(
     return widths
 
 
-def wrapped_line_count(text_value: str, width: float, font_size: float) -> int:
+def wrapped_line_count(
+    text_value: str, width: float, font_size: float, *, word_wrap: bool = False
+) -> int:
     capacity = max(1, int(width * 11.0 / font_size * 0.94))
+    if word_wrap:
+        return sum(
+            max(1, len(textwrap.wrap(part, width=capacity, break_on_hyphens=False)))
+            for part in text_value.split("\n")
+        )
     return sum(max(1, ceil(len(part) / capacity)) for part in text_value.split("\n"))
 
 
@@ -936,6 +943,7 @@ def content_row_height(
                 display_text(item) if column == "F" else cast(str, item[field]),
                 float(widths[column]),
                 float(font["size"]),
+                word_wrap=column == "G" and "display_policy" in item,
             )
         )
     line_height = float(rule["line_height_points"])
@@ -1304,7 +1312,10 @@ def render_clean_workbook(
         )
     worksheet["G9"] = mapping(fixed["warning"], "warning block")["G9"]
     terms = mapping(document["terms"], "terms")
-    worksheet["G10"] = lead_time_header(terms["manufacturing_lead_time"])
+    worksheet["G10"] = lead_time_header(
+        terms["manufacturing_lead_time"],
+        future=document["schema_version"] == "dinva_quote_invoice_document.v0.3",
+    )
     apply_style(worksheet["C9"], mapping(styles["document_title"], "title style"))
     apply_style(worksheet["C10"], mapping(styles["payer"], "payer style"))
     apply_style(worksheet["G9"], mapping(styles["warning"], "warning style"))

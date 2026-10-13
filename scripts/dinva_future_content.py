@@ -112,8 +112,21 @@ def technical_display(components: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def lead_time_header(lead: str) -> str:
+def lead_time_header(lead: str, *, future: bool = False) -> str:
     """A complete approved clause already contains its own heading."""
+    if future:
+        require(isinstance(lead, str), "short lead-time canonical form unproven")
+        duration = r"(\d+(?:\s*[–-]\s*\d+)? рабочих дней)"
+        match = re.fullmatch(duration, lead) or re.fullmatch(
+            "Предположительный срок изготовления "
+            + duration
+            + r" с первого рабочего дня после дня поступления средств "
+            + r"на расч[её]тный сч[её]т[;,] точный срок изготовления "
+            + r"уточнять после оплаты\.",
+            lead,
+        )
+        require(match is not None, "short lead-time canonical form unproven")
+        return "Срок изготовления " + re.sub(r"\s*[–-]\s*", "-", match[1])
     return (
         lead
         if lead.startswith("Предположительный срок изготовления ")
@@ -123,6 +136,11 @@ def lead_time_header(lead: str) -> str:
 
 def commercial_block(terms: Mapping[str, Any]) -> list[str]:
     lead, delivery = terms["manufacturing_lead_time"], terms["delivery"]
+    require(isinstance(lead, str), "commercial lead clause required")
+    require(
+        not lead.startswith("Срок изготовления "),
+        "alternative lead clause unsupported; exact commercial meaning required",
+    )
     validity = terms.get("validity") or "3 банковских дней"
     require(
         all(
@@ -196,6 +214,16 @@ def validate_future_content(
         and "GOVERNED_744_CONTENT_POLICY" in bindings,
         "future provenance roles missing",
     )
+    from wu8_governed_sources import policy_binding
+
+    expected_policy = policy_binding()
+    require(
+        "GOVERNED_WU8_SOURCES_POLICY" in bindings
+        and bindings["GOVERNED_WU8_SOURCES_POLICY"]["path"] == expected_policy["path"]
+        and bindings["GOVERNED_WU8_SOURCES_POLICY"]["sha256"]
+        == expected_policy["sha256"],
+        "WU8 source/Human-decision policy binding missing/drifted",
+    )
     for b in bindings.values():
         p = Path(b["path"])
         require(
@@ -234,6 +262,12 @@ def validate_future_content(
     for i, (original, item) in enumerate(
         zip(source["items"], document["items"], strict=True)
     ):
+        from wu8_governed_sources import cabinet_display
+
+        require(
+            item["unit"] == "шт." and item["enclosure"] == cabinet_display(source, i),
+            "future cabinet/unit presentation drift",
+        )
         require(
             item["detailed_technical_composition"]
             == original["detailed_technical_composition"],
@@ -266,6 +300,11 @@ def validate_future_content(
             "display provenance mismatch",
         )
     lines = document["terms"]["commercial_lines"]
+    require(
+        document["apparatus_heading"]
+        == "Применяемые приборы и аппараты согласно схемы",
+        "future fifth-column heading drift",
+    )
     require(
         [line["text"] for line in lines] == commercial_block(document["terms"]),
         "canonical commercial block incomplete/order/wording drift",

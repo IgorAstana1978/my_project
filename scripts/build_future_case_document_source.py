@@ -125,6 +125,21 @@ def calculation(
         result.status == "PASS",
         "checked calculation HOLD: " + "; ".join(result.red_flags),
     )
+    for application in result.future_rule_applications:
+        price = application["price"]
+        policy = price["governed_sources_policy"]
+        snapshots.append(bridge.load(Path(policy["path"]), policy["sha256"]))
+        cabinet = price.get("cabinet_source")
+        if cabinet is not None:
+            snapshots.append(
+                bridge.load(Path(cabinet["workbook_path"]), cabinet["workbook_sha256"])
+            )
+        for avr in price.get("avr_sources", []):
+            availability = avr.get("availability_binding")
+            if availability is not None:
+                snapshots.append(
+                    bridge.load(Path(availability["path"]), availability["sha256"])
+                )
     items = []
     for item, application in zip(
         confirmed.payload()["items"], result.future_rule_applications, strict=True

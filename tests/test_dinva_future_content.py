@@ -280,8 +280,10 @@ def test_v05_render_uses_display_and_canonical_bottom_alignment(
     w = load_workbook(out)
     s = w.active
     if lead is not None:
-        assert s["G10"].value == lead
+        assert s["G10"].value == content.lead_time_header(lead, future=True)
     assert s["F17"].value == plan.document["items"][0]["apparatus"]["text"]
+    # Independently observed native Excel AutoFit for this cabinet is 56.25 pt.
+    assert s.row_dimensions[17].height >= 56.25
     for row in range(21, 29):
         assert (
             s[f"C{row}"].value

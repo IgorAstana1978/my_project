@@ -53,6 +53,9 @@ def composition_inputs(tmp_path: Path) -> dict[str, Any]:
     decisions = valid_batch_decisions(case, draft)
     decisions["items"][0]["manufacturer"] = "EKF"
     decisions["items"][0]["quantity"] = 2
+    decisions["items"][0]["cabinet"].update(
+        code="METAL-500X400X250-D22", label="500×400×250 IP31"
+    )
     group = decisions["items"][0]["component_groups"][0]
     group.update(
         final_description="EKF, Breaker 3P 63A", install_type="mccb_up_to_100a"
@@ -75,7 +78,7 @@ def composition_inputs(tmp_path: Path) -> dict[str, Any]:
             }
         ],
         "roles": {"COMP-001": "POWER_BREAKER"},
-        "categories": {"COMP-001": "MCCB 3P 16-63A"},
+        "categories": {"COMP-001": "MCCB SHR 3P 16-63A"},
         "fuses": {},
         "interlocks": {"mechanical": False, "electrical": False},
         "overrides": {},
@@ -140,7 +143,7 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
         flow, "resolve_active_price_baseline", rules.resolve_active_price_baseline
     )
     cabinet = {
-        **binding(tmp_path, "cabinet-cost.json", 10000),
+        **binding(tmp_path, "cabinet-cost.json", 12770),
         "role": "ENCLOSURE_COST",
     }
     work = binding(tmp_path, "work-cost.json", 6000)
