@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from extract_mixed_source_composition import (
     DRAFT_NAME,
@@ -279,6 +279,7 @@ def run_case_extraction(
     owner_mkdir_fn: OwnerMkdirFunction = create_owner_directory,
     cleanup_fn: CleanupFunction = cleanup_owned_container,
     post_publish_cleanup_fn: CleanupFunction = remove_empty_owner_after_publication,
+    request_text: Path | None = None,
 ) -> CaseExtractionResult:
     root_value = CANONICAL_ROOT if canonical_root is None else canonical_root
     unresolved_root = resolved(root_value)
@@ -294,11 +295,25 @@ def run_case_extraction(
     try:
         root, case_dir = resolve_case_directory(case_id, root_value)
         result.output_dir = case_dir
-        pdf, workbook = validate_sources(
-            project_pdf,
-            spec_workbook,
-            case_dir=case_dir,
+        text = (
+            validate_source(
+                request_text,
+                label="request text",
+                allowed_suffixes={".txt"},
+                case_dir=case_dir,
+            )
+            if request_text is not None
+            else None
         )
+        if text is not None and project_pdf is None and spec_workbook is None:
+            pdf, workbook = None, None
+            result.source_mode = "text_only"
+        else:
+            pdf, workbook = validate_sources(
+                project_pdf,
+                spec_workbook,
+                case_dir=case_dir,
+            )
         if path_entry_exists(case_dir):
             raise CaseExtractionError(
                 "final Case directory already exists; overwrite is forbidden: "
@@ -323,11 +338,19 @@ def run_case_extraction(
         bundle = owner / "bundle"
         if bundle.parent != owner or path_entry_exists(bundle):
             raise CaseExtractionError(f"unsafe or existing owned bundle path: {bundle}")
-        for label, source in (("project PDF", pdf), ("spec workbook", workbook)):
+        for label, source in (
+            ("project PDF", pdf),
+            ("spec workbook", workbook),
+            ("request text", text),
+        ):
             if source is not None and source.is_relative_to(owner):
                 raise CaseExtractionError(f"{label} must be outside owned staging")
 
-        extractor_result = extractor_fn(pdf, workbook, bundle)
+        extractor_result = (
+            cast(Any, extractor_fn)(pdf, workbook, bundle, request_text=text)
+            if text is not None
+            else extractor_fn(pdf, workbook, bundle)
+        )
         created_files = validate_staging_outputs(bundle, extractor_result)
         if path_entry_exists(case_dir):
             raise CaseExtractionError(

@@ -439,6 +439,64 @@ def cleanup_created_output(output_dir: Path) -> None:
         return
 
 
+def build_text_request_artifacts(request_text: Path) -> ExtractionArtifacts:
+    """Envelope-only review; the SHA-bound engineering policy owner is untouched."""
+    raw = request_text.read_bytes()
+    if not raw.decode("utf-8").strip():
+        raise ExtractionError("request text must be non-empty UTF-8")
+    validator = load_module("mixed_source_preliminary_validator", VALIDATOR_PATH)
+    manifest = {
+        "manifest_version": "telegram_text_review_source.v0.1",
+        "sources": [
+            {
+                "file_name": request_text.name,
+                "source_type": "text_request",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "status": "manual_review_required",
+            }
+        ],
+    }
+    manifest_text = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+    digest = hashlib.sha256(manifest_text.encode("utf-8")).hexdigest()
+    summary: dict[str, Any] = dict.fromkeys(validator.EXTRACTION_SUMMARY_FIELDS, 0)
+    summary.update(
+        files_processed=1,
+        file_types=["text_request"],
+        review_rows=1,
+        ready_for_preliminary_workflow=False,
+    )
+    draft = {
+        "schema_version": validator.SCHEMA_VERSION,
+        "draft_id": f"PRELIM-TEXT-{digest[:12].upper()}",
+        "created_by": "extract_mixed_source_composition.text_review",
+        "created_at": datetime.now(UTC).isoformat(),
+        "source": {
+            "source_type": "text_request",
+            "source_summary": (
+                "Uninterpreted request text; manual scope review required."
+            ),
+            "raw_input_sha256": digest,
+        },
+        "safety": {
+            "status": "preliminary_only",
+            **dict.fromkeys(validator.SAFETY_FIELDS[1:], False),
+        },
+        "items": [],
+        "overall_confidence": 0.0,
+        "red_flags": ["No engineering items inferred; request requires manual review."],
+        "assumptions": [],
+        "next_required_human_actions": [
+            "Igor reviews the original request before confirming any composition."
+        ],
+        "extraction_summary": summary,
+    }
+    return ExtractionArtifacts(
+        manifest_text=manifest_text, draft=draft, summary=summary
+    )
+
+
 def run_operator(
     project_pdf: Path | None,
     spec_workbook: Path | None,
@@ -446,12 +504,19 @@ def run_operator(
     *,
     section_aware_intake: Path | None = None,
     governed_intake: GovernedIntake | None = None,
+    request_text: Path | None = None,
 ) -> OperatorResult:
     result = OperatorResult(output_dir=resolved(output_dir))
     created_output = False
     try:
-        if section_aware_intake is not None and (
+        if request_text is not None and (
             project_pdf is not None or spec_workbook is not None
+        ):
+            raise ExtractionError("text-request review requires text-only intake")
+        if section_aware_intake is not None and (
+            project_pdf is not None
+            or spec_workbook is not None
+            or request_text is not None
         ):
             raise ExtractionError(
                 "section-aware intake cannot be combined with v0.1 PDF/workbook inputs"
@@ -460,12 +525,14 @@ def run_operator(
             project_pdf is None
             or spec_workbook is not None
             or section_aware_intake is not None
+            or request_text is not None
         ):
             raise ExtractionError("governed intake requires exactly one project PDF")
         if (
             project_pdf is None
             and spec_workbook is None
             and section_aware_intake is None
+            and request_text is None
         ):
             raise ExtractionError("at least one source must be provided")
         output = validate_output_policy(output_dir)
@@ -478,6 +545,8 @@ def run_operator(
             artifacts = build_governed_rotated_artifacts(
                 cast(Path, project_pdf), governed_intake
             )
+        elif request_text is not None:
+            artifacts = build_text_request_artifacts(request_text)
         else:
             artifacts = build_artifacts(project_pdf, spec_workbook)
         result.summary = artifacts.summary
