@@ -5,9 +5,11 @@ import json
 import sys
 import zipfile
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
+from xml.etree import ElementTree
 
 import pytest
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
@@ -300,6 +302,169 @@ def package_text(path: Path) -> str:
     return "\n".join(values)
 
 
+def replace_package_member(path: Path, name: str, raw: bytes) -> None:
+    with zipfile.ZipFile(path) as archive:
+        members = [(info, archive.read(info)) for info in archive.infolist()]
+    with zipfile.ZipFile(path, "w") as archive:
+        for info, content in members:
+            archive.writestr(info, raw if info.filename == name else content)
+
+
+def test_iso_core_timestamps_pass_without_changing_metadata_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = build_case(tmp_path, monkeypatch)
+    core = (
+        b"<cp:coreProperties "
+        b'xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
+        b'metadata/core-properties" '
+        b'xmlns:dcterms="http://purl.org/dc/terms/" '
+        b'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        b'<dcterms:created xsi:type="dcterms:W3CDTF">'
+        b"2026-10-15T05:11:56Z</dcterms:created>"
+        b'<dcterms:modified xsi:type="dcterms:W3CDTF">'
+        b"2026-10-15T05:11:56Z</dcterms:modified>"
+        b"</cp:coreProperties>"
+    )
+    replace_package_member(case["template"], "docProps/core.xml", core)
+    refresh_template_hashes(case)
+    before = sha256(case["template"])
+    assert exporter.package_token_hits(case["template"], ["10-15"]) == ["10-15"]
+
+    result = run_case(case)
+
+    assert result.status == "PASS", result.red_flags
+    assert sha256(case["template"]) == before
+    with zipfile.ZipFile(case["output"]) as archive:
+        assert archive.read("docProps/core.xml") == core
+
+
+@pytest.mark.parametrize(
+    ("member", "body", "exempt"),
+    [
+        (
+            "docProps/core.xml",
+            "<dcterms:created>2026-10-15T05:11:56Z</dcterms:created>",
+            True,
+        ),
+        (
+            "docProps/core.xml",
+            "<dcterms:modified>2026-10-15T05:11:56.123+05:00</dcterms:modified>",
+            True,
+        ),
+        ("docProps/core.xml", "<title>10-15</title>", False),
+        ("docProps/core.xml", "<description>10-15</description>", False),
+        (
+            "docProps/core.xml",
+            '<dcterms:created note="10-15">2026-10-15T05:11:56Z</dcterms:created>',
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            "<!--10-15--><dcterms:created>2026-10-15T05:11:56Z</dcterms:created>",
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            "<?note 10-15?><dcterms:created>2026-10-15T05:11:56Z</dcterms:created>",
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            '<created xmlns="http://example.test/">2026-10-15T05:11:56Z</created>',
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            "<dcterms:created>2026-10-15T25:11:56Z</dcterms:created>",
+            False,
+        ),
+        pytest.param(
+            "docProps/core.xml",
+            "<dcterms:created>2026-10-15T05:11:56+05:60</dcterms:created>",
+            False,
+            id="invalid-offset",
+        ),
+        (
+            "docProps/core.xml",
+            "<dcterms:created>2026-10-15T05:11:56</dcterms:created>",
+            False,
+        ),
+        ("docProps/core.xml", "<dcterms:created>10-15</dcterms:created>", False),
+        (
+            "docProps/core.xml",
+            "<dcterms:created><value>2026-10-15T05:11:56Z</value></dcterms:created>",
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            "<dcterms:created>2026-10-15T05:11:56Z</dcterms:created>" * 2,
+            False,
+        ),
+        ("docProps/core.xml", "<dcterms:created>2026-10-15T05:11:56Z", False),
+        (
+            "docProps/core.xml",
+            "<dcterms:created>2026&#45;10-15T05:11:56Z</dcterms:created>",
+            False,
+        ),
+        (
+            "docProps/core.xml",
+            "<wrapper><dcterms:created>2026-10-15T05:11:56Z</dcterms:created></wrapper>",
+            False,
+        ),
+        (
+            "docProps/custom.xml",
+            "<dcterms:created>2026-10-15T05:11:56Z</dcterms:created>",
+            False,
+        ),
+        (
+            "docProps/Core.xml",
+            "<dcterms:created>2026-10-15T05:11:56Z</dcterms:created>",
+            False,
+        ),
+        ("xl/worksheets/sheet1.xml", "<value>10-15</value>", False),
+        ("xl/sharedStrings.xml", "<value>10-15</value>", False),
+        ("xl/workbook.xml", "<value>10-15</value>", False),
+    ],
+)
+def test_legacy_scan_exempts_only_verified_core_timestamp_values(
+    tmp_path: Path, member: str, body: str, exempt: bool
+) -> None:
+    path = tmp_path / "synthetic.xlsx"
+    raw = (
+        "<coreProperties "
+        'xmlns="http://schemas.openxmlformats.org/package/2006/'
+        'metadata/core-properties" '
+        'xmlns:dcterms="http://purl.org/dc/terms/">'
+        f"{body}</coreProperties>"
+    ).encode()
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(member, raw)
+    before = path.read_bytes()
+
+    assert exporter.package_token_hits(path, ["10-15"]) == ["10-15"]
+    assert exporter.package_token_hits(path, ["10-15"], legacy_scan=True) == (
+        [] if exempt else ["10-15"]
+    )
+    assert path.read_bytes() == before
+
+
+def test_placeholder_scan_keeps_core_metadata_strict(tmp_path: Path) -> None:
+    path = tmp_path / "synthetic.xlsx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "docProps/core.xml",
+            '<coreProperties xmlns:dcterms="http://purl.org/dc/terms/">'
+            "<dcterms:created>[номер]</dcterms:created>"
+            "</coreProperties>",
+        )
+
+    assert exporter.package_token_hits(path, exporter.FORBIDDEN_PLACEHOLDERS) == [
+        "[номер]"
+    ]
+
+
 def test_valid_one_item_export_passes_and_creates_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -502,11 +667,24 @@ def test_output_contains_no_forbidden_old_tokens(
     case = build_case(tmp_path, monkeypatch)
 
     result = run_case(case)
-    text = package_text(case["output"])
-
     assert result.status == "PASS"
-    for token in exporter.FORBIDDEN_OLD_TOKENS:
-        assert token.casefold() not in text.casefold()
+    with zipfile.ZipFile(case["output"]) as archive:
+        for name in archive.namelist():
+            try:
+                text = archive.read(name).decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            if name == "docProps/core.xml":
+                core = ElementTree.fromstring(text)
+                for field_name in ("created", "modified"):
+                    for field in core.findall(
+                        f"{{http://purl.org/dc/terms/}}{field_name}"
+                    ):
+                        assert field.text is not None
+                        datetime.fromisoformat(field.text)
+                        text = text.replace(field.text, "", 1)
+            for token in exporter.FORBIDDEN_OLD_TOKENS:
+                assert token.casefold() not in text.casefold()
 
 
 def test_approved_unit_price_44512_passes(

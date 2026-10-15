@@ -7,14 +7,17 @@ import csv
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 import uuid
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, NoReturn, cast
+from xml.parsers import expat
 
 from openpyxl import load_workbook
 
@@ -599,12 +602,67 @@ def inputs_unchanged(
         return False
 
 
-def package_token_hits(path: Path, tokens: Sequence[str]) -> list[str]:
+def _legacy_core_scan_bytes(raw: bytes) -> bytes:
+    """Project verified timestamp text away without rewriting any package bytes."""
+    parser = expat.ParserCreate(namespace_separator="}")
+    stack: list[tuple[str, int]] = []
+    spans: list[tuple[int, int]] = []
+    fields: list[str] = []
+    root = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties}coreProperties"
+    timestamps = {
+        f"http://purl.org/dc/terms/}}{name}" for name in ("created", "modified")
+    }
+    scalar = re.compile(
+        rb"<(?:[^<>\"']|\"[^\"]*\"|'[^']*')*>"
+        rb"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        rb"(?:\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9]))"
+    )
+
+    def start(name: str, _attributes: dict[str, str]) -> None:
+        stack.append((name, parser.CurrentByteIndex))
+
+    def end(_name: str) -> None:
+        name, position = stack.pop()
+        if len(stack) != 1 or stack[0][0] != root or name not in timestamps:
+            return
+        fields.append(name)
+        end_position = parser.CurrentByteIndex
+        match = scalar.fullmatch(raw[position:end_position])
+        if match is None:
+            return
+        try:
+            datetime.fromisoformat(match[1].decode("ascii"))
+        except ValueError:
+            return
+        spans.append((position + match.start(1), end_position))
+
+    def reject_doctype(*_args: object) -> NoReturn:
+        raise ValueError("DTD is not core timestamp metadata")
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = reject_doctype
+    try:
+        parser.Parse(raw, True)
+    except expat.ExpatError, ValueError:
+        return raw
+    if len(fields) != len(set(fields)):
+        return raw
+    for start_position, end_position in reversed(spans):
+        raw = raw[:start_position] + raw[end_position:]
+    return raw
+
+
+def package_token_hits(
+    path: Path, tokens: Sequence[str], *, legacy_scan: bool = False
+) -> list[str]:
     hits: list[str] = []
     try:
         with zipfile.ZipFile(path) as archive:
             for name in archive.namelist():
                 raw = archive.read(name)
+                if legacy_scan and name == "docProps/core.xml":
+                    raw = _legacy_core_scan_bytes(raw)
                 try:
                     text = raw.decode("utf-8")
                 except UnicodeDecodeError:
@@ -751,7 +809,7 @@ def reconcile_candidate(
         expected_invoice,
         expected_amount,
     )
-    legacy_hits = package_token_hits(candidate, FORBIDDEN_OLD_TOKENS)
+    legacy_hits = package_token_hits(candidate, FORBIDDEN_OLD_TOKENS, legacy_scan=True)
     unapproved_legacy_hits = [
         token
         for token in legacy_hits
