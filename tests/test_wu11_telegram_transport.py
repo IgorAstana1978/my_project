@@ -406,20 +406,20 @@ def test_initialize_rejects_changed_cache_without_writes(
         (cache / name).write_bytes(b"changed synthetic bytes")
     elif change == "source_junction":
         (cache / "wu11-smoke.pdf").unlink()
-        _winapi.CreateJunction(
+        _winapi.CreateJunction(  # type: ignore[attr-defined]
             str(tmp_path / "inert-authoring-target"), str(cache / "wu11-smoke.pdf")
         )
     elif change in {"cache_junction", "root_junction"}:
         source = cache if change == "cache_junction" else receipts
         moved = tmp_path / "moved-synthetic-directory"
         source.rename(moved)
-        _winapi.CreateJunction(str(moved), str(source))
+        _winapi.CreateJunction(str(moved), str(source))  # type: ignore[attr-defined]
     else:
         junction.rmdir()  # Removes only this synthetic Junction, never its target.
         if change == "wrong_junction_target":
             other = tmp_path / "other-inert-target"
             other.mkdir()
-            _winapi.CreateJunction(str(other), str(junction))
+            _winapi.CreateJunction(str(other), str(junction))  # type: ignore[attr-defined]
         elif change == "regular_node_modules":
             junction.mkdir()
     before = cache_snapshot(receipts, cases)
@@ -854,7 +854,7 @@ def test_synthetic_ctrl_v_russian_layout_diagnostic(
     import ctypes
     import tkinter as tk
 
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
     user32.GetKeyboardLayoutList.argtypes = [
         ctypes.c_int,
         ctypes.POINTER(ctypes.c_void_p),
