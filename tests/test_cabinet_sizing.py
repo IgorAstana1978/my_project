@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import cabinet_sizing as sizing  # type: ignore[import-not-found]
 import pytest
+from test_versioned_metal_source import synthetic_sources as synthetic_sources
 
 
 def provision(
@@ -244,11 +245,13 @@ def test_exact_selection_and_revalidation(
 
 
 def test_missing_evidence_is_first_specific_hold(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: Any
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: Any, synthetic_sources: Any
 ) -> None:
     import cabinet_sizing_evidence as evidence  # type: ignore[import-not-found]
+    from test_cabinet_sizing_catalogue import inject, record
     from test_cabinet_sizing_selector import provide
 
+    inject(monkeypatch, [record("SYNTHETIC-CABINET")])
     _, request, _ = provide(tmp_path, monkeypatch)
     monkeypatch.setattr(evidence, "default_binding", lambda: request["devices"])
     with pytest.raises(sizing.SizingHold, match="HOLD_UNMAPPED_OR_AMBIGUOUS_APPARATUS"):
@@ -373,15 +376,17 @@ def test_historical_validation_and_new_approval_gate(tmp_path: Path) -> None:
 
 
 def test_builder_missing_sizing_stops_before_any_prompt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any
 ) -> None:
     import cabinet_sizing_evidence as evidence  # type: ignore[import-not-found]
     from test_build_confirmed_composition_from_preliminary_bundle import (
         builder,
         create_bundle,
     )
+    from test_cabinet_sizing_catalogue import inject, record
     from test_cabinet_sizing_selector import provide
 
+    inject(monkeypatch, [record("SYNTHETIC-CABINET")])
     _, request, _ = provide(tmp_path, monkeypatch)
     monkeypatch.setattr(evidence, "default_binding", lambda: request["devices"])
     root, _ = create_bundle(tmp_path)
