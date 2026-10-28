@@ -116,6 +116,13 @@ cabinet_label
 
 Both fields must be non-empty strings.
 
+For every new switchboard confirmation, Cabinet Sizing v0.1 additionally requires
+`cabinet_type`, `dimensions_mm` (positive integer H/W/D mm) and the root
+`cabinet_sizing` report with exact apparatus/source provenance. These are checked
+before HUMAN_APPROVAL_1 and reread at publication. Missing evidence HOLDs.
+Historical artifact reads retain the original code/label contract; they cannot
+substitute for a new approval gate. See `cabinet_sizing_v0_1.md`.
+
 ## Component contract
 
 `components` must be a non-empty list.
@@ -354,3 +361,29 @@ coverage.
 Schema v0.2 confirms technical composition only. It does not authorize or
 start pricing, calculator execution, commercial export, КП, procurement,
 production, client send or any other downstream action.
+
+New switchboard HUMAN_APPROVAL_1 requires the automatic
+`cabinet_sizing.auto.v0.2` or separately versioned preliminary
+`cabinet_sizing.pragmatic_metal.v0.1` report, or the current default expanded
+`cabinet_sizing.catalogue.v0.1` report described in `cabinet_sizing_v0_1.md`.
+Caller cabinet/placements are not sizing inputs. Separate project-dimension
+facts constrain exact source HWD; absent source dimensions permit only a unique
+smallest valid approved cabinet. DIN/panel free capacity each remains at least25%,
+independently. Historical supplied-layout `cabinet_sizing.v0.1` reports retain
+read validation but cannot pass the new before-Approval1 gate.
+
+The Pragmatic METAL path proposes a protected size/row identity from derived
+planning HWD without exact cabinet interior proof. It explicitly leaves IP,
+installation compatibility, physical anchors and factory layout unverified;
+the builder's final review displays this before the Human phrase. It retains
+exact source-size precedence, independent reserves and all drift/publication
+checks. Its preliminary proposal never creates Human or production authority.
+
+The current default compares all pinned METAL/KRN/KRV technical catalogue rows.
+Its new version preserves old explicit request/report replay. Every candidate is
+FIT, NO_FIT or UNKNOWN with source and mounting reasons; UNKNOWN alternatives,
+equal sizes and incomparable minima HOLD before the Human phrase. Missing KRN/KRV
+mounting capacity cannot be treated as non-fit to select METAL. Existing report
+recomputation, source-size precedence and no-change-after-prior-approval gates are
+unchanged. New catalogue row identities do not establish downstream price mappings
+or commercial authority. Actual WU15 physical installation remains unverified.

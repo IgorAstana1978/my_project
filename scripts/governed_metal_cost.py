@@ -5,12 +5,13 @@ No materialization or activation entrypoint. Historical D82 resolver is untouche
 
 from __future__ import annotations
 
+import stat
 from decimal import ROUND_UP, Decimal
 from pathlib import Path
 from typing import Any
 
 from future_case_hardening import number, require
-from openpyxl import load_workbook
+from openpyxl import load_workbook  # type: ignore[import-untyped]
 from price_baseline_contract import (
     canonical_json_bytes,
     mapping_identity_fingerprint,
@@ -24,6 +25,47 @@ GENESIS_SHA = "b51d7087e0bd8f92e48985294062ead6826c6b50ce3cfacd0f9d0dc22c05f7f2"
 GENESIS_PATH = Path(
     r"C:\Users\IgorN\Documents\invoice_quote_filler_data\prices\current"
 ) / ("прайс_металл_лотки_крышки с 2026.06.18.xlsx")
+CURRENT = "CURRENT"
+CURRENT_VERSION = "2026.10.21"
+METAL_SOURCE_VERSIONS: dict[str, dict[str, Any]] = {
+    "2026.06.18": {
+        "version": "2026.06.18",
+        "path": str(GENESIS_PATH),
+        "sha256": GENESIS_SHA,
+        "predecessor_version": None,
+    },
+    "2026.10.21": {
+        "version": "2026.10.21",
+        "path": str(
+            GENESIS_PATH.with_name("прайс_металл_лотки_крышки с 2026.10.21.xlsx")
+        ),
+        "sha256": "be4a3497cf86ee4e5a13ac55bfeeeb980e6948cd30847ae027f36d6ca599cc71",
+        "predecessor_version": "2026.06.18",
+    },
+}
+
+
+def resolve_metal_source(version: str = CURRENT) -> dict[str, Any]:
+    """Resolve an admitted read-only source; never activate a Case baseline."""
+    require(isinstance(version, str), "metal source version required")
+    concrete = CURRENT_VERSION if version == CURRENT else version
+    require(concrete in METAL_SOURCE_VERSIONS, "unknown metal source version")
+    source = dict(METAL_SOURCE_VERSIONS[concrete])
+    require(source["version"] == concrete, "mixed metal source version")
+    path = Path(str(source["path"]))
+    require(path.is_absolute(), "metal source absolute path required")
+    for ancestor in (path, *path.parents):
+        if ancestor.exists():
+            require(
+                not ancestor.is_symlink()
+                and not getattr(ancestor.lstat(), "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0),
+                "metal source reparse point",
+            )
+    require(sha256_file(path) == source["sha256"], "metal source SHA drift")
+    return source
+
+
 LABEL = "1700х800х500 ВРУ "
 FORMULAS = {
     "D52": "=ROUNDUP((M52+N52)*R52+O52+P52+S52+Q52,0)",
@@ -95,6 +137,35 @@ def inspect_cost(workbook: Path, expected_sha256: str) -> dict[str, Any]:
 
 def inspect_cost_d22(workbook: Path, expected_sha256: str) -> dict[str, Any]:
     return _inspect_cost(workbook, expected_sha256, D22_IDENTITY)
+
+
+def resolve_versioned_metal_cost(
+    size: tuple[int, int, int], *, source_version: str = CURRENT
+) -> dict[str, Any]:
+    """Standalone cost only; legacy Case pricing continues to use GENESIS."""
+    from wu8_governed_sources import METAL_SIZES, metal_identity
+
+    require(
+        isinstance(size, tuple)
+        and len(size) == 3
+        and all(type(axis) is int for axis in size)
+        and size in METAL_SIZES,
+        "metal dimensions outside approved ten-size whitelist",
+    )
+    source = resolve_metal_source(source_version)
+    row, fabrication, painting, extra = METAL_SIZES[size]
+    suffix = {52: " ВРУ ", 53: " ПР ", 54: " ПР ", 51: ""}.get(row, " ")
+    identity = metal_identity(
+        row, "х".join(map(str, size)) + suffix, size, fabrication, painting, extra
+    )
+    result = _inspect_cost(Path(source["path"]), source["sha256"], identity)
+    require(source == resolve_metal_source(source["version"]), "metal source drift")
+    return {
+        **result,
+        "dimensions_mm": list(size),
+        "identity": identity,
+        "metal_source": source,
+    }
 
 
 def _inspect_cost(
@@ -213,7 +284,7 @@ def audit_metal_candidate(
             predecessor_source is None and expected_predecessor_sha256 is None,
             "selector and genesis predecessor authority cannot mix",
         )
-        resolve_metal_cost(selector)
+        resolve_metal_cost(selector)  # type: ignore[arg-type]
         predecessor_path, predecessor_sha = predecessor.path, predecessor.sha256
     previous = inspect_cost(predecessor_path, predecessor_sha)
     result = inspect_cost(candidate, expected_sha256)
@@ -271,7 +342,7 @@ def audit_metal_candidate(
     }
     if predecessor:
         require(
-            resolve_active_price_baseline(selector) == predecessor,
+            resolve_active_price_baseline(selector) == predecessor,  # type: ignore[arg-type]
             "audit predecessor drift",
         )
     return {

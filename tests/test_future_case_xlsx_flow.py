@@ -14,11 +14,27 @@ from test_build_confirmed_composition_from_preliminary_bundle import (
     valid_batch_decisions,
 )
 from test_build_dinva_document_from_case import source_payload
+from test_cabinet_sizing import install_legacy_test_sources
 from test_dinva_v0_5_print_successor import print_successor
 from test_future_case_hardening import binding, price_chain
 from test_render_dinva_classic_quote_invoice import canonical_file
 
 bridge = flow.bridge
+
+
+@pytest.fixture(autouse=True)
+def approved_synthetic_sizing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_legacy_test_sources(
+        tmp_path,
+        monkeypatch,
+        item_geometry={
+            "ITEM-001": {
+                "cabinet_code": "METAL-500X400X250-D22",
+                "cabinet_label": "500×400×250 IP31",
+                "mounting": "PANEL",
+            }
+        },
+    )
 
 
 def snapshot(path: Path, value: Any) -> Any:
@@ -111,6 +127,41 @@ def build_composition(inputs: dict[str, Any], **kwargs: Any) -> Any:
         output_fn=lambda _: None,
         **kwargs,
     )
+
+
+def test_synthetic_mccb_source_cabinet_and_panel_mounting_preserved(
+    tmp_path: Path,
+) -> None:
+    inputs = composition_inputs(tmp_path)
+    result = build_composition(
+        inputs,
+        approval_phrase="SYNTHETIC TEST ONLY",
+        input_fn=lambda _: "SYNTHETIC TEST ONLY",
+    )
+    assert result.status == "PASS", result.red_flags
+    path = inputs["case"] / "confirmed" / builder.ARTIFACT_NAME
+    artifact = json.loads(path.read_bytes())
+    item = artifact["items"][0]
+    assert item["cabinet"]["cabinet_code"] == "METAL-500X400X250-D22"
+    assert item["cabinet"]["cabinet_label"] == "500×400×250 IP31"
+    assert item["cabinet"]["dimensions_mm"] == [500, 400, 250]
+    sized = artifact["cabinet_sizing"]["items"][0]
+    assert {e["mounting"] for e in sized["envelopes"].values()} == {"PANEL"}
+    assert {p["zone_id"] for p in sized["layout"]["placements"]} == {"PANEL"}
+    confirmed = bridge.load(path, bridge.digest(path.read_bytes()))
+    operator = snapshot(
+        tmp_path / "operator-label.json",
+        {
+            "completed_by": "Synthetic operator",
+            "completed_at": "2026-10-06T15:00:00+05:00",
+            "completion_note": "Synthetic label preservation only",
+        },
+    )
+    pricing = flow.pricing_input(confirmed, operator)
+    assert (
+        pricing.document["items"][0]["cabinet"]["cabinet_label"] == "500×400×250 IP31"
+    )
+    assert pricing.document["safety"]["price_calculation_executed"] is False
 
 
 @pytest.fixture

@@ -9,6 +9,13 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from test_cabinet_sizing import install_legacy_test_sources
+
+
+@pytest.fixture(autouse=True)
+def approved_synthetic_sizing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_legacy_test_sources(tmp_path, monkeypatch)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = (
@@ -297,8 +304,6 @@ def recording_answers(prompts: list[str]) -> Any:
 
 def successful_answers() -> list[str]:
     return [
-        "correct",
-        "CAB-24 | 24-module cabinet",
         "correct",
         "Panel supply only",
         builder.APPROVAL_PHRASE,
@@ -1229,7 +1234,7 @@ def test_successful_publication_uses_exact_hash_links(tmp_path: Path) -> None:
     assert artifact["red_flags"] == []
     assert "- Items: 1" in receipt
     assert "- Components: 1" in receipt
-    assert "- Corrections: 2" in receipt
+    assert "- Corrections: 1" in receipt
     assert "- Resolved conflicts: 0" in receipt
     assert "- Accepted nontechnical assumptions: 0" in receipt
     assert "- Not-applicable technical details: 0" in receipt
@@ -1624,8 +1629,6 @@ def test_corrected_payload_is_used_by_summary_and_decision_record(
         canonical_root=root,
         input_fn=answers(
             [
-                "correct",
-                "CAB-24 | 24-module cabinet",
                 "correct",
                 "3",
                 "correct",

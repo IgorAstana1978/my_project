@@ -19,6 +19,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
+import cabinet_sizing as sizing
 from governed_case_intake import VERSION_RE, IntakeError, verify_versioned_extraction
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +170,7 @@ class CompositionState:
     supply_boundary: str = ""
     batch_decisions: dict[str, Any] | None = None
     future_review: DecisionsInputSnapshot | None = None
+    cabinet_sizing: dict[str, Any] | None = None
 
 
 @dataclass
@@ -202,6 +204,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--extraction-version")
     parser.add_argument("--future-review-json", type=Path)
     parser.add_argument("--future-review-sha256")
+    parser.add_argument("--cabinet-sizing-json", type=Path)
+    parser.add_argument("--cabinet-sizing-sha256")
     args = parser.parse_args(argv)
     if args.applied_bundle_json is not None and args.decisions_json is not None:
         parser.error(
@@ -876,7 +880,9 @@ def install_group_fingerprint(
     return values
 
 
-def classify_composition(draft: Mapping[str, Any]) -> CompositionState:
+def classify_composition(
+    draft: Mapping[str, Any], *, automatic_cabinet: bool = False
+) -> CompositionState:
     metadata = source_metadata_by_name(draft)
     transfers: list[AutomaticTransfer] = []
     issues: list[ExceptionIssue] = []
@@ -1329,6 +1335,8 @@ def classify_composition(draft: Mapping[str, Any]) -> CompositionState:
         )
     )
     preliminary_red_flags = collect_preliminary_red_flags(draft)
+    if automatic_cabinet:
+        issues = [issue for issue in issues if issue.kind != "cabinet"]
     return CompositionState(
         items=items,
         automatic_transfers=transfers,
@@ -1741,6 +1749,7 @@ def apply_batch_decisions(
     *,
     case_id: str,
     future_mode: bool = False,
+    automatic_cabinet: bool = False,
 ) -> CompositionState:
     data = exact_object(
         decisions_snapshot.data,
@@ -1774,7 +1783,7 @@ def apply_batch_decisions(
         data.get("supply_boundary"), "supply_boundary"
     )
 
-    state = classify_composition(snapshot.draft)
+    state = classify_composition(snapshot.draft, automatic_cabinet=automatic_cabinet)
     source_items = as_list(snapshot.draft.get("items"))
     decisions_items = exact_list(data.get("items"), "items")
     source_item_ids = [as_mapping(item).get("item_id") for item in source_items]
@@ -1791,18 +1800,25 @@ def apply_batch_decisions(
         zip(source_items, decisions_items, strict=True)
     ):
         source_item = as_mapping(source_raw)
+        decision_fields = {
+            "item_id",
+            "product_name",
+            "quantity",
+            "manufacturer",
+            "acknowledged_red_flags",
+            "cabinet",
+            "component_groups",
+        }
+        if (
+            automatic_cabinet
+            and isinstance(decision_raw, dict)
+            and "cabinet" not in decision_raw
+        ):
+            decision_fields.remove("cabinet")
         item_decision = exact_object(
             decision_raw,
             f"items[{item_index}]",
-            {
-                "item_id",
-                "product_name",
-                "quantity",
-                "manufacturer",
-                "acknowledged_red_flags",
-                "cabinet",
-                "component_groups",
-            },
+            decision_fields,
         )
         item_id = strict_nonempty_string(item_decision.get("item_id"), "item_id")
         product_name = strict_nonempty_string(
@@ -1825,13 +1841,33 @@ def apply_batch_decisions(
         )
 
         source_cabinet = as_mapping(source_item.get("cabinet_guess"))
+        cabinet_raw = item_decision.get("cabinet")
+        if automatic_cabinet and cabinet_raw is None:
+            cabinet_raw = {"acknowledged_red_flags": []}
+        cabinet_fields = {"code", "label", "acknowledged_red_flags"}
+        if (
+            automatic_cabinet
+            and isinstance(cabinet_raw, dict)
+            and set(cabinet_raw) == {"acknowledged_red_flags"}
+        ):
+            cabinet_fields = {"acknowledged_red_flags"}
         cabinet = exact_object(
-            item_decision.get("cabinet"),
+            cabinet_raw,
             f"items[{item_index}].cabinet",
-            {"code", "label", "acknowledged_red_flags"},
+            cabinet_fields,
         )
-        cabinet_code = strict_nonempty_string(cabinet.get("code"), "cabinet.code")
-        cabinet_label = strict_nonempty_string(cabinet.get("label"), "cabinet.label")
+        # Historical decision files remain readable, but their selected cabinet
+        # is never an input to the automatic proposal or source-size precedence.
+        cabinet_code = (
+            None
+            if automatic_cabinet
+            else strict_nonempty_string(cabinet.get("code"), "cabinet.code")
+        )
+        cabinet_label = (
+            None
+            if automatic_cabinet
+            else strict_nonempty_string(cabinet.get("label"), "cabinet.label")
+        )
         cabinet_flags = require_exact_red_flags(
             cabinet.get("acknowledged_red_flags"),
             source_cabinet.get("red_flags"),
@@ -2245,6 +2281,31 @@ def render_final_summary(
         "",
         "Items and cabinets:",
     ]
+    if state.cabinet_sizing is not None and state.cabinet_sizing.get(
+        "schema_version"
+    ) in {
+        "cabinet_sizing.pragmatic_metal.v0.1",
+        "cabinet_sizing.catalogue.v0.1",
+        "cabinet_sizing.catalogue.v0.2",
+        "cabinet_sizing.catalogue.v0.3",
+        "cabinet_sizing.catalogue.v0.4",
+    }:
+        family_label = (
+            "METAL/KRN/KRV"
+            if state.cabinet_sizing["schema_version"]
+            in {
+                "cabinet_sizing.catalogue.v0.1",
+                "cabinet_sizing.catalogue.v0.2",
+                "cabinet_sizing.catalogue.v0.3",
+                "cabinet_sizing.catalogue.v0.4",
+            }
+            else "METAL"
+        )
+        lines.append(
+            f"ПРЕДВАРИТЕЛЬНЫЙ подбор {family_label}: "
+            "IP и совместимость установки не проверены; "
+            "заводская компоновка и физические точки крепления не проверены."
+        )
     for item in state.items:
         cabinet = as_mapping(item.get("cabinet"))
         lines.append(
@@ -2252,6 +2313,11 @@ def render_final_summary(
             f"x {item.get('quantity')}; cabinet "
             f"{cabinet.get('cabinet_code')} / {cabinet.get('cabinet_label')}"
         )
+        if state.cabinet_sizing is not None:
+            lines.append(
+                f"  Cabinet type: {cabinet['cabinet_type']}; "
+                f"dimensions H/W/D mm: {cabinet['dimensions_mm']}"
+            )
         for component_value in as_list(item.get("components")):
             component = as_mapping(component_value)
             lines.append(
@@ -2360,6 +2426,9 @@ def build_confirmed_artifact(
             state.future_review.data["future_context"]
         )
         artifact["notes"] = [state.supply_boundary]
+    if state.cabinet_sizing is not None:
+        artifact["case_id"] = snapshot.paths.case_id
+        artifact["cabinet_sizing"] = copy.deepcopy(state.cabinet_sizing)
     return artifact
 
 
@@ -2724,6 +2793,8 @@ def run_builder(
     decisions_json: Path | None = None,
     future_review_json: Path | None = None,
     future_review_sha256: str | None = None,
+    cabinet_sizing_json: Path | None = None,
+    cabinet_sizing_sha256: str | None = None,
     extraction_version: str | None = None,
     canonical_root: Path = CANONICAL_ROOT,
     input_fn: InputFunction = input,
@@ -2746,6 +2817,27 @@ def run_builder(
         snapshot = load_snapshot(paths)
         validate_identifier_integrity(snapshot.draft)
         validate_source_metadata_integrity(snapshot.draft)
+        if (cabinet_sizing_json is None) != (cabinet_sizing_sha256 is None):
+            raise sizing.SizingHold("HOLD_SIZING_REQUEST_PATH_AND_SHA_REQUIRED")
+        sizing_request = (
+            sizing.load_request(cabinet_sizing_json, cabinet_sizing_sha256)
+            if cabinet_sizing_json is not None
+            else None
+        )
+        if sizing_request is not None:
+            import cabinet_sizing_catalogue as catalogue
+            import cabinet_sizing_pragmatic as pragmatic
+            import cabinet_sizing_selector as selector
+
+            if sizing_request.get("schema_version") in catalogue.REQUEST_SCHEMAS:
+                catalogue.validate_request(case_id, sizing_request)
+            elif sizing_request.get("schema_version") == pragmatic.REQUEST_SCHEMA:
+                pragmatic.validate_request(case_id, sizing_request)
+            else:
+                selector.validate_request(case_id, sizing_request)
+        if sizing_request is None:
+            # No approval prompt or engineering correction may precede this HOLD.
+            sizing.size_composition(case_id, snapshot.draft["items"])
         decisions_snapshot = (
             load_decisions_input(decisions_json) if decisions_json is not None else None
         )
@@ -2779,7 +2871,7 @@ def run_builder(
                         for finding in preliminary_red_flags
                     )
                 )
-            state = classify_composition(snapshot.draft)
+            state = classify_composition(snapshot.draft, automatic_cabinet=True)
             apply_interactive_decisions(
                 state,
                 input_fn=input_fn,
@@ -2791,9 +2883,40 @@ def run_builder(
                 decisions_snapshot,
                 case_id=case_id,
                 future_mode=review is not None,
+                automatic_cabinet=True,
             )
         if review is not None:
             attach_future_review(review, snapshot, state)
+        state.cabinet_sizing = sizing.size_composition(
+            case_id, state.items, sizing_request
+        )
+        for item, selection in zip(
+            state.items, state.cabinet_sizing["items"], strict=True
+        ):
+            item["cabinet"] = copy.deepcopy(selection["cabinet"])
+        sizing.verify_report(
+            state.cabinet_sizing,
+            state.items,
+            expected_case_id=case_id,
+            before_human_approval_1=True,
+        )
+
+        def recheck_sizing() -> None:
+            if cabinet_sizing_json is not None:
+                if (
+                    sizing.load_request(cabinet_sizing_json, cabinet_sizing_sha256)
+                    != sizing_request
+                ):
+                    raise sizing.SizingHold("HOLD_SIZING_REQUEST_DRIFT")
+            sizing.verify_report(
+                state.cabinet_sizing,
+                state.items,
+                expected_case_id=case_id,
+                before_human_approval_1=True,
+            )
+            if review is not None:
+                recheck_future_inputs(snapshot, decisions_snapshot, review)
+
         ensure_ready_for_approval(state)
         output_fn(
             render_final_summary(
@@ -2802,6 +2925,7 @@ def run_builder(
                 state=state,
             )
         )
+        recheck_sizing()
         phrase = input_fn(f"Type exact approval phrase [{approval_phrase}]: ")
         if phrase != approval_phrase:
             raise WorkflowError("exact technical composition approval phrase required")
@@ -2812,6 +2936,8 @@ def run_builder(
             assert_decisions_unchanged(decisions_snapshot)
         if review is not None:
             assert_decisions_unchanged(review)
+
+        recheck_sizing()
         confirmed_at_value = now_fn()
         if confirmed_at_value.tzinfo is None or confirmed_at_value.utcoffset() is None:
             raise WorkflowError("confirmed_at must be timezone-aware")
@@ -2841,14 +2967,13 @@ def run_builder(
                 state=state,
             ),
             confirmed_validator=confirmed_validator,
-            recheck=(
-                (lambda: recheck_future_inputs(snapshot, decisions_snapshot, review))
-                if review is not None
-                else None
-            ),
+            recheck=recheck_sizing,
         )
         result.status = "PASS"
         result.output_created = True
+    except sizing.SizingHold as exc:
+        result.status = "HOLD"
+        result.red_flags.append(str(exc))
     except (WorkflowError, OSError) as exc:
         result.red_flags.append(str(exc))
     return result
@@ -3004,6 +3129,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             decisions_json=args.decisions_json,
             future_review_json=args.future_review_json,
             future_review_sha256=args.future_review_sha256,
+            cabinet_sizing_json=args.cabinet_sizing_json,
+            cabinet_sizing_sha256=args.cabinet_sizing_sha256,
             extraction_version=args.extraction_version,
         )
     print(format_report(result))

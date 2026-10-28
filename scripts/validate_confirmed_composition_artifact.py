@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+import cabinet_sizing as sizing
+
 REPORT_START = "CONFIRMED_COMPOSITION_ARTIFACT_VALIDATION_REPORT_START"
 REPORT_END = "CONFIRMED_COMPOSITION_ARTIFACT_VALIDATION_REPORT_END"
 MODE = "confirmed composition artifact validation only"
@@ -321,6 +323,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--input-json", required=True, type=Path)
     parser.add_argument("--applied-bundle-json", type=Path)
+    parser.add_argument("--before-human-approval-1", action="store_true")
+    parser.add_argument("--expected-case-id")
     return parser.parse_args(argv)
 
 
@@ -840,7 +844,7 @@ def load_applied_bundle_snapshot(path: Path) -> AppliedBundleSnapshot:
         component_id = cast(str, member["component_evidence_id"])
         if component_id in installed_ids or component_id in reserved_ids:
             raise AppliedBundleValidationError("duplicate installed or reserved COMP")
-        overlay = overlays_by_id.get(component_id)
+        installed_overlay = overlays_by_id.get(component_id)
         installed_components.append(
             {
                 "component_evidence_id": component_id,
@@ -849,15 +853,19 @@ def load_applied_bundle_snapshot(path: Path) -> AppliedBundleSnapshot:
                 "source_locator": member["source_locator"],
                 "canonical_label": member["canonical_label"],
                 "approved_signature": copy.deepcopy(
-                    overlay["approved_signature"]
-                    if overlay is not None
+                    installed_overlay["approved_signature"]
+                    if installed_overlay is not None
                     else decision["component_signature"]
                 ),
                 "quantity": _quantity_projection(decision, kind),
                 "signature_source": (
-                    "V0_23_OVERLAY" if overlay is not None else "V0_22_PRIOR"
+                    "V0_23_OVERLAY" if installed_overlay is not None else "V0_22_PRIOR"
                 ),
-                "overlay_kind": (overlay["item_kind"] if overlay is not None else None),
+                "overlay_kind": (
+                    installed_overlay["item_kind"]
+                    if installed_overlay is not None
+                    else None
+                ),
             }
         )
         installed_ids.add(component_id)
@@ -924,6 +932,8 @@ def validate_schema_constants(
     allowed_root = ROOT_FIELDS + (
         ("future_context",) if "future_context" in data else ()
     )
+    if "cabinet_sizing" in data:
+        allowed_root += ("cabinet_sizing", "case_id")
     if not reject_unknown_fields(data, allowed_root, "", result):
         valid = False
     if data.get("schema_version") != SCHEMA_VERSION:
@@ -1030,7 +1040,22 @@ def validate_cabinet(data: Any, path: str, result: ValidationResult) -> bool:
     valid = True
     if not require_fields(cabinet, CABINET_FIELDS, path, result):
         valid = False
-    if not reject_unknown_fields(cabinet, CABINET_FIELDS, path, result):
+    allowed: tuple[str, ...] = CABINET_FIELDS
+    if "cabinet_type" in cabinet or "dimensions_mm" in cabinet:
+        allowed += ("cabinet_type", "dimensions_mm")
+        if not require_fields(cabinet, allowed, path, result):
+            valid = False
+        try:
+            sizing.vector(cabinet.get("dimensions_mm"))
+            if (
+                not isinstance(cabinet.get("cabinet_type"), str)
+                or not cabinet["cabinet_type"].strip()
+            ):
+                raise sizing.SizingHold("HOLD_CABINET_TYPE")
+        except sizing.SizingHold as exc:
+            add_red_flag(result, str(exc))
+            valid = False
+    if not reject_unknown_fields(cabinet, allowed, path, result):
         valid = False
     for field_name in CABINET_FIELDS:
         if field_name in cabinet and not require_string(
@@ -1242,12 +1267,12 @@ def validate_v02_artifact(
         "pricing_started": False,
         "downstream_started": False,
     }
-    for field_name, expected_value in expected_boundary.items():
-        if data[field_name] is not expected_value:
+    for field_name, boundary_value in expected_boundary.items():
+        if data[field_name] is not boundary_value:
             boundary_valid = False
             add_red_flag(
                 result,
-                f"{field_name} must be {str(expected_value).lower()}",
+                f"{field_name} must be {str(boundary_value).lower()}",
             )
     result.checks["downstream boundary"] = "pass" if boundary_valid else "fail"
 
@@ -1390,6 +1415,9 @@ def validate_v02_artifact(
 def validate_confirmed_composition_artifact(
     input_json: Path,
     applied_bundle_json: Path | None = None,
+    *,
+    before_human_approval_1: bool = False,
+    expected_case_id: str | None = None,
 ) -> ValidationResult:
     result = ValidationResult(input_json=input_json.expanduser().resolve(strict=False))
     data = load_json(result.input_json, result)
@@ -1397,6 +1425,38 @@ def validate_confirmed_composition_artifact(
         return result
 
     schema_version = data.get("schema_version")
+    raw_items = data.get("items")
+    has_sizing_fields = isinstance(raw_items, list) and any(
+        isinstance(item, dict)
+        and isinstance(item.get("cabinet"), dict)
+        and bool({"cabinet_type", "dimensions_mm"} & item["cabinet"].keys())
+        for item in raw_items
+    )
+    if before_human_approval_1 or "cabinet_sizing" in data or has_sizing_fields:
+        try:
+            sizing.verify_report(
+                data.get("cabinet_sizing"),
+                data.get("items", []),
+                expected_case_id=data.get("case_id"),
+                before_human_approval_1=before_human_approval_1,
+            )
+            context = data.get("future_context")
+            if context is not None:
+                sizing.require(
+                    isinstance(context, dict)
+                    and context.get("case_id") == data.get("case_id"),
+                    "HOLD_SIZING_CASE_BINDING",
+                )
+            if before_human_approval_1 or expected_case_id is not None:
+                sizing.require(
+                    isinstance(expected_case_id, str)
+                    and expected_case_id == data.get("case_id"),
+                    "HOLD_SIZING_EXPECTED_CASE_REQUIRED_OR_MISMATCH",
+                )
+            result.checks["cabinet sizing before Approval 1"] = "pass"
+        except (sizing.SizingHold, KeyError, TypeError, ValueError) as exc:
+            add_red_flag(result, f"cabinet sizing: {exc}")
+            result.checks["cabinet sizing before Approval 1"] = "fail"
     if schema_version == CONFIRMED_V02_SCHEMA_VERSION:
         validate_v02_artifact(data, result, applied_bundle_json)
         all_checks_pass = all(status == "pass" for status in result.checks.values())
@@ -1424,7 +1484,7 @@ def validate_confirmed_composition_artifact(
         from future_case_hardening import future_only
 
         try:
-            future_only(future_context)
+            future_only(cast(Mapping[str, Any], future_context))
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             add_red_flag(result, f"future context: {exc}")
     validate_items(data.get("items"), result, future_context=future_context)
@@ -1473,6 +1533,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = validate_confirmed_composition_artifact(
         args.input_json,
         applied_bundle_json=args.applied_bundle_json,
+        before_human_approval_1=args.before_human_approval_1,
+        expected_case_id=args.expected_case_id,
     )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1

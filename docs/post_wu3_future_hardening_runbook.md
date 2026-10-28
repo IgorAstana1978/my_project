@@ -328,3 +328,17 @@ XLSX/PDF are authored; accepted/historical artifacts and A–G remain unchanged.
 
 Full gates remain pytest/100% src coverage, Ruff, Black check and MyPy. Commit,
 push, real publication/client send/activation/downstream remain CLOSED.
+# Read-only METAL successor API — 2026.10.21
+
+`governed_metal_cost.resolve_metal_source(version="CURRENT")` возвращает
+конкретный registry pin нового источника (SHA256
+`be4a3497cf86ee4e5a13ac55bfeeeb980e6948cd30847ae027f36d6ca599cc71`).
+`resolve_versioned_metal_cost(size, source_version="CURRENT")` рассчитывает
+standalone cost только по существующим десяти WU8 D-bindings и проверяет source
+до/после чтения. Для replay передавайте конкретную версию `2026.06.18` либо
+`2026.10.21`; неизвестные версии, drift и reparse points отклоняются.
+
+Этот API не применяет цены к Case. Legacy WU8/future_case_hardening pricing chain
+по-прежнему читает GENESIS; MAIN KRN/KRV commercial source не изменён. Отдельное
+Case price application требует прямого Human Approval exact action/inputs/output
+и overwrite intent. B/C sales, D34 и новые коммерческие mappings не допущены.

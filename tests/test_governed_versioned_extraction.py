@@ -11,6 +11,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from test_cabinet_sizing import install_legacy_test_sources
+
+
+@pytest.fixture(autouse=True)
+def approved_synthetic_sizing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    install_legacy_test_sources(tmp_path, monkeypatch)
+
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
