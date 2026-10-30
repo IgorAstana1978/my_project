@@ -53,12 +53,22 @@ def _evaluate(
                 rows[row_index].append(u)
                 loads[row_index] += g._footprint(u)[1]
             ph, pw, pd = g._footprint(panel[0]) if panel else [Decimal(0)] * 3
+            beside = bool(panel) and orientation == "BESIDE"
             # PANEL 25% remains independent; clearance cannot become spare area.
             if panel:
-                if orientation == "BESIDE":
+                if beside:
+                    panel_width = pw
+                    ph += ch + rw
                     pw = ((pw + rw) * Decimal(4) / 3).quantize(
                         Decimal("0.000001"), rounding=ROUND_CEILING
                     )
+                    reference = future["reference_hwd_mm"].get("PANEL")
+                    if future["status"] == "REQUIRED" and reference is not None:
+                        fh, fw, _ = g.vector(reference, 3)
+                        # Bound the same side-by-side construction by its inputs;
+                        # containment, collisions and reserve still decide fit.
+                        pw = max(pw, panel_width + fw)
+                        ph = max(ph, fh + ch)
                 else:
                     ph = ((ph + ch + rw) * Decimal(4) / 3).quantize(
                         Decimal("0.000001"), rounding=ROUND_CEILING
@@ -72,7 +82,10 @@ def _evaluate(
             if width <= 0 or h - service - y <= 0:
                 failures.add("ZONE_BOUNDARY")
                 continue
-            objects = [g.box("trunk", "ROUTE", [0, 0, 0], [rw, h, rd])]
+            # A side PANEL connects to the left face of the separating trunk;
+            # DIN branches stay on its right, outside the PANEL reservations.
+            trunk_x = pw if beside else Decimal(0)
+            objects = [g.box("trunk", "ROUTE", [trunk_x, 0, 0], [rw, h, rd])]
             connections = []
             free_rows = []
             din_zone = g.box("DIN", "ZONE", [x, y, 0], [width, h - service - y, d])
@@ -105,8 +118,8 @@ def _evaluate(
                     g.box(
                         f"branch:{ri}",
                         "ROUTE",
-                        [0, ry + rh + ch, 0],
-                        [x + width, rw, rd],
+                        [trunk_x, ry + rh + ch, 0],
+                        [x + width - trunk_x, rw, rd],
                     )
                 )
                 intervals = [
@@ -124,7 +137,7 @@ def _evaluate(
             else:
                 panel_zone = None
                 if panel:
-                    px, py = rw, Decimal(0)
+                    px, py = Decimal(0) if beside else rw, Decimal(0)
                     panel_zone = g.box("PANEL", "ZONE", [px, py, 0], [pw, ph, d])
                     uh, uw, ud = g._footprint(panel[0])
                     objects.append(
