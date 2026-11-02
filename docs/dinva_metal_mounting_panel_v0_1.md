@@ -38,10 +38,35 @@ label/family/row/HWD/path/SHA/cells и provenance формулы. Mutable `CURRE
 
 Для применения требуется отдельно admitted источник роли
 `metal_standard_construction` через существующий code-controlled
-`cabinet_sizing_evidence.AUTHORIZED`. Реальных источников этой роли сейчас
-нет; формула не расширяет registry. Поэтому реальные записи каталога до
-получения construction evidence остаются HOLD. Caller SHA, approval-флаги
+`cabinet_sizing_evidence.AUTHORIZED`. Прямое решение изготовителя Игоря от
+2026-10-30 `IGOR-DINVA-METAL-STANDARD-CONSTRUCTION-ROWS8-47-20261030`
+отдельно допускает 40 exact identities `CATALOGUE-METAL-ROW-8`–`ROW-47`
+каталога `2026.10.21`, SHA256
+`be4a3497cf86ee4e5a13ac55bfeeeb980e6948cd30847ae027f36d6ca599cc71`:
+наружная дверь и монтажная панель, без фальшпанели; внутренняя дверь — другое,
+не допущенное этим решением исполнение. Это authority прямого решения,
+не CAD/сборочное подтверждение. Caller SHA, approval-флаги
 JSON и статус тестов не создают admission или нового Human Approval.
+
+`standard_construction_binding(cabinet_code, source_version="2026.10.21")`
+возвращает копию pinned path/SHA из code-controlled map только для этих 40
+identities. Другие identities и версии, включая `CURRENT`, вызывают
+`SizingHold`; fallback отсутствует. Источники хранятся локально во внешнем
+versioned evidence-каталоге: при отсутствии или drift получается HOLD.
+Явный opt-in к существующему API:
+
+```python
+binding = standard_construction_binding("CATALOGUE-METAL-ROW-37")
+report = assess_panel("CATALOGUE-METAL-ROW-37", construction_binding=binding)
+verify_assessment(report)
+```
+
+Без `construction_binding` вызов по-прежнему возвращает HOLD. Helper не
+выбирает и не ранжирует корпуса. Каждый из 40 отдельных admitted JSON
+перечитывает два raw source path/SHA: дословную запись Human Decision
+(с отдельно обозначенной технической проекцией identities) и исходный каталог.
+Exact schema и reader не расширяются. Подробная before/after provenance:
+`docs/standard_metal_construction_admission_v0_1.md`.
 
 Контракт admitted JSON содержит ровно:
 

@@ -28,6 +28,19 @@ IDENTITY_FIELDS = (
 )
 
 
+def standard_construction_binding(
+    cabinet_code: str, *, source_version: str = "2026.10.21"
+) -> dict[str, str]:
+    """Explicit opt-in to exact identities covered by Igor's manufacturer decision."""
+    strict.require(
+        isinstance(cabinet_code, str)
+        and source_version == "2026.10.21"
+        and cabinet_code in evidence.METAL_STANDARD_BINDINGS,
+        "HOLD_PANEL_STANDARD_CONSTRUCTION_NOT_ADMITTED",
+    )
+    return dict(evidence.METAL_STANDARD_BINDINGS[cabinet_code])
+
+
 def panel_hw_mm(outer_hwd_mm: Any) -> list[int]:
     """Conditional arithmetic only; this function does not admit a construction."""
     h, w, _ = strict.vector(outer_hwd_mm)

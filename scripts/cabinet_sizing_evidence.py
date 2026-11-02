@@ -29,6 +29,61 @@ WU15_CASE = (
     "CASE-TELEGRAM-B4D84204A74200E06B5A18BD371C949ABB899372265FBCDCF2ECF2C898B13A4B"
 )
 WU15_DRAFT_SHA = "218c3dcd135c1e08bdf573aac00e96e8cd4cb0b8bb0a2044c9faa6cbae5754ae"
+# Direct Igor manufacturer decision, 2026-10-30; exact catalogue 2026.10.21
+# identities only. No CAD/assembly, usable interior or physical FIT authority.
+METAL_STANDARD_ROOT = Path(
+    "C:/Users/IgorN/.codex/visualizations/2026/10/30/"
+    "01a18cd5-327b-7d63-befa-6cf988eed444/"
+    "standard-metal-manufacturer-decision-20261030-v01"
+)
+METAL_STANDARD_BINDINGS = {
+    f"CATALOGUE-METAL-ROW-{row}": {
+        "path": str(METAL_STANDARD_ROOT / f"metal-row-{row}.json"),
+        "sha256": sha,
+    }
+    for row, sha in {
+        8: "73bd77f6047edfbeb75c23a5629ac827880e28f2d90c8984f7600e34bcff0572",
+        9: "0f2c208fce2e938e3e1a1e95c1bb46f143b2d9c23b2b0fd5aa1f6b4b140fbab1",
+        10: "3e038bb359e017230a6ea14bb3965bc854d0f88dc462d2c1cc62acd94927963c",
+        11: "05f415394b461822f9c8d927dc5567bc61906a3a2cf30f0ffda3d20953560905",
+        12: "a3bf9e2625cca58c66d14bd35207e56d01e4b28eb9ec9273a60e3a61bf1b40cf",
+        13: "5e3436954efd886f64e5e72c5ab934f6293efeb8f36fb2501606666b47f49154",
+        14: "afca96975dbce794642455b07b7396611fe086b1752ec52381a15f07d018f4a1",
+        15: "f9114d1c66ff8c17d250c94ab39511ad201bef516b0a605215d96bfe418569f6",
+        16: "849d11a0fa6ff7e170bc17f2dc192051206608b8b16d777d368269fcca368a3f",
+        17: "7e7b76fbfcc39489271cc52bfad1ffef10a4372939f9aeb148195ccba4507a02",
+        18: "4f40529660a7dcc9af347f1e011c330687701e560a014b7c10878c066f8b0802",
+        19: "449beb778b2d098780b31652d512cd3e13767437354995ee6f0d046976f13e69",
+        20: "3cdaaf16731e23a1206ccc7a775a9b132a51ba6c7553d5c45289d63b6e8cdfbd",
+        21: "cf28955d2e78c2a7e17d3850c0d4c96f20312a8275efb282eb9a5a379a5a02d8",
+        22: "3fc5eeecc121ef7131d4b03899664660164e4cc2a1b1103242835a07f098d20d",
+        23: "e55f2d6e4111ceb799fd2c4c3d2f9f5e0627470379b69986f3f249fa9f3137ee",
+        24: "7002c54508d3e37212fd91c17e2c57bef8e33a18da017130370aaff28651e0bf",
+        25: "d8b02f03994b62e09f53349022824ffbc612fa149c1437133c77086a4c0debe0",
+        26: "eff64a29b16e118ccc32edce5dd0f743b99d139b63adc05fe4dcc39f527e7bd2",
+        27: "24979253f2b3415264f2f75681ecf167c202db17cf6da9bbbf5aaabac9292afa",
+        28: "476d6b4ded53baa104bb1d4c4317948e065aaba2458bbce4808e65321864a32c",
+        29: "b1040b809a6eb62d60e1d5dbc9403fff64569c58516cad4321a1f18da2b799bd",
+        30: "dd131ab3dc5b98bad93e749fdb1f814219a299875d96c398e48cb039c91f5e1d",
+        31: "32aba513a8611035499a8712d39850b97735009fdb043045e98bd2f6252892e4",
+        32: "918ac6456df69765e8ad175d5c6991f06c23d42c61981ec84fa1efaf5e8c8679",
+        33: "e69d9d31c8499441dd651429ac4ad8ebd46bc6fc3078793a4640a0db42c60667",
+        34: "a173c03af252b01748264b9f2d7f8037543aa935240b4dde3f195c54f0450216",
+        35: "49c376849a052d128becf79c446f0b90676b2b298ebbe3ddc6c8b8ebcdc3ccf2",
+        36: "3e4d84611cdf5f6319630cca86de5470b3ff20f4d3e596d08880f879def271c5",
+        37: "fb73c7982463b49c9236ee01754445918d71617fbc98530c6b116160345820c4",
+        38: "9e56f63ffe23ea5136edd36325dca47531d29203cdd03726371bcf2520d33da8",
+        39: "f9ac4e27d4190d8ad8770c87f1e33805ab429bdffcce310fa1ea4da422d794e7",
+        40: "ba2639aac519e6a6a2e72fb9aca0986dfcfa379ae6723facee6c5fb5b91e654a",
+        41: "969adeb9beb9dc019fc6364f5b38a6df5e8b4f626a1df0ae0c981889445fa716",
+        42: "972716164897c510a78b180248751857ede68d3ecb50bdc9ced2c70925db4e5c",
+        43: "e815599f3e1c22fec741a262b5365d01ef6a7a5e5958f69b8c0041e9f0111a87",
+        44: "3f84fb9b1df5e5c15099dbab0d42da1c516686fd41bc092b83c4c849f13fc72f",
+        45: "7810e35bb31f9b872ed3971ae311a03734bffa6083b9036d13280e24f6c39d9a",
+        46: "e05d23a8d9aa5017f915eb036a0f3798268bb608886a0d26dd82272f801eefe2",
+        47: "1f6778832f257c2deba6576fff8a74e1881d0424afc0bfc8977423a23b79c8fc",
+    }.items()
+}
 # Admission is a reviewed code change, never an approval flag inside input JSON.
 # Exact cabinet-interior authority remains empty. The preliminary source review
 # below is separately admitted and cannot authorize exact mounting geometry.
@@ -41,6 +96,9 @@ AUTHORIZED: frozenset[tuple[str, str, str]] = frozenset(
             PRAGMATIC_REVIEW_SHA,
         ),
     }
+) | frozenset(
+    ("metal_standard_construction", str(Path(b["path"]).resolve()), b["sha256"])
+    for b in METAL_STANDARD_BINDINGS.values()
 )
 
 
