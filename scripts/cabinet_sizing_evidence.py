@@ -29,6 +29,10 @@ WU15_CASE = (
     "CASE-TELEGRAM-B4D84204A74200E06B5A18BD371C949ABB899372265FBCDCF2ECF2C898B13A4B"
 )
 WU15_DRAFT_SHA = "218c3dcd135c1e08bdf573aac00e96e8cd4cb0b8bb0a2044c9faa6cbae5754ae"
+WU15_CASE_ROOT = Path(
+    "C:/Users/IgorN/Documents/production_ai_cases/telegram-employee-cases"
+)
+WU15_PDF_SHA = "c25dae3b09123621cf14a484c70d02b086e315b57a68ed3e1c9aeba79bc55b1c"
 # Direct Igor manufacturer decision, 2026-10-30; exact catalogue 2026.10.21
 # identities only. No CAD/assembly, usable interior or physical FIT authority.
 METAL_STANDARD_ROOT = Path(
@@ -135,17 +139,17 @@ def _structural_projection_matches(item: Any, projected: Any) -> bool:
 def pragmatic_source_fact(case_id: str, item: Any, binding: Any) -> dict[str, Any]:
     """Narrow reviewed WU15 adapter; absence is never generalized to other Cases."""
     data = read(binding, "pragmatic_source_fact")
+    if data.get("schema_version") == "cabinet_sizing.pragmatic_decisions.v0.1":
+        from cabinet_sizing_decisions import source_fact
+
+        return source_fact(case_id, item, binding, data)
     if binding != pragmatic_default_binding():
         return data
     from cabinet_sizing import apparatus_hash
 
     expected_case = WU15_CASE
     require(case_id == expected_case, "HOLD_SOURCE_FACT_COMPOSITION_BINDING")
-    draft_path = (
-        Path("C:/Users/IgorN/Documents/production_ai_cases/telegram-employee-cases")
-        / expected_case
-        / "preliminary-composition-draft.json"
-    )
+    draft_path = WU15_CASE_ROOT / expected_case / "preliminary-composition-draft.json"
     raw = safe_bytes(draft_path, WU15_DRAFT_SHA)
     draft = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs)
     names = {"ITEM-001": "ЩО6", "ITEM-002": "НЩР", "ITEM-003": "АВР"}
@@ -163,8 +167,7 @@ def pragmatic_source_fact(case_id: str, item: Any, binding: Any) -> dict[str, An
     )
     source = data["case_source"]
     require(
-        source["sha256"]
-        == "c25dae3b09123621cf14a484c70d02b086e315b57a68ed3e1c9aeba79bc55b1c",
+        source["sha256"] == WU15_PDF_SHA,
         "HOLD_SOURCE_FACT_RAW_BINDING",
     )
     safe_bytes(Path(source["path"]), source["sha256"])
