@@ -705,7 +705,9 @@ def test_confirmed_validator_recomputes_expanded_schema_before_a1(
     current_source: bool | str,
     synthetic_sources: Any,
 ) -> None:
+    import cabinet_sizing_module_accounting as modules  # type: ignore[import-not-found]
     import validate_confirmed_composition_artifact as validator  # type: ignore[import-not-found]
+    from module_accounting_fixtures import provision_modules
 
     data = json.loads(
         (
@@ -732,13 +734,22 @@ def test_confirmed_validator_recomputes_expanded_schema_before_a1(
     data.update(case_id="CASE-TEST-001", cabinet_sizing=report)
     for item, selected in zip(data["items"], report["items"], strict=True):
         item["cabinet"] = selected["cabinet"]
+    module_source, _ = provision_modules(
+        tmp_path, monkeypatch, "CASE-TEST-001", data["items"], report
+    )
+    report = modules.build_sizing_report(
+        "CASE-TEST-001", data["items"], report, module_source
+    )
+    data["cabinet_sizing"] = report
     path = tmp_path / "confirmed.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     checked = validator.validate_confirmed_composition_artifact(
         path, before_human_approval_1=True, expected_case_id="CASE-TEST-001"
     )
     assert checked.status == "PASS", checked.red_flags
-    report["items"][0]["provenance"]["candidate_outcomes"][0]["status"] = "UNKNOWN"
+    report["base_report"]["items"][0]["provenance"]["candidate_outcomes"][0][
+        "status"
+    ] = "UNKNOWN"
     path.write_text(json.dumps(data), encoding="utf-8")
     checked = validator.validate_confirmed_composition_artifact(
         path, before_human_approval_1=True, expected_case_id="CASE-TEST-001"

@@ -97,12 +97,21 @@ def install_legacy_test_sources(
     """Supply synthetic reusable facts to old scenarios; run the real selector."""
     original = sizing.size_composition
 
-    def with_synthetic_inputs(case_id: str, items: Any, request: Any = None) -> Any:
+    def with_synthetic_inputs(
+        case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
+    ) -> Any:
         if request is None:
             request, _ = provision_auto(
                 tmp_path, monkeypatch, case_id, list(items), item_geometry=item_geometry
             )
-        return original(case_id, items, request)
+        return original(
+            case_id,
+            items,
+            request,
+            **(
+                {"reserve_policy": reserve_policy} if reserve_policy is not None else {}
+            ),
+        )
 
     monkeypatch.setattr(sizing, "size_composition", with_synthetic_inputs)
 
@@ -114,8 +123,12 @@ def provision_auto(
     items: list[dict[str, Any]],
     *,
     item_geometry: dict[str, dict[str, str]] | None = None,
+    device_dimensions_mm: list[int] | None = None,
 ) -> tuple[dict[str, Any], list[Path]]:
     """Tiny geometry, authorized only in a monkeypatched test registry."""
+    from module_accounting_fixtures import install_synthetic_modules
+
+    install_synthetic_modules(tmp_path, monkeypatch, item_geometry)
     import cabinet_sizing_evidence as evidence  # type: ignore[import-not-found]
     from cabinet_sizing_selector import REQUEST_SCHEMA  # type: ignore[import-not-found]
     from test_cabinet_sizing_selector import (
@@ -164,7 +177,9 @@ def provision_auto(
                 ),
             }
             cid = sizing.digest({"signature": signature, "mounting": mounting})[:16]
-            record = synthetic_record(cid, mounting=mounting, size=[1, 1, 1])
+            record = synthetic_record(
+                cid, mounting=mounting, size=device_dimensions_mm or [1, 1, 1]
+            )
             record["rail_offset_mm"] = 0 if mounting == "DIN" else None
             records[cid] = record
             mappings[cid] = {"signature": signature, "class_id": cid}

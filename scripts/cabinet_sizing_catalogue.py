@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any
 
 import cabinet_catalogue as catalogue
+import cabinet_reserve_policy as reserve_policy_rules
 import cabinet_sizing_evidence as evidence
 import cabinet_sizing_pragmatic as planning
 import cabinet_sizing_selector as exact
@@ -172,6 +173,9 @@ def candidate(
     panel: Any,
     fact: Any,
     planning_error: str | None = None,
+    *,
+    din_free_percent: Decimal = Decimal(25),
+    panel_free_percent: Decimal = Decimal(25),
 ) -> dict[str, Any]:
     result = dict(
         record,
@@ -183,7 +187,7 @@ def candidate(
     capacity = None
     if "din_capacity_binding" in record:
         try:
-            capacity = din_capacity(record, units)
+            capacity = din_capacity(record, units, free_percent=din_free_percent)
         except SizingHold as exc:
             result["reasons"] = [str(exc)]
             return result
@@ -260,7 +264,9 @@ def candidate(
                 zone["usable_mm"][1] = min(
                     evidence.number(zone["usable_mm"][1]), Decimal(216)
                 )
-            packed = exact.din_layout(units, mount, exact.Budget())
+            packed = exact.din_layout(
+                units, mount, exact.Budget(), free_percent=din_free_percent
+            )
             if packed is None:
                 result.update(
                     status="NO_FIT",
@@ -300,7 +306,12 @@ def candidate(
             for orientation in ("VERTICAL", "HORIZONTAL")
             if (
                 layout := planning.construct(
-                    shape, panel, evidence.dimensions(size), orientation
+                    shape,
+                    panel,
+                    evidence.dimensions(size),
+                    orientation,
+                    din_free_percent=din_free_percent,
+                    panel_free_percent=panel_free_percent,
                 )
             )
             is not None
@@ -323,7 +334,9 @@ def candidate(
     return result
 
 
-def din_capacity(record: Any, units: Any) -> dict[str, Any]:
+def din_capacity(
+    record: Any, units: Any, *, free_percent: Decimal = Decimal(25)
+) -> dict[str, Any]:
     """Partial linear proof; relative rows are not physical mounting geometry."""
     binding = record["din_capacity_binding"]
     require(
@@ -349,7 +362,7 @@ def din_capacity(record: Any, units: Any) -> dict[str, Any]:
         "free_mm": capacity - occupied,
         "reserve_denominator_mm": capacity,
         "free_percent": (capacity - occupied) * 100 / capacity,
-        "reserve_required_percent": Decimal(25),
+        "reserve_required_percent": free_percent,
         "rows": None,
         "units": [
             {
@@ -380,7 +393,7 @@ def din_capacity(record: Any, units: Any) -> dict[str, Any]:
         for u in din
     ):
         return proof
-    if occupied * 4 > capacity * 3:
+    if not reserve_policy_rules.fits(occupied, capacity, free_percent):
         proof.update(status="NO_FIT", reason="DIN_TOTAL_RESERVE_INSUFFICIENT")
         return proof
     if any(u["envelope"]["dimensions_mm"][1] > 216 for u in din):
@@ -388,7 +401,11 @@ def din_capacity(record: Any, units: Any) -> dict[str, Any]:
         return proof
     try:
         packed = (
-            planning.partition(din, 3, planning.PITCH, exact.Budget()) if din else None
+            planning.partition(
+                din, 3, planning.PITCH, exact.Budget(), free_percent=free_percent
+            )
+            if din
+            else None
         )
     except SizingHold as exc:
         proof["reason"] = str(exc)
@@ -427,7 +444,9 @@ def din_capacity(record: Any, units: Any) -> dict[str, Any]:
     return proof
 
 
-def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
+def select(
+    case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
+) -> dict[str, Any]:
     req = validate_request(
         case_id, request_for(case_id, items) if request is None else request
     )
@@ -459,22 +478,46 @@ def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
     for item in items:
         units = planning.prepare(item, req["devices"], classes)
         fact = planning.source_fact(case_id, item, req["source_facts"][item["item_id"]])
-        planning_error = None
-        try:
-            shapes, panel = planning.planning_shapes(
-                units,
-                max(
-                    Decimal(c["dimensions_mm"][0])
-                    for c in records
-                    if c["dimensions_mm"] is not None
-                ),
+        shapes_by_reserve = {}
+        outcomes = []
+        for record in records:
+            din_min, panel_min = reserve_policy_rules.thresholds(
+                reserve_policy, item["item_id"], record["family"]
             )
-        except SizingHold as exc:
-            shapes, panel, planning_error = [], None, str(exc)
-        outcomes = [
-            candidate(record, units, shapes, panel, fact, planning_error)
-            for record in records
-        ]
+            if din_min not in shapes_by_reserve:
+                try:
+                    shapes, panel = planning.planning_shapes(
+                        units,
+                        max(
+                            Decimal(c["dimensions_mm"][0])
+                            for c in records
+                            if c["dimensions_mm"] is not None
+                        ),
+                        din_free_percent=din_min,
+                    )
+                    planning_error = None
+                except SizingHold as exc:
+                    shapes, panel, planning_error = [], None, str(exc)
+                shapes_by_reserve[din_min] = shapes, panel, planning_error
+            shapes, panel, planning_error = shapes_by_reserve[din_min]
+            outcomes.append(
+                candidate(
+                    record,
+                    units,
+                    shapes,
+                    panel,
+                    fact,
+                    planning_error,
+                    **(
+                        {
+                            "din_free_percent": din_min,
+                            "panel_free_percent": panel_min,
+                        }
+                        if reserve_policy is not None
+                        else {}
+                    ),
+                )
+            )
         require(
             fact
             == planning.source_fact(

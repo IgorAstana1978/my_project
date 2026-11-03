@@ -10,6 +10,7 @@ import itertools
 from decimal import Decimal
 from typing import Any
 
+import cabinet_reserve_policy as reserve_policy_rules
 import cabinet_sizing_evidence as evidence
 from cabinet_sizing import apparatus_hash, cabinet_identity, digest, require
 
@@ -280,7 +281,11 @@ def compatible(unit: dict[str, Any], cab: dict[str, Any], zone: dict[str, Any]) 
 
 
 def din_layout(
-    units: list[dict[str, Any]], cab: dict[str, Any], budget: Budget
+    units: list[dict[str, Any]],
+    cab: dict[str, Any],
+    budget: Budget,
+    *,
+    free_percent: Decimal = Decimal(25),
 ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
     if len(units) > 1:
         require(
@@ -311,7 +316,9 @@ def din_layout(
                 rails.append((zone, evidence.number(rail, zero=True)))
     total = sum((evidence.dimensions(z["usable_mm"])[1] for z, _ in rails), ZERO)
     width = sum((u["envelope"]["dimensions_mm"][1] for u in units), ZERO)
-    if units and (not rails or width * 4 > total * 3):
+    if units and (
+        not rails or not reserve_policy_rules.fits(width, total, free_percent)
+    ):
         return None
     positions: list[list[dict[str, Any]]] = [[] for _ in rails]
     uncertain_cross_rail = False
@@ -321,7 +328,7 @@ def din_layout(
         budget.step()
         if not remaining:
             occupied = sum((r[-1]["end"] for r in positions if r), ZERO)
-            return occupied * 4 <= total * 3
+            return reserve_policy_rules.fits(occupied, total, free_percent)
         unique = set()
         for index, unit in enumerate(remaining):
             env = unit["envelope"]
@@ -408,7 +415,7 @@ def din_layout(
         "total_usable_mm": total,
         "occupied_mm": occupied,
         "free_mm": total - occupied,
-        "minimum_free_fraction": "0.25",
+        "minimum_free_fraction": reserve_policy_rules.fraction(free_percent),
     }
 
 
@@ -527,7 +534,11 @@ def pack_panel(
 
 
 def panel_layout(
-    units: list[dict[str, Any]], cab: dict[str, Any], budget: Budget
+    units: list[dict[str, Any]],
+    cab: dict[str, Any],
+    budget: Budget,
+    *,
+    free_percent: Decimal = Decimal(25),
 ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
     zones = [z for z in cab["zones"] if z["kind"] == "PANEL"]
     total = sum(
@@ -545,7 +556,9 @@ def panel_layout(
         ),
         ZERO,
     )
-    if units and (not zones or occupied * 4 > total * 3):
+    if units and (
+        not zones or not reserve_policy_rules.fits(occupied, total, free_percent)
+    ):
         return None
     for assignment in itertools.product(range(len(zones)), repeat=len(units)):
         budget.step()
@@ -567,22 +580,33 @@ def panel_layout(
                 "total_usable_mm2": total,
                 "occupied_mm2": occupied,
                 "free_mm2": total - occupied,
-                "minimum_free_fraction": "0.25",
+                "minimum_free_fraction": reserve_policy_rules.fraction(free_percent),
             }
     return None
 
 
 def fit(
-    units: list[dict[str, Any]], cab: dict[str, Any], fact: dict[str, Any]
+    units: list[dict[str, Any]],
+    cab: dict[str, Any],
+    fact: dict[str, Any],
+    *,
+    din_free_percent: Decimal = Decimal(25),
+    panel_free_percent: Decimal = Decimal(25),
 ) -> dict[str, Any] | None:
     if cab["installation"] != fact["installation"]:
         return None
     budget = Budget()
     din = din_layout(
-        [u for u in units if u["envelope"]["mounting"] == "DIN"], cab, budget
+        [u for u in units if u["envelope"]["mounting"] == "DIN"],
+        cab,
+        budget,
+        free_percent=din_free_percent,
     )
     panel = panel_layout(
-        [u for u in units if u["envelope"]["mounting"] == "PANEL"], cab, budget
+        [u for u in units if u["envelope"]["mounting"] == "PANEL"],
+        cab,
+        budget,
+        free_percent=panel_free_percent,
     )
     if din is None or panel is None:
         return None
@@ -592,7 +616,9 @@ def fit(
     }
 
 
-def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
+def select(
+    case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
+) -> dict[str, Any]:
     req = validate_request(
         case_id, request_for(case_id) if request is None else request
     )
@@ -640,7 +666,12 @@ def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
             )
         valid = []
         for cab in candidates:
-            layout = fit(units, cab, fact)
+            din_min, panel_min = reserve_policy_rules.thresholds(
+                reserve_policy, item["item_id"], cab["cabinet_type"]
+            )
+            layout = fit(
+                units, cab, fact, din_free_percent=din_min, panel_free_percent=panel_min
+            )
             if layout is not None:
                 valid.append((cab, layout))
         require(

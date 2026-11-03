@@ -8,6 +8,7 @@ import json
 import stat
 import sys
 from collections.abc import Mapping, Sequence
+from decimal import Context, localcontext
 from pathlib import Path
 from typing import Any
 
@@ -300,6 +301,50 @@ def size_composition(
     case_id: str,
     items: Sequence[Mapping[str, Any]],
     request: Any = None,
+    *,
+    reserve_policy: Any = None,
+) -> dict[str, Any]:
+    if reserve_policy is None:
+        return _size_composition(case_id, items, request)
+    import cabinet_reserve_policy as rules
+
+    try:
+        with localcontext(Context(prec=50)):
+            object_with(
+                reserve_policy,
+                {"schema_version", "case_id", "projects"},
+                "reserve_policy",
+            )
+            require(
+                reserve_policy == rules.make(case_id, reserve_policy["projects"])
+                and set(reserve_policy["projects"]) == {i["item_id"] for i in items},
+                "HOLD_RESERVE_PROJECT_BINDING",
+            )
+            return rules.wrap(
+                _size_composition(
+                    case_id, items, request, reserve_policy=reserve_policy
+                ),
+                reserve_policy,
+            )
+    except SizingHold:
+        raise
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        OSError,
+        AttributeError,
+        RecursionError,
+    ) as exc:
+        raise SizingHold("HOLD_MALFORMED_RESERVE_SCOPE") from exc
+
+
+def _size_composition(
+    case_id: str,
+    items: Sequence[Mapping[str, Any]],
+    request: Any = None,
+    *,
+    reserve_policy: Any = None,
 ) -> dict[str, Any]:
     """Automatic sizing by default; exact v0.1 requests remain historical replay."""
     if (
@@ -307,6 +352,7 @@ def size_composition(
         and isinstance(request, dict)
         and "schema_version" not in request
     ):
+        require(reserve_policy is None, "HOLD_RESERVE_LEGACY_LAYOUT_NOT_NEW_HA1")
         return legacy_size_composition(case_id, items, request)
     from cabinet_sizing_selector import select
 
@@ -314,18 +360,22 @@ def size_composition(
         import cabinet_sizing_catalogue as catalogue
         import cabinet_sizing_pragmatic as pragmatic
 
+        policy_args = (
+            {"reserve_policy": reserve_policy} if reserve_policy is not None else {}
+        )
+
         if request is None or (
             isinstance(request, dict)
             and request.get("schema_version") in catalogue.REQUEST_SCHEMAS
         ):
-            return catalogue.select(case_id, items, request)
+            return catalogue.select(case_id, items, request, **policy_args)
 
         if (
             isinstance(request, dict)
             and request.get("schema_version") == pragmatic.REQUEST_SCHEMA
         ):
-            return pragmatic.select(case_id, items, request)
-        return select(case_id, items, request)
+            return pragmatic.select(case_id, items, request, **policy_args)
+        return select(case_id, items, request, **policy_args)
     except SizingHold:
         raise
     except (
@@ -346,7 +396,12 @@ def verify_report(
     expected_case_id: str | None,
     before_human_approval_1: bool = False,
 ) -> None:
+    from cabinet_sizing_module_accounting import REPORT_SCHEMA, verify_sizing_report
+
     require(isinstance(report, dict), "HOLD_SIZING_REQUIRED_BEFORE_HUMAN_APPROVAL_1")
+    if report.get("schema_version") == REPORT_SCHEMA:
+        verify_sizing_report(report, items, expected_case_id)
+        return
     require(
         not before_human_approval_1
         or report.get("schema_version")
@@ -389,6 +444,25 @@ def verify_report(
     )
     for item, selection in zip(items, report["items"], strict=True):
         require(item["cabinet"] == selection["cabinet"], "HOLD_CONFIRMED_CABINET_DRIFT")
+
+
+def verify_before_ha1(
+    report: Any,
+    items: Sequence[Mapping[str, Any]],
+    *,
+    expected_case_id: str | None,
+) -> None:
+    """New approvals require module accounting; legacy recomputation stays readable."""
+    from cabinet_sizing_module_accounting import REPORT_SCHEMA
+
+    require(isinstance(report, dict), "HOLD_SIZING_REQUIRED_BEFORE_HUMAN_APPROVAL_1")
+    require(
+        isinstance(report, dict) and report.get("schema_version") == REPORT_SCHEMA,
+        "HOLD_MODULE_LEDGER_REQUIRED_BEFORE_HA1",
+    )
+    verify_report(
+        report, items, expected_case_id=expected_case_id, before_human_approval_1=True
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

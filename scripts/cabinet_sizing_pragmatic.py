@@ -11,6 +11,7 @@ import copy
 from decimal import ROUND_CEILING, Decimal
 from typing import Any
 
+import cabinet_reserve_policy as reserve_policy_rules
 import cabinet_sizing_evidence as evidence
 from cabinet_sizing import apparatus_hash, cabinet_identity, digest, require
 from cabinet_sizing_selector import Budget, serial
@@ -128,7 +129,12 @@ def prepare(item: Any, binding: Any, classes: Any) -> list[dict[str, Any]]:
 
 
 def partition(
-    units: Any, rows: int, last_height: Decimal, budget: Budget
+    units: Any,
+    rows: int,
+    last_height: Decimal,
+    budget: Budget,
+    *,
+    free_percent: Decimal = Decimal(25),
 ) -> tuple[Decimal, list[list[Any]]] | None:
     """Complete minimum-maximum-width partition with symmetry and lower bounds."""
     ordered = sorted(
@@ -141,7 +147,7 @@ def partition(
     )
     total = sum((u["envelope"]["dimensions_mm"][1] for u in ordered), ZERO)
     lower = max(
-        upward(total * 4 / (3 * rows)),
+        upward(reserve_policy_rules.minimum_extent(total, Decimal(rows), free_percent)),
         max(u["envelope"]["dimensions_mm"][1] for u in ordered),
     )
     greedy: list[list[Any]] = [[] for _ in range(rows)]
@@ -202,7 +208,9 @@ def partition(
     return best, answer
 
 
-def planning_shapes(units: Any, maximum_height: Decimal) -> tuple[list[Any], Any]:
+def planning_shapes(
+    units: Any, maximum_height: Decimal, *, din_free_percent: Decimal = Decimal(25)
+) -> tuple[list[Any], Any]:
     din = [u for u in units if u["envelope"]["mounting"] == "DIN"]
     panel = [u for u in units if u["envelope"]["mounting"] == "PANEL"]
     # No incomplete panel search may justify a larger choice. The admitted real
@@ -258,7 +266,9 @@ def planning_shapes(units: Any, maximum_height: Decimal) -> tuple[list[Any], Any
         for last_height in last_heights:
             if (rows - 1) * PITCH + last_height > maximum_height:
                 continue
-            packed = partition(din, rows, last_height, budget)
+            packed = partition(
+                din, rows, last_height, budget, free_percent=din_free_percent
+            )
             if packed is None:
                 continue
             width, contents = packed
@@ -294,7 +304,13 @@ def planning_shapes(units: Any, maximum_height: Decimal) -> tuple[list[Any], Any
 
 
 def construct(
-    din: Any, panel: Any, bound: Any, orientation: str
+    din: Any,
+    panel: Any,
+    bound: Any,
+    orientation: str,
+    *,
+    din_free_percent: Decimal = Decimal(25),
+    panel_free_percent: Decimal = Decimal(25),
 ) -> dict[str, Any] | None:
     dh, dw, dd = din["dimensions_mm"] if din else [ZERO] * 3
     ph, pw, pd = panel["minimum_mm"] if panel else [ZERO] * 3
@@ -307,10 +323,18 @@ def construct(
             return None
         area = panel["occupied_mm2"]
         # Independent panel denominator; ceiling avoids underestimating 1/3mm.
-        ph = max(ph, upward(area * 4 / (3 * max_pw)))
+        ph = max(
+            ph,
+            upward(
+                reserve_policy_rules.minimum_extent(area, max_pw, panel_free_percent)
+            ),
+        )
         if ph > max_ph:
             return None
-        pw = max(pw, upward(area * 4 / (3 * ph)))
+        pw = max(
+            pw,
+            upward(reserve_policy_rules.minimum_extent(area, ph, panel_free_percent)),
+        )
         if pw > max_pw:
             return None
     if orientation == "VERTICAL":
@@ -330,7 +354,7 @@ def construct(
             "occupied_mm": din["occupied_mm"],
             "capacity_mm": capacity,
             "free_mm": capacity - din["occupied_mm"],
-            "minimum_free_fraction": "0.25",
+            "minimum_free_fraction": reserve_policy_rules.fraction(din_free_percent),
         }
         zones.append(
             {
@@ -366,7 +390,7 @@ def construct(
             "occupied_mm2": panel["occupied_mm2"],
             "capacity_mm2": ph * pw,
             "free_mm2": ph * pw - panel["occupied_mm2"],
-            "minimum_free_fraction": "0.25",
+            "minimum_free_fraction": reserve_policy_rules.fraction(panel_free_percent),
         }
         zones.append(
             {
@@ -410,7 +434,9 @@ def validate_request(case_id: str, request: Any) -> dict[str, Any]:
     return dict(request)
 
 
-def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
+def select(
+    case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
+) -> dict[str, Any]:
     req = validate_request(
         case_id, request_for(case_id, items) if request is None else request
     )
@@ -422,12 +448,17 @@ def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
     classes = evidence.envelopes(req["devices"])
     selections = []
     for item in items:
+        din_min, panel_min = reserve_policy_rules.thresholds(
+            reserve_policy, item["item_id"], "METAL"
+        )
         fact = source_fact(case_id, item, req["source_facts"][item["item_id"]])
         units = prepare(item, req["devices"], classes)
         # Complete the supported search across the whole whitelist, even when
         # an explicit source size restricts selection to one identity.
         shapes, panel = planning_shapes(
-            units, max(Decimal(c["dimensions_mm"][0]) for c in cabs)
+            units,
+            max(Decimal(c["dimensions_mm"][0]) for c in cabs),
+            din_free_percent=din_min,
         )
         candidates = cabs
         if fact["dimensions_status"] == "EXPLICIT":
@@ -449,6 +480,8 @@ def select(case_id: str, items: Any, request: Any = None) -> dict[str, Any]:
                         panel,
                         evidence.dimensions(cab["dimensions_mm"]),
                         orientation,
+                        din_free_percent=din_min,
+                        panel_free_percent=panel_min,
                     )
                 )
                 is not None

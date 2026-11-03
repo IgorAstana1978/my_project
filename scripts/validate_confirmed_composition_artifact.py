@@ -1434,11 +1434,15 @@ def validate_confirmed_composition_artifact(
     )
     if before_human_approval_1 or "cabinet_sizing" in data or has_sizing_fields:
         try:
-            sizing.verify_report(
+            verify_sizing = (
+                sizing.verify_before_ha1
+                if before_human_approval_1
+                else sizing.verify_report
+            )
+            verify_sizing(
                 data.get("cabinet_sizing"),
                 data.get("items", []),
                 expected_case_id=data.get("case_id"),
-                before_human_approval_1=before_human_approval_1,
             )
             context = data.get("future_context")
             if context is not None:

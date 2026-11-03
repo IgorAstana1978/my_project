@@ -20,6 +20,7 @@ from types import ModuleType
 from typing import Any, cast
 
 import cabinet_sizing as sizing
+import cabinet_sizing_module_accounting as modules
 from governed_case_intake import VERSION_RE, IntakeError, verify_versioned_extraction
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -206,6 +207,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--future-review-sha256")
     parser.add_argument("--cabinet-sizing-json", type=Path)
     parser.add_argument("--cabinet-sizing-sha256")
+    parser.add_argument("--module-evidence-json", type=Path)
+    parser.add_argument("--module-evidence-sha256")
     args = parser.parse_args(argv)
     if args.applied_bundle_json is not None and args.decisions_json is not None:
         parser.error(
@@ -220,6 +223,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.case_id is None or args.decisions_json is None
     ):
         parser.error("future review requires Case batch decisions")
+    if (args.module_evidence_json is None) != (args.module_evidence_sha256 is None):
+        parser.error("module evidence path and SHA are required together")
+    if args.applied_bundle_json is not None and args.module_evidence_json is not None:
+        parser.error("module evidence is new-Case only, not historical applied replay")
     return args
 
 
@@ -2281,9 +2288,33 @@ def render_final_summary(
         "",
         "Items and cabinets:",
     ]
-    if state.cabinet_sizing is not None and state.cabinet_sizing.get(
-        "schema_version"
-    ) in {
+    review_sizing = state.cabinet_sizing
+    if (
+        review_sizing is not None
+        and review_sizing.get("schema_version") == modules.REPORT_SCHEMA
+    ):
+        lines.extend(
+            [
+                "Mandatory module accounting: KRN/KRV/KURN DIN >=0%; "
+                "METAL DIN >=10% total; PANEL >=25%; "
+                "stricter source-bound project requirements apply.",
+                "Module accounting does not establish physical FIT.",
+            ]
+        )
+        for board in review_sizing["module_ledger"]["items"]:
+            lines.append(f"Module ledger: {board['item_id']} x {board['quantity']}")
+            lines.extend(
+                json.dumps(zone, ensure_ascii=False, sort_keys=True)
+                for zone in board["zones"]
+            )
+            lines.append(
+                json.dumps(board["reserve"], ensure_ascii=False, sort_keys=True)
+            )
+        review_sizing = review_sizing["base_report"]
+    review_schema = (
+        modules.algorithm_schema(review_sizing) if review_sizing is not None else None
+    )
+    if review_schema in {
         "cabinet_sizing.pragmatic_metal.v0.1",
         "cabinet_sizing.catalogue.v0.1",
         "cabinet_sizing.catalogue.v0.2",
@@ -2292,7 +2323,7 @@ def render_final_summary(
     }:
         family_label = (
             "METAL/KRN/KRV"
-            if state.cabinet_sizing["schema_version"]
+            if review_schema
             in {
                 "cabinet_sizing.catalogue.v0.1",
                 "cabinet_sizing.catalogue.v0.2",
@@ -2795,6 +2826,8 @@ def run_builder(
     future_review_sha256: str | None = None,
     cabinet_sizing_json: Path | None = None,
     cabinet_sizing_sha256: str | None = None,
+    module_evidence_json: Path | None = None,
+    module_evidence_sha256: str | None = None,
     extraction_version: str | None = None,
     canonical_root: Path = CANONICAL_ROOT,
     input_fn: InputFunction = input,
@@ -2817,6 +2850,7 @@ def run_builder(
         snapshot = load_snapshot(paths)
         validate_identifier_integrity(snapshot.draft)
         validate_source_metadata_integrity(snapshot.draft)
+        module_source = modules.binding(module_evidence_json, module_evidence_sha256)
         if (cabinet_sizing_json is None) != (cabinet_sizing_sha256 is None):
             raise sizing.SizingHold("HOLD_SIZING_REQUEST_PATH_AND_SHA_REQUIRED")
         sizing_request = (
@@ -2837,7 +2871,7 @@ def run_builder(
                 selector.validate_request(case_id, sizing_request)
         if sizing_request is None:
             # No approval prompt or engineering correction may precede this HOLD.
-            sizing.size_composition(case_id, snapshot.draft["items"])
+            modules.size_base(case_id, snapshot.draft["items"], None, module_source)
         decisions_snapshot = (
             load_decisions_input(decisions_json) if decisions_json is not None else None
         )
@@ -2887,18 +2921,20 @@ def run_builder(
             )
         if review is not None:
             attach_future_review(review, snapshot, state)
-        state.cabinet_sizing = sizing.size_composition(
-            case_id, state.items, sizing_request
+        state.cabinet_sizing = modules.size_base(
+            case_id, state.items, sizing_request, module_source
         )
         for item, selection in zip(
             state.items, state.cabinet_sizing["items"], strict=True
         ):
             item["cabinet"] = copy.deepcopy(selection["cabinet"])
-        sizing.verify_report(
+        state.cabinet_sizing = modules.build_sizing_report(
+            case_id, state.items, state.cabinet_sizing, module_source
+        )
+        sizing.verify_before_ha1(
             state.cabinet_sizing,
             state.items,
             expected_case_id=case_id,
-            before_human_approval_1=True,
         )
 
         def recheck_sizing() -> None:
@@ -2908,11 +2944,10 @@ def run_builder(
                     != sizing_request
                 ):
                     raise sizing.SizingHold("HOLD_SIZING_REQUEST_DRIFT")
-            sizing.verify_report(
+            sizing.verify_before_ha1(
                 state.cabinet_sizing,
                 state.items,
                 expected_case_id=case_id,
-                before_human_approval_1=True,
             )
             if review is not None:
                 recheck_future_inputs(snapshot, decisions_snapshot, review)
@@ -3131,6 +3166,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             future_review_sha256=args.future_review_sha256,
             cabinet_sizing_json=args.cabinet_sizing_json,
             cabinet_sizing_sha256=args.cabinet_sizing_sha256,
+            module_evidence_json=args.module_evidence_json,
+            module_evidence_sha256=args.module_evidence_sha256,
             extraction_version=args.extraction_version,
         )
     print(format_report(result))

@@ -206,7 +206,12 @@ def repin(chain: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     admit(monkeypatch, chain["binding"], "pragmatic_source_fact")
 
 
-def test_recompute_before_a1_and_full_validator(chain: Any, tmp_path: Path) -> None:
+def test_recompute_before_a1_and_full_validator(
+    chain: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cabinet_sizing_module_accounting as modules  # type: ignore[import-not-found]
+    from module_accounting_fixtures import provision_modules
+
     state = chain["state"]
     state.cabinet_sizing = sizing.size_composition(
         chain["case_id"], state.items, chain["request"]
@@ -222,6 +227,12 @@ def test_recompute_before_a1_and_full_validator(chain: Any, tmp_path: Path) -> N
         before_human_approval_1=True,
     )
     builder.ensure_ready_for_approval(state)
+    module_source, _ = provision_modules(
+        tmp_path, monkeypatch, chain["case_id"], state.items, state.cabinet_sizing
+    )
+    state.cabinet_sizing = modules.build_sizing_report(
+        chain["case_id"], state.items, state.cabinet_sizing, module_source
+    )
     # Test-only hypothetical confirmed model, outside the real Case.
     artifact = builder.build_confirmed_artifact(
         confirmation_id="SYNTHETIC",
@@ -379,7 +390,12 @@ def test_admitted_decisions_still_cannot_change_electrical_source(
         fact(chain)
 
 
-def test_builder_cannot_bypass_final_human_prompt(chain: Any, tmp_path: Path) -> None:
+def test_builder_cannot_bypass_final_human_prompt(
+    chain: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from module_accounting_fixtures import install_synthetic_modules
+
+    install_synthetic_modules(tmp_path, monkeypatch)
     req = tmp_path / "request.json"
     binding = write(req, chain["request"])
     prompts = []

@@ -1,5 +1,16 @@
 # Cabinet Sizing v0.1 — automatic contract, Device Envelope v0.2
 
+Для новых preliminary-builder HA1 действует отдельный обязательный
+`cabinet_sizing.module.v0.1` wrapper и ledger: см.
+`docs/mandatory_module_accounting_v0_1.md`. Новая source-bound policy требует
+DIN-резерв0% для КРН/КРВ/КУРН и >=10% суммарно для METAL с DIN; modules и mm
+проверяются независимо, project requirements могут ужесточать порог. Каждая
+рейка ограничена подтверждённой capacity. PANEL остаётся >=25%. КУРН не добавлен
+в доступный каталог; неизвестная identity/capacity сохраняет HOLD.
+Описанные ниже legacy selector policies и исторические recomputation contracts
+не изменены. Новый reserve-scoped base согласует применимые reserve gates без
+изменения поиска/ранжирования; исторический 25% replay сохраняется отдельно.
+
 Direct Igor decisions: Device Envelope v0.2, Cabinet Reserve Policy v0.1 and
 Source Cabinet Dimensions Precedence v0.1 (2026-10-19; continued 2026-10-20).
 This supersedes the supplied-layout verifier as the new before-HUMAN_APPROVAL_1
