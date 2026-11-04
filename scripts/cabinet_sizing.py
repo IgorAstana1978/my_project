@@ -396,12 +396,51 @@ def verify_report(
     expected_case_id: str | None,
     before_human_approval_1: bool = False,
 ) -> None:
-    from cabinet_sizing_module_accounting import REPORT_SCHEMA, verify_sizing_report
+    from cabinet_sizing_module_accounting import (
+        REPORT_SCHEMA,
+        algorithm_schema,
+        verify_sizing_report,
+    )
 
     require(isinstance(report, dict), "HOLD_SIZING_REQUIRED_BEFORE_HUMAN_APPROVAL_1")
     if report.get("schema_version") == REPORT_SCHEMA:
         verify_sizing_report(report, items, expected_case_id)
+        base = report["base_report"]
+        if algorithm_schema(base) == "cabinet_sizing.catalogue.v0.5":
+            for selection, board in zip(
+                base["items"], report["module_ledger"]["items"], strict=True
+            ):
+                if (
+                    selection["layout"]
+                    .get("din_capacity_assessment", {})
+                    .get("capacity_only")
+                ):
+                    require(
+                        all(
+                            zone["kind"] == "DIN" or not zone["footprints"]
+                            for zone in board["zones"]
+                        ),
+                        "HOLD_QUOTE_CAPACITY_ONLY_NON_DIN_EVIDENCE_REQUIRED",
+                    )
+                core_instances = {
+                    instance["id"]
+                    for instance in board["instances"]
+                    if instance["component_id"] is not None
+                }
+                require(
+                    all(
+                        set(footprint["instance_ids"]) <= core_instances
+                        for zone in board["zones"]
+                        if zone["kind"] != "DIN"
+                        for footprint in zone["footprints"]
+                    ),
+                    "HOLD_QUOTE_NON_DIN_ACCESSORY_GEOMETRY_REQUIRED",
+                )
         return
+    require(
+        report.get("schema_version") != "cabinet_sizing.catalogue.v0.5",
+        "HOLD_MODULE_LEDGER_REQUIRED_FOR_QUOTE_PREPARATION",
+    )
     require(
         not before_human_approval_1
         or report.get("schema_version")
@@ -505,12 +544,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "cabinet_sizing.catalogue_request.v0.2",
             "cabinet_sizing.catalogue_request.v0.3",
             "cabinet_sizing.catalogue_request.v0.4",
+            "cabinet_sizing.catalogue_request.v0.5",
         }:
             require(
                 isinstance(request.get("source_facts"), dict)
                 and set(request["source_facts"]) == set(ids),
                 "HOLD_SOURCE_FACT_COVERAGE",
             )
+            if request["schema_version"] == "cabinet_sizing.catalogue_request.v0.5":
+                from cabinet_sizing_catalogue import validate_request
+
+                validate_request(args.case_id, request)
         if request is not None and not automatic:
             object_with(request, {"case_id", "items"}, "request")
             require(
@@ -530,6 +574,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         bound["source_facts"] = {
                             k: v
                             for k, v in request["source_facts"].items()
+                            if k == item["item_id"]
+                        }
+                    if "quote_choices" in request:
+                        bound["quote_choices"] = {
+                            k: v
+                            for k, v in request["quote_choices"].items()
                             if k == item["item_id"]
                         }
             else:

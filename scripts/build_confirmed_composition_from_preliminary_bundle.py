@@ -2320,6 +2320,7 @@ def render_final_summary(
         "cabinet_sizing.catalogue.v0.2",
         "cabinet_sizing.catalogue.v0.3",
         "cabinet_sizing.catalogue.v0.4",
+        "cabinet_sizing.catalogue.v0.5",
     }:
         family_label = (
             "METAL/KRN/KRV"
@@ -2329,6 +2330,7 @@ def render_final_summary(
                 "cabinet_sizing.catalogue.v0.2",
                 "cabinet_sizing.catalogue.v0.3",
                 "cabinet_sizing.catalogue.v0.4",
+                "cabinet_sizing.catalogue.v0.5",
             }
             else "METAL"
         )
@@ -2336,6 +2338,12 @@ def render_final_summary(
             f"ПРЕДВАРИТЕЛЬНЫЙ подбор {family_label}: "
             "IP и совместимость установки не проверены; "
             "заводская компоновка и физические точки крепления не проверены."
+        )
+    if review_schema == "cabinet_sizing.catalogue.v0.5":
+        lines.extend(quote_preparation_summary(state))
+        lines.append(
+            "Human Approval: REQUIRED; расчётный PASS и quote_choices "
+            "не являются подтверждением Игоря."
         )
     for item in state.items:
         cabinet = as_mapping(item.get("cabinet"))
@@ -2612,6 +2620,27 @@ def build_applied_decision_record(
     }
 
 
+def quote_preparation_summary(state: CompositionState) -> list[str]:
+    report = state.cabinet_sizing
+    if report is None:
+        return []
+    if report.get("schema_version") == modules.REPORT_SCHEMA:
+        report = report["base_report"]
+    if modules.algorithm_schema(report) != "cabinet_sizing.catalogue.v0.5":
+        return []
+    return [
+        "Engineering scope: QUOTE_PREPARATION; production suitability NOT_VERIFIED.",
+        *[
+            f"{item['item_id']}: calculation_status={item['calculation_status']}; "
+            f"Physical FIT={item['physical_fit_status']}; "
+            f"minimality={item['minimality_status']}; "
+            f"cabinet={item['cabinet']['cabinet_code']}; "
+            f"H/W/D mm={item['cabinet']['dimensions_mm']}"
+            for item in report["items"]
+        ],
+    ]
+
+
 def build_receipt(
     *,
     record: Mapping[str, Any],
@@ -2658,6 +2687,13 @@ def build_receipt(
         ),
         "",
     ]
+    quote_summary = quote_preparation_summary(state)
+    if quote_summary:
+        lines.extend(quote_summary)
+        lines.append(
+            "Human Approval: recorded by the exact phrase for this confirmed "
+            "artifact; QUOTE_PREPARATION composition only, not price, КП or production."
+        )
     if state.batch_decisions is not None:
         warnings = as_list(state.batch_decisions.get("source_quality_acknowledgements"))
         assumptions = as_list(

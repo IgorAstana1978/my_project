@@ -1,5 +1,67 @@
 # Cabinet Sizing v0.1 — automatic contract, Device Envelope v0.2
 
+## QUOTE_PREPARATION v0.5 — отдельный opt-in (решение Игоря 2026-11-04)
+
+Default остаётся `catalogue_request.v0.4` / `catalogue.v0.4`. Исторические
+schemas, результаты и требования минимальности не переинтерпретируются.
+`cabinet_sizing.catalogue_request.v0.5` содержит ровно прежние v0.4 поля
+`schema_version, case_id, devices, source_facts, metal_source` и `quote_choices`:
+object `item_id -> exact cabinet_code`. Неизвестные item IDs, поля, пустые коды,
+approval flags, caller HWD/placements отклоняются. `metal_source` — конкретная
+admitted version, не mutable CURRENT. `quote_request_for` создаёт opt-in запрос.
+
+Система независимо пересчитывает все исходные candidate outcomes и добавляет
+каждому `quote_assessment` с `calculation_status` PASS/NO_FIT/HOLD и reasons.
+`quote_candidates` содержит только расчётно допустимые exact identities.
+Пустой/неполный `quote_choices` позволяет исследовать кандидатов: отсутствующий
+выбор даёт `HOLD_QUOTE_CHOICE_REQUIRED` с outcomes и quote_candidates, без выбора
+по default/цене/семейству. CLI выдаёт отдельную оценку каждого щита.
+Выбор не меняет технические факты и не является Human Approval.
+
+Допустим существующий FIT расчётной модели либо узкий DIN capacity-only proof:
+strict UNKNOWN вызван только отсутствием physical mounting/depth/install/IP,
+DIN capacity PASS, PANEL NOT_APPLICABLE и все units DIN. Исходный UNKNOWN не
+переписывается в FIT. Заводской чертёж/Physical FIT не обязательны сами по себе.
+Известный NO_FIT, source conflict, unsupported constraints, budget exhaustion,
+непроверенная обязательная PANEL-зона или иная неполнота расчёта сохраняют HOLD.
+Частичный DIN PASS не является основанием игнорировать PANEL. Пороги family и
+более строгие source-bound project requirements применяются как прежде.
+
+Явно выбранный допустимый кандидат не требует доказанной минимальности или
+разрешения UNKNOWN других кандидатов. `cabinet_sizing.catalogue.v0.5` сохраняет
+прежние root fields `schema_version, case_id, items, sources`; каждый selection
+добавляет `engineering_scope=QUOTE_PREPARATION`, `calculation_status=PASS`,
+`physical_fit_status=NOT_VERIFIED`, `minimality_status=NOT_VERIFIED`.
+DIN capacity layout содержит relative assignments, не заводские координаты.
+Exact source HWD и запрет изменения ранее утверждённого корпуса сохраняются.
+
+Перед новой HA1 обязателен прежний `cabinet_sizing.module.v0.1` wrapper с полным
+source-bound ledger. v0.5 поддерживает reserve-scoped base и exact recompute,
+включая выбор/кандидатов/статусы. Три HA1 rechecks, artifact SHA binding и
+no-overwrite не меняются. Review показывает расчётный PASS, NOT_VERIFIED и
+необходимость фактического Human Approval; receipt фиксирует состоявшееся
+подтверждение точного artifact только для этой стадии. Ни запрос, ни PASS не
+создают approval. Источник полномочия — отдельное прямое решение Игоря.
+
+Отдельный bare v0.5 report — только расчётное предложение, не confirmed evidence.
+`verify_report` отклоняет его даже вне before-HA1 режима, поэтому обычная
+confirmed validation и calculator-input helper не могут обойти ledger.
+Штатный новый confirmed-путь требует reserve_base внутри module wrapper.
+У capacity-only DIN выбора ledger также не может содержать занятую PANEL/OTHER
+зону, включая дополнительные аксессуары с `component_id=null`: одного area
+reserve PASS недостаточно для их обязательной расчётной геометрии. Пустые
+source-proven non-DIN зоны допустимы; исторические wrappers не меняются.
+Для всех v0.5 families non-DIN footprint с дополнительным аксессуаром вне base
+geometry также даёт HOLD: module profile доказывает площадь/ownership, но не
+содержит H/W/D и проверяемого inclusion binding к base layout. Core PANEL
+footprints, уже участвующие в расчётной модели, этим правилом не блокируются.
+
+Confirmed artifact schema и approval-record schema не меняются. После HA1
+существующий следующий шаг — calculator-input draft; verified prices, approvals
+цены/срока/КП, send и production остаются отдельными границами. Новый технический
+cabinet code не создаёт pricing mapping. Production suitability NOT_VERIFIED:
+этот контур не реализует новый производственный gate и не разрешает его обход.
+
 Для новых preliminary-builder HA1 действует отдельный обязательный
 `cabinet_sizing.module.v0.1` wrapper и ledger: см.
 `docs/mandatory_module_accounting_v0_1.md`. Новая source-bound policy требует

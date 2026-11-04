@@ -379,7 +379,7 @@ the builder's final review displays this before the Human phrase. It retains
 exact source-size precedence, independent reserves and all drift/publication
 checks. Its preliminary proposal never creates Human or production authority.
 
-The current default compares all pinned METAL/KRN/KRV technical catalogue rows.
+The historical expanded default compares all pinned METAL/KRN/KRV technical catalogue rows.
 Its new version preserves old explicit request/report replay. Every candidate is
 FIT, NO_FIT or UNKNOWN with source and mounting reasons; UNKNOWN alternatives,
 equal sizes and incomparable minima HOLD before the Human phrase. Missing KRN/KRV
@@ -387,3 +387,19 @@ mounting capacity cannot be treated as non-fit to select METAL. Existing report
 recomputation, source-size precedence and no-change-after-prior-approval gates are
 unchanged. New catalogue row identities do not establish downstream price mappings
 or commercial authority. Actual WU15 physical installation remains unverified.
+
+### QUOTE_PREPARATION opt-in v0.5 (2026-11-04)
+
+Текущий default v0.4 сохраняется. Новый `cabinet_sizing.catalogue.v0.5` внутри
+прежнего обязательного module wrapper допускает явный выбор из независимо
+рассчитанных допустимых кандидатов без доказанной минимальности/Physical FIT;
+обе неизвестности явно NOT_VERIFIED. UNKNOWN других кандидатов не блокирует.
+Расчётные/source gaps, известный NO_FIT, недостаточный резерв и непроверенная
+обязательная PANEL-зона сохраняют HOLD. Контракт выбора и recompute:
+`cabinet_sizing_v0_1.md`, раздел QUOTE_PREPARATION v0.5.
+
+Структура confirmed artifact v0.1, decision record, phrase и artifact-hash binding
+не меняются. Scope сохраняется внутри sizing report и показан в review/receipt.
+Расчётный PASS/quote_choices не создают Human Approval. Фактический HA1 относится
+к составу для подготовки КП; calculator-input draft остаётся следующим шагом.
+Price/schedule/quote/send/production approvals и no-overwrite сохраняются.

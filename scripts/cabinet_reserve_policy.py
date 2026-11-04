@@ -105,10 +105,12 @@ def identity(cabinet: Any, report: Any) -> dict[str, Any]:
             "cabinet_sizing.catalogue_request.v0.2",
             "cabinet_sizing.catalogue_request.v0.3",
             "cabinet_sizing.catalogue_request.v0.4",
+            "cabinet_sizing.catalogue_request.v0.5",
         }
         technical = schema in {
             "cabinet_sizing.catalogue_request.v0.3",
             "cabinet_sizing.catalogue_request.v0.4",
+            "cabinet_sizing.catalogue_request.v0.5",
         }
         sizing.require(
             schema
@@ -117,6 +119,7 @@ def identity(cabinet: Any, report: Any) -> dict[str, Any]:
                 "cabinet_sizing.catalogue_request.v0.2",
                 "cabinet_sizing.catalogue_request.v0.3",
                 "cabinet_sizing.catalogue_request.v0.4",
+                "cabinet_sizing.catalogue_request.v0.5",
             },
             "HOLD_RESERVE_IDENTITY_SOURCE_REQUIRED",
         )
@@ -125,7 +128,10 @@ def identity(cabinet: Any, report: Any) -> dict[str, Any]:
             kwargs["source_version"] = req["metal_source"]["version"]
         if technical:
             kwargs["technical_binding"] = True
-        if schema == "cabinet_sizing.catalogue_request.v0.4":
+        if schema in {
+            "cabinet_sizing.catalogue_request.v0.4",
+            "cabinet_sizing.catalogue_request.v0.5",
+        }:
             kwargs["capacity_binding"] = True
         inventory = catalogue.inventory(**kwargs)
         matches = [r for r in inventory["records"] if r["cabinet_code"] == code]

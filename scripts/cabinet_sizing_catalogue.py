@@ -22,11 +22,14 @@ TECHNICAL_REQUEST_SCHEMA = "cabinet_sizing.catalogue_request.v0.3"
 TECHNICAL_SCHEMA = "cabinet_sizing.catalogue.v0.3"
 CURRENT_REQUEST_SCHEMA = "cabinet_sizing.catalogue_request.v0.4"
 CURRENT_SCHEMA = "cabinet_sizing.catalogue.v0.4"
+QUOTE_REQUEST_SCHEMA = "cabinet_sizing.catalogue_request.v0.5"
+QUOTE_SCHEMA = "cabinet_sizing.catalogue.v0.5"
 REQUEST_SCHEMAS = {
     REQUEST_SCHEMA,
     VERSIONED_REQUEST_SCHEMA,
     TECHNICAL_REQUEST_SCHEMA,
     CURRENT_REQUEST_SCHEMA,
+    QUOTE_REQUEST_SCHEMA,
 }
 
 
@@ -38,12 +41,32 @@ def request_for(case_id: str, items: Any) -> dict[str, Any]:
     )
 
 
+def quote_request_for(
+    case_id: str, items: Any, quote_choices: Any = None
+) -> dict[str, Any]:
+    """Choices nominate candidates; they never establish facts or approval."""
+    return dict(
+        request_for(case_id, items),
+        schema_version=QUOTE_REQUEST_SCHEMA,
+        quote_choices={} if quote_choices is None else copy.deepcopy(quote_choices),
+    )
+
+
 def validate_request(case_id: str, request: Any) -> dict[str, Any]:
     require(
         isinstance(request, dict) and request.get("schema_version") in REQUEST_SCHEMAS,
         "HOLD_CATALOGUE_REQUEST_SCHEMA",
     )
     base = dict(request, schema_version=planning.REQUEST_SCHEMA)
+    if request["schema_version"] == QUOTE_REQUEST_SCHEMA:
+        choices = base.pop("quote_choices", None)
+        require(
+            isinstance(choices, dict)
+            and isinstance(request.get("source_facts"), dict)
+            and set(choices) <= set(request["source_facts"])
+            and all(isinstance(v, str) and bool(v.strip()) for v in choices.values()),
+            "HOLD_QUOTE_CHOICE_SCHEMA_OR_COVERAGE",
+        )
     if request["schema_version"] != REQUEST_SCHEMA:
         binding = base.pop("metal_source", None)
         require(
@@ -444,6 +467,30 @@ def din_capacity(
     return proof
 
 
+def quote_assessment(outcome: Any, units: Any) -> dict[str, Any]:
+    """Keep strict proofs intact; only a complete calculational proof is eligible."""
+    if outcome["status"] == "FIT":
+        return {"calculation_status": "PASS", "reasons": outcome["reasons"]}
+    capacity = outcome.get("din_capacity_assessment")
+    if (
+        outcome["status"] == "UNKNOWN"
+        and outcome["reasons"]
+        == ["HOLD_PHYSICAL_MOUNTING_DEPTH_INSTALLATION_IP_EVIDENCE_REQUIRED"]
+        and capacity is not None
+        and capacity["status"] == "PASS"
+        and capacity["panel_assessment"]["status"] == "NOT_APPLICABLE"
+        and all(u["envelope"]["mounting"] == "DIN" for u in units)
+    ):
+        return {
+            "calculation_status": "PASS",
+            "reasons": ["DIN_CAPACITY_ONLY_PHYSICAL_FIT_NOT_VERIFIED"],
+        }
+    return {
+        "calculation_status": "NO_FIT" if outcome["status"] == "NO_FIT" else "HOLD",
+        "reasons": outcome["reasons"],
+    }
+
+
 def select(
     case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
 ) -> dict[str, Any]:
@@ -455,7 +502,8 @@ def select(
     require(len(ids) == len(set(ids)), "HOLD_DUPLICATE_ITEM")
     require(set(req["source_facts"]) == set(ids), "HOLD_SOURCE_FACT_COVERAGE")
     current = req["schema_version"] != REQUEST_SCHEMA
-    capacity = req["schema_version"] == CURRENT_REQUEST_SCHEMA
+    quote = req["schema_version"] == QUOTE_REQUEST_SCHEMA
+    capacity = quote or req["schema_version"] == CURRENT_REQUEST_SCHEMA
     technical = capacity or req["schema_version"] == TECHNICAL_REQUEST_SCHEMA
     source_version = req["metal_source"]["version"] if current else None
     inventory = (
@@ -573,35 +621,55 @@ def select(
             "catalogue": inventory,
             "physical_installation_status": "HOLD",
         }
-        unknown = [c for c in outcomes if c["status"] == "UNKNOWN"]
-        if unknown:
-            hold(
-                "HOLD_CATALOGUE_UNRESOLVED_CANDIDATES:" + unknown[0]["reasons"][0],
-                details,
-            )
-        if not feasible:
-            hold(
-                (
-                    "HOLD_SOURCE_DIMENSIONS_INCOMPATIBLE"
-                    if fact["dimensions_status"] == "EXPLICIT"
-                    else "HOLD_NO_FITTING_CATALOGUE_CABINET"
-                ),
-                details,
-            )
-        minima = [
-            c
-            for c in feasible
-            if all(
-                all(
-                    a <= b
-                    for a, b in zip(c["dimensions_mm"], o["dimensions_mm"], strict=True)
+        if quote:
+            for outcome in outcomes:
+                outcome["quote_assessment"] = quote_assessment(outcome, units)
+            details["quote_candidates"] = [
+                c["cabinet_code"]
+                for c in outcomes
+                if c["quote_assessment"]["calculation_status"] == "PASS"
+            ]
+            choice = req["quote_choices"].get(item["item_id"])
+            if choice is None:
+                hold("HOLD_QUOTE_CHOICE_REQUIRED", details)
+            matches = [c for c in outcomes if c["cabinet_code"] == choice]
+            if len(matches) != 1:
+                hold("HOLD_QUOTE_CHOICE_IDENTITY", details)
+            selected = matches[0]
+            if selected["quote_assessment"]["calculation_status"] != "PASS":
+                hold("HOLD_QUOTE_CHOICE_CALCULATION:" + selected["reasons"][0], details)
+        else:
+            unknown = [c for c in outcomes if c["status"] == "UNKNOWN"]
+            if unknown:
+                hold(
+                    "HOLD_CATALOGUE_UNRESOLVED_CANDIDATES:" + unknown[0]["reasons"][0],
+                    details,
                 )
-                for o in feasible
-            )
-        ]
-        if len(minima) != 1:
-            hold("HOLD_SMALLEST_CABINET_AMBIGUOUS", details)
-        selected = minima[0]
+            if not feasible:
+                hold(
+                    (
+                        "HOLD_SOURCE_DIMENSIONS_INCOMPATIBLE"
+                        if fact["dimensions_status"] == "EXPLICIT"
+                        else "HOLD_NO_FITTING_CATALOGUE_CABINET"
+                    ),
+                    details,
+                )
+            minima = [
+                c
+                for c in feasible
+                if all(
+                    all(
+                        a <= b
+                        for a, b in zip(
+                            c["dimensions_mm"], o["dimensions_mm"], strict=True
+                        )
+                    )
+                    for o in feasible
+                )
+            ]
+            if len(minima) != 1:
+                hold("HOLD_SMALLEST_CABINET_AMBIGUOUS", details)
+            selected = minima[0]
         prior = fact["prior_approval"]
         if prior["status"] == "APPROVED" and (
             prior["cabinet_code"] != selected["cabinet_code"]
@@ -628,18 +696,38 @@ def select(
                     "physical_rail_anchors": None,
                 },
                 "provenance": dict(details, source_fact=fact),
+                **(
+                    {
+                        "engineering_scope": "QUOTE_PREPARATION",
+                        "calculation_status": "PASS",
+                        "physical_fit_status": "NOT_VERIFIED",
+                        "minimality_status": "NOT_VERIFIED",
+                        "layout": selected["layout"]
+                        or {
+                            "din_capacity_assessment": selected[
+                                "din_capacity_assessment"
+                            ]
+                        },
+                    }
+                    if quote
+                    else {}
+                ),
             }
         )
     return dict(
         exact.serial(
             {
                 "schema_version": (
-                    CURRENT_SCHEMA
-                    if capacity
+                    QUOTE_SCHEMA
+                    if quote
                     else (
-                        TECHNICAL_SCHEMA
-                        if technical
-                        else VERSIONED_SCHEMA if current else SCHEMA
+                        CURRENT_SCHEMA
+                        if capacity
+                        else (
+                            TECHNICAL_SCHEMA
+                            if technical
+                            else VERSIONED_SCHEMA if current else SCHEMA
+                        )
                     )
                 ),
                 "case_id": case_id,

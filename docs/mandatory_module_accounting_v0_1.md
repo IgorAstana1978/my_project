@@ -1,5 +1,14 @@
 # Mandatory Module Accounting v0.1
 
+Opt-in QUOTE_PREPARATION `cabinet_sizing.catalogue.v0.5` описан в
+`cabinet_sizing_v0_1.md`. Его явный выбор из независимо проверенных расчётных
+кандидатов не отменяет ни одного требования module evidence/ledger, source
+admission, SKU/accessory coverage, capacity или reserve. Wrapper/ledger schemas
+сохраняются; reserve_base хранит новый algorithm schema и полностью пересчитывает
+его. Physical FIT и минимальность NOT_VERIFIED допустимы для стадии КП после
+явного HA1; partial DIN PASS при непроверенной обязательной PANEL-зоне недопустим.
+Сам выбор не является approval, техническим источником или pricing mapping.
+
 Новые запуски preliminary builder перед HA1 требуют отдельный
 `cabinet_sizing.module.v0.1`. Старые evidence records, sizing reports и
 confirmed artifacts не мигрируются. Approval phrase, authority, decision record,

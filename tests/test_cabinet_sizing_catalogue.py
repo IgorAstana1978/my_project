@@ -8,6 +8,7 @@ from typing import Any
 
 import cabinet_catalogue as catalogue  # type: ignore[import-not-found]
 import cabinet_sizing as sizing  # type: ignore[import-not-found]
+import cabinet_sizing_catalogue as selector  # type: ignore[import-not-found]
 import pytest
 from test_cabinet_sizing_pragmatic import provision
 from test_cabinet_sizing_selector import synthetic_record, synthetic_zone
@@ -786,3 +787,544 @@ def test_missing_mount_rows_are_unknown_and_request_cannot_supply_geometry(
     request["catalogue"] = {"cabinet": cab}
     with pytest.raises(sizing.SizingHold, match="HOLD_PRAGMATIC_REQUEST_SCHEMA"):
         sizing.size_composition("CASE", [item], request)
+
+
+def quote_request(request: Any, registry: Any, choices: Any) -> Any:
+    return dict(
+        request,
+        schema_version=selector.QUOTE_REQUEST_SCHEMA,
+        metal_source=registry["2026.10.21"],
+        quote_choices=choices,
+    )
+
+
+@pytest.mark.parametrize("kind", ["unknown", "equal", "incomparable", "larger"])
+def test_quote_choice_is_checked_without_claiming_minimality(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any, kind: str
+) -> None:
+    item, request = expanded(tmp_path, monkeypatch)
+    second = record("SECOND", size=[300, 400, 150])
+    if kind == "unknown":
+        second = record("SECOND", "KRV")
+    elif kind == "incomparable":
+        second["dimensions_mm"] = second["source"]["raw_dimension_values"] = [
+            400,
+            300,
+            150,
+        ]
+    elif kind == "larger":
+        second["dimensions_mm"] = second["source"]["raw_dimension_values"] = [
+            200,
+            300,
+            150,
+        ]
+    inject(monkeypatch, [record("FIRST", size=[300, 400, 150]), second])
+    request = quote_request(request, synthetic_sources, {"I": "FIRST"})
+    report = sizing.size_composition("CASE", [item], request)
+    selection = report["items"][0]
+    assert report["schema_version"] == selector.QUOTE_SCHEMA
+    assert selection["engineering_scope"] == "QUOTE_PREPARATION"
+    assert selection["calculation_status"] == "PASS"
+    assert (
+        selection["physical_fit_status"]
+        == selection["minimality_status"]
+        == ("NOT_VERIFIED")
+    )
+    assert selection["cabinet"]["cabinet_code"] == "FIRST"
+    assert "FIRST" in selection["provenance"]["quote_candidates"]
+    if kind == "unknown":
+        other = selection["provenance"]["candidate_outcomes"][1]
+        assert other["status"] == "UNKNOWN"
+        assert other["quote_assessment"]["calculation_status"] == "HOLD"
+    item["cabinet"] = selection["cabinet"]
+    with pytest.raises(
+        sizing.SizingHold, match="HOLD_MODULE_LEDGER_REQUIRED_FOR_QUOTE"
+    ):
+        sizing.verify_report(report, [item], expected_case_id="CASE")
+    with pytest.raises(sizing.SizingHold, match="HOLD_MODULE_LEDGER_REQUIRED"):
+        sizing.verify_before_ha1(report, [item], expected_case_id="CASE")
+
+
+def test_quote_discovery_evaluates_candidates_without_selecting_or_approving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any
+) -> None:
+    item, request = expanded(tmp_path, monkeypatch)
+    monkeypatch.setattr(selector.planning, "request_for", lambda *args: request)
+    inject(
+        monkeypatch,
+        [record("FIT"), record("UNKNOWN", "KRV"), record("SMALL", size=[1, 1, 1])],
+    )
+    proposed = selector.quote_request_for("CASE", [item])
+    assert proposed["quote_choices"] == {}
+    with pytest.raises(sizing.SizingHold, match="HOLD_QUOTE_CHOICE_REQUIRED") as held:
+        sizing.size_composition("CASE", [item], proposed)
+    assert held.value.details["quote_candidates"] == ["FIT"]
+    assert "cabinet" not in held.value.details
+    assert selector.request_for("CASE", [item])["schema_version"] == (
+        selector.CURRENT_REQUEST_SCHEMA
+    )
+
+
+@pytest.mark.parametrize(
+    "mode", ["panel", "gap", "budget", "overflow", "mount_fail", "ok"]
+)
+def test_quote_capacity_requires_complete_calculational_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any, mode: str
+) -> None:
+    _, item, request = capacity_outcome(
+        tmp_path,
+        monkeypatch,
+        synthetic_sources,
+        (
+            [110] * 4
+            if mode == "budget"
+            else [217] if mode in {"overflow", "mount_fail"} else [54] * 9
+        ),
+        panel=mode == "panel",
+        gap=mode == "gap",
+        budget=mode == "budget",
+        full_mount=mode == "mount_fail",
+    )
+    request = quote_request(request, synthetic_sources, {"I": "CATALOGUE-KRN-ROW-64"})
+    if mode != "ok":
+        with pytest.raises(sizing.SizingHold, match="HOLD_QUOTE_CHOICE_CALCULATION"):
+            sizing.size_composition("CASE", [item], request)
+        return
+    selection = sizing.size_composition("CASE", [item], request)["items"][0]
+    assert selection["calculation_status"] == "PASS"
+    assert selection["provenance"]["candidate_outcomes"][0]["status"] == "UNKNOWN"
+    assert selection["layout"]["din_capacity_assessment"]["capacity_only"] is True
+    assert selection["physical_fit_status"] == "NOT_VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "fault,reason",
+    [
+        ("identity", "HOLD_QUOTE_CHOICE_IDENTITY"),
+        ("duplicate_identity", "HOLD_QUOTE_CHOICE_IDENTITY"),
+        ("no_fit", "HOLD_QUOTE_CHOICE_CALCULATION"),
+        ("source_gap", "HOLD_QUOTE_CHOICE_CALCULATION"),
+        ("source_hwd", "HOLD_QUOTE_CHOICE_CALCULATION"),
+        ("prior", "HOLD_CABINET_CHANGE_REQUIRES_NEW_HUMAN_APPROVAL"),
+        ("extra_item", "HOLD_QUOTE_CHOICE_SCHEMA_OR_COVERAGE"),
+        ("flag", "HOLD_QUOTE_CHOICE_SCHEMA_OR_COVERAGE"),
+        ("injected_dimensions", "HOLD_PRAGMATIC_REQUEST_SCHEMA"),
+    ],
+)
+def test_quote_choice_cannot_supply_authority_or_override_constraints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_sources: Any,
+    fault: str,
+    reason: str,
+) -> None:
+    fact: Any = None
+    if fault == "source_hwd":
+        fact = {"dimensions_status": "EXPLICIT", "dimensions_mm": [70, 30, 20]}
+    elif fault == "prior":
+        fact = {
+            "prior_approval": {
+                "status": "APPROVED",
+                "cabinet_code": "METAL-600X400X250-D28",
+                "dimensions_mm": [600, 400, 250],
+            }
+        }
+    item, request = expanded(tmp_path, monkeypatch, **({"fact": fact} if fact else {}))
+    cabs = [record("CHOSEN")]
+    if fault == "duplicate_identity":
+        cabs.append(record("CHOSEN"))
+    elif fault == "no_fit":
+        cabs = [record("CHOSEN", size=[1, 1, 1])]
+    elif fault == "source_gap":
+        cabs[0]["source_issues"] = ["HOLD_LABEL_DIMENSION_SOURCE_CONFLICT"]
+    inject(monkeypatch, cabs)
+    choices: Any = {"I": "ABSENT" if fault == "identity" else "CHOSEN"}
+    if fault == "extra_item":
+        choices["EXTRA"] = "CHOSEN"
+    elif fault == "flag":
+        choices["I"] = {"cabinet_code": "CHOSEN", "approved": True}
+    request = quote_request(request, synthetic_sources, choices)
+    if fault == "injected_dimensions":
+        request["dimensions_mm"] = [999, 999, 999]
+    with pytest.raises(sizing.SizingHold, match=reason):
+        sizing.size_composition("CASE", [item], request)
+
+
+@pytest.mark.parametrize(
+    "tamper", ["status", "minimality", "physical", "scope", "choice", "source"]
+)
+def test_quote_report_recompute_rejects_tamper_and_source_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any, tamper: str
+) -> None:
+    item, request = expanded(tmp_path, monkeypatch)
+    inject(monkeypatch, [record("FIRST"), record("SECOND")])
+    request = quote_request(request, synthetic_sources, {"I": "FIRST"})
+    import cabinet_sizing_module_accounting as modules  # type: ignore[import-not-found]
+    from module_accounting_fixtures import provision_modules, repin
+
+    base = sizing.size_composition("CASE", [item], request)
+    item["cabinet"] = base["items"][0]["cabinet"]
+    binding, data = provision_modules(tmp_path, monkeypatch, "CASE", [item], base)
+    base = modules.size_base("CASE", [item], request, binding)
+    data["sizing_sha256"] = sizing.digest(base)
+    binding = repin(monkeypatch, Path(binding["path"]), data)
+    report = modules.build_sizing_report("CASE", [item], base, binding)
+    sizing.verify_report(report, [item], expected_case_id="CASE")
+    if tamper == "choice":
+        report["base_report"]["sources"]["request"]["quote_choices"]["I"] = "SECOND"
+    elif tamper == "source":
+        path = Path(request["devices"]["path"])
+        path.write_bytes(path.read_bytes() + b" ")
+    else:
+        field = {
+            "status": "calculation_status",
+            "minimality": "minimality_status",
+            "physical": "physical_fit_status",
+            "scope": "engineering_scope",
+        }[tamper]
+        report["base_report"]["items"][0][field] = "FORGED"
+    with pytest.raises(
+        sizing.SizingHold, match="HOLD_SIZING_REPORT_DRIFT|HOLD_SOURCE_SHA_DRIFT"
+    ):
+        sizing.verify_report(report, [item], expected_case_id="CASE")
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "success",
+        "wrong_phrase",
+        "missing",
+        "before_phrase",
+        "after_phrase",
+        "publication",
+    ],
+)
+def test_quote_native_ha1_boundaries_and_calculator_transition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any, stage: str
+) -> None:
+    import cabinet_sizing_module_accounting as modules  # type: ignore[import-not-found]
+    import validate_confirmed_composition_artifact as validator  # type: ignore[import-not-found]
+    from module_accounting_fixtures import NATIVE_BUILD, provision_modules, repin
+    from test_build_confirmed_composition_from_preliminary_bundle import (
+        builder,
+        create_batch_bundle,
+        fixed_now,
+    )
+
+    root, _, decisions = create_batch_bundle(tmp_path)
+    snapshot = builder.load_snapshot(
+        builder.resolve_case_paths("CASE-TEST-001", canonical_root=root)
+    )
+    state = builder.apply_batch_decisions(
+        snapshot,
+        builder.load_decisions_input(decisions),
+        case_id="CASE-TEST-001",
+        automatic_cabinet=True,
+    )
+    request = quote_request(
+        builder_request(tmp_path, monkeypatch, state.items),
+        synthetic_sources,
+        {i["item_id"]: "CATALOGUE-METAL-ROW-22" for i in state.items},
+    )
+    inject(monkeypatch, [record("CATALOGUE-METAL-ROW-22"), record("UNKNOWN", "KRV")])
+    monkeypatch.setattr(modules, "build_sizing_report", NATIVE_BUILD)
+    base = sizing.size_composition("CASE-TEST-001", state.items, request)
+    for item, selection in zip(state.items, base["items"], strict=True):
+        item["cabinet"] = selection["cabinet"]
+    binding, data = provision_modules(
+        tmp_path, monkeypatch, "CASE-TEST-001", state.items, base
+    )
+    base = modules.size_base("CASE-TEST-001", state.items, request, binding)
+    data["sizing_sha256"] = sizing.digest(base)
+    binding = repin(monkeypatch, Path(binding["path"]), data)
+    request_path = tmp_path / "quote-request.json"
+    request_path.write_text(json.dumps(request), encoding="utf-8")
+    prompts: list[str] = []
+    reviews: list[str] = []
+
+    def drift() -> None:
+        path = Path(binding["path"])
+        path.write_bytes(path.read_bytes() + b" ")
+
+    def output(text: str) -> None:
+        reviews.append(text)
+        if stage == "before_phrase" and "FINAL TECHNICAL" in text:
+            drift()
+
+    def ask(prompt: str) -> str:
+        prompts.append(prompt)
+        return "WRONG" if stage == "wrong_phrase" else "SYNTHETIC APPROVAL"
+
+    if stage == "publication":
+
+        def publication(**kwargs: Any) -> None:
+            drift()
+            kwargs["recheck"]()
+            pytest.fail("publication must HOLD on drift")
+
+        monkeypatch.setattr(builder, "publish_atomically", publication)
+    kwargs = dict(
+        case_id="CASE-TEST-001",
+        confirmation_id="TEST-QUOTE",
+        approval_channel="synthetic",
+        canonical_root=root,
+        decisions_json=decisions,
+        cabinet_sizing_json=request_path,
+        cabinet_sizing_sha256=hashlib.sha256(request_path.read_bytes()).hexdigest(),
+        module_evidence_json=None if stage == "missing" else Path(binding["path"]),
+        module_evidence_sha256=None if stage == "missing" else binding["sha256"],
+        input_fn=ask,
+        output_fn=output,
+        approval_phrase="SYNTHETIC APPROVAL",
+        now_fn=fixed_now,
+        before_drift_check=drift if stage == "after_phrase" else None,
+    )
+    result = builder.run_builder(**kwargs)
+    if stage != "success":
+        assert result.status == (
+            "FAIL" if stage == "wrong_phrase" else "HOLD"
+        ), result.red_flags
+        assert not result.output_created
+        assert len(prompts) == (0 if stage in {"missing", "before_phrase"} else 1)
+        assert not (root / "CASE-TEST-001" / "confirmed").exists()
+        return
+    assert result.status == "PASS", result.red_flags
+    path = result.output_dir / builder.ARTIFACT_NAME
+    artifact = json.loads(path.read_bytes())
+    assert (
+        validator.validate_confirmed_composition_artifact(
+            path, before_human_approval_1=True, expected_case_id="CASE-TEST-001"
+        ).status
+        == "PASS"
+    )
+    assert artifact["safety"]["production_authorized"] is False
+    assert artifact["safety"]["price_approved_by_igor"] is False
+    review = "\n".join(reviews)
+    receipt = (result.output_dir / builder.RECEIPT_NAME).read_text(encoding="utf-8")
+    assert "Human Approval: REQUIRED" in review
+    assert "Human Approval: recorded" in receipt
+    for text in (review, receipt):
+        assert "QUOTE_PREPARATION" in text
+        assert "calculation_status=PASS" in text
+        assert "Physical FIT=NOT_VERIFIED" in text and "minimality=NOT_VERIFIED" in text
+    before = path.read_bytes()
+    repeated = builder.run_builder(**kwargs)
+    assert repeated.status == "FAIL" and not repeated.output_created
+    assert any("exists" in flag for flag in repeated.red_flags)
+    assert path.read_bytes() == before
+    import build_price_calculator_input_draft_from_confirmed_composition as pricing  # type: ignore[import-not-found]
+
+    output_path = tmp_path / "synthetic-calculator-input.json"
+    calculated = pricing.build_price_calculator_input_draft(path, output_path)
+    assert calculated.status == "PASS", calculated.red_flags
+    payload = json.loads(output_path.read_bytes())
+    assert payload["safety"]["price_calculation_executed"] is False
+    assert payload["safety"]["sending_authorized"] is False
+    assert payload["safety"]["production_authorized"] is False
+
+
+def test_quote_cli_projects_choices_and_rejects_extra_ids(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_sources: Any,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    data = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples/confirmed_composition_artifact.example.json"
+        ).read_bytes()
+    )
+    items = [copy.deepcopy(data["items"][0]) for _ in range(2)]
+    items[1]["item_id"] = "SECOND-ITEM"
+    request = quote_request(
+        builder_request(tmp_path, monkeypatch, items),
+        synthetic_sources,
+        {items[0]["item_id"]: "TEST-A", items[1]["item_id"]: "TEST-B"},
+    )
+    inject(monkeypatch, [record("TEST-A"), record("TEST-B")])
+    composition = tmp_path / "composition.json"
+    composition.write_text(json.dumps({"items": items}), encoding="utf-8")
+    path = tmp_path / "request.json"
+
+    def run() -> int:
+        path.write_text(json.dumps(request), encoding="utf-8")
+        return int(
+            sizing.main(
+                [
+                    "--case-id",
+                    "CASE-TEST-001",
+                    "--composition-json",
+                    str(composition),
+                    "--request-json",
+                    str(path),
+                    "--request-sha256",
+                    hashlib.sha256(path.read_bytes()).hexdigest(),
+                ]
+            )
+        )
+
+    assert run() == 0
+    result = json.loads(capsys.readouterr().out)
+    assert len(result["results"]) == 2
+    for entry in result["results"]:
+        assert entry["status"] == "PROPOSED"
+        assert set(entry["report"]["sources"]["quote_choices"]) == {entry["item_id"]}
+        assert (
+            entry["report"]["items"][0]["cabinet"]["cabinet_code"]
+            == request["quote_choices"][entry["item_id"]]
+        )
+    del request["quote_choices"][items[1]["item_id"]]
+    assert run() == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["results"][0]["status"] == "PROPOSED"
+    assert result["results"][1]["first_missing"] == "HOLD_QUOTE_CHOICE_REQUIRED"
+    assert result["results"][1]["details"]["quote_candidates"] == ["TEST-A", "TEST-B"]
+    request["quote_choices"]["EXTRA"] = "TEST-A"
+    assert run() == 2
+    assert "HOLD_QUOTE_CHOICE_SCHEMA_OR_COVERAGE" in capsys.readouterr().out
+
+
+def test_quote_bare_report_cannot_bypass_ledger_via_ordinary_confirmed_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any
+) -> None:
+    import build_price_calculator_input_draft_from_confirmed_composition as pricing  # type: ignore[import-not-found]
+    import validate_confirmed_composition_artifact as validator  # type: ignore[import-not-found]
+
+    data = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples/confirmed_composition_artifact.example.json"
+        ).read_bytes()
+    )
+    request = quote_request(
+        builder_request(tmp_path, monkeypatch, data["items"]),
+        synthetic_sources,
+        {i["item_id"]: "TEST-CAB" for i in data["items"]},
+    )
+    inject(monkeypatch, [record("TEST-CAB")])
+    report = sizing.size_composition("CASE-TEST-001", data["items"], request)
+    for item, selection in zip(data["items"], report["items"], strict=True):
+        item["cabinet"] = selection["cabinet"]
+    data.update(case_id="CASE-TEST-001", cabinet_sizing=report)
+    path = tmp_path / "synthetic-bare-confirmed.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    for before_ha1 in (False, True):
+        result = validator.validate_confirmed_composition_artifact(
+            path, before_human_approval_1=before_ha1, expected_case_id="CASE-TEST-001"
+        )
+        assert result.status == "FAIL"
+        assert any("HOLD_MODULE_LEDGER_REQUIRED" in flag for flag in result.red_flags)
+    output = tmp_path / "forbidden-calculator-input.json"
+    result = pricing.build_price_calculator_input_draft(path, output)
+    assert result.status == "FAIL" and not output.exists()
+    assert any(
+        "HOLD_MODULE_LEDGER_REQUIRED_FOR_QUOTE" in flag for flag in result.red_flags
+    )
+
+
+@pytest.mark.parametrize("accessory_kind", [None, "PANEL", "OTHER"])
+@pytest.mark.parametrize("model", ["capacity", "metal", "metal_core_panel"])
+def test_quote_capacity_ledger_cannot_hide_required_non_din_accessory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_sources: Any,
+    accessory_kind: str | None,
+    model: str,
+) -> None:
+    import cabinet_sizing_module_accounting as modules  # type: ignore[import-not-found]
+    from module_accounting_fixtures import provision_modules, repin
+
+    if model == "capacity":
+        _, item, request = capacity_outcome(
+            tmp_path, monkeypatch, synthetic_sources, [54] * 3
+        )
+        code = "CATALOGUE-KRN-ROW-64"
+    else:
+        supplied = {}
+        if model == "metal_core_panel":
+            supplied = {
+                "item": {
+                    "item_id": "I",
+                    "product_name": "TEST",
+                    "quantity": 1,
+                    "components": [
+                        {
+                            "component_id": "C",
+                            "component_code": "TEST_PANEL",
+                            "quantity": 1,
+                        }
+                    ],
+                },
+                "records": [
+                    synthetic_record("PANEL", mounting="PANEL", size=[80, 30, 30])
+                ],
+            }
+        item, request = expanded(tmp_path, monkeypatch, **supplied)
+        code = "METAL-TEST"
+        inject(monkeypatch, [record(code)])
+    request = quote_request(request, synthetic_sources, {"I": code})
+    base = sizing.size_composition("CASE", [item], request)
+    item["cabinet"] = base["items"][0]["cabinet"]
+    binding, data = provision_modules(
+        tmp_path,
+        monkeypatch,
+        "CASE",
+        [item],
+        base,
+        {"I": "PANEL"} if model == "metal_core_panel" else None,
+    )
+    if accessory_kind:
+        product = dict(
+            data["products"][0],
+            id="ACCESSORY",
+            sku="TEST-ACCESSORY",
+            mounting=accessory_kind,
+            nominal_modules=None,
+            width_mm=None,
+            area_mm2=75,
+        )
+        data["products"].append(product)
+        data["profiles"].append(
+            dict(
+                data["profiles"][0],
+                id="ACCESSORY",
+                product_ids=["ACCESSORY"],
+                allowed_zones=[accessory_kind],
+                nominal_modules=None,
+                width_mm=None,
+                area_mm2=75,
+            )
+        )
+        board = data["boards"][0]
+        board["instances"].append(
+            dict(id="ACCESSORY", component_id=None, unit=1, product_id="ACCESSORY")
+        )
+        board["groups"].append(
+            dict(
+                id="ACCESSORY",
+                profile_id="ACCESSORY",
+                instance_ids=["ACCESSORY"],
+                zone_id=accessory_kind,
+            )
+        )
+        binding = repin(monkeypatch, Path(binding["path"]), data)
+    base = modules.size_base("CASE", [item], request, binding)
+    data["sizing_sha256"] = sizing.digest(base)
+    binding = repin(monkeypatch, Path(binding["path"]), data)
+    report = modules.build_sizing_report("CASE", [item], base, binding)
+    # The ordinary ledger proves resource reserve, not non-DIN geometry.
+    modules.verify_sizing_report(report, [item], "CASE")
+    if accessory_kind:
+        reason = (
+            "HOLD_QUOTE_CAPACITY_ONLY_NON_DIN"
+            if model == "capacity"
+            else "HOLD_QUOTE_NON_DIN_ACCESSORY_GEOMETRY"
+        )
+        with pytest.raises(sizing.SizingHold, match=reason):
+            sizing.verify_report(report, [item], expected_case_id="CASE")
+        with pytest.raises(sizing.SizingHold, match=reason):
+            sizing.verify_before_ha1(report, [item], expected_case_id="CASE")
+    else:
+        sizing.verify_before_ha1(report, [item], expected_case_id="CASE")
