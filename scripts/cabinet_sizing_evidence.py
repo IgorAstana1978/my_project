@@ -95,6 +95,18 @@ AUTHORIZED: frozenset[tuple[str, str, str]] = frozenset(
     {
         ("devices", str(REFERENCE.resolve()), REFERENCE_SHA),
         (
+            "devices",
+            str(
+                Path(
+                    "C:/Users/IgorN/.codex/visualizations/2026/11/04/"
+                    "01a1a5cb-2980-7991-9ac6-f76358deaacc/"
+                    "iek-case-evidence-review-20261105-v1/"
+                    "devices.din.frozen.DRAFT.json"
+                ).resolve()
+            ),
+            "e07815e93861883641bb9481d5b8b7b755a463691aee5af4385f4159f25848bb",
+        ),
+        (
             "pragmatic_source_fact",
             str(PRAGMATIC_REVIEW.resolve()),
             PRAGMATIC_REVIEW_SHA,
