@@ -5,6 +5,7 @@ No materialization or activation entrypoint. Historical D82 resolver is untouche
 
 from __future__ import annotations
 
+import re
 import stat
 from decimal import ROUND_UP, Decimal
 from pathlib import Path
@@ -169,7 +170,12 @@ def resolve_versioned_metal_cost(
 
 
 CATALOGUE_METAL_ROWS = range(8, 57)
-CATALOGUE_PRICE_SOURCE_VERSION = "2026.06.18"
+# КРН 60-72 and КРВ 73-80: modular enclosures, same D-row formula chain.
+CATALOGUE_MODULAR_ROWS = range(60, 81)
+# Igor 2026-11-06: enclosure and metal cabinet prices come from the latest
+# metal price list (CURRENT_VERSION).
+CATALOGUE_PRICE_SOURCE_VERSION = CURRENT
+MODULAR_LABEL = re.compile(r"Корпус (КР[НВ])-(\d+) (\d+)х(\d+)х(\d+) ")
 
 
 def resolve_catalogue_metal_cost(
@@ -179,13 +185,15 @@ def resolve_catalogue_metal_cost(
 
     Only a standard `HxWxD ` label is accepted; its O/P/S work values come from
     the row itself and the full D-row formula chain is verified exactly. The
-    approved ten sizes must also equal their code-controlled values. Case
-    pricing keeps the GENESIS source by default, like `metal_cost`.
+    approved ten sizes must also equal their code-controlled values. КРН/КРВ
+    rows take `Корпус КРН-18 265х440х100 ` labels. The catalogue uses the
+    latest metal price list by default (Igor 2026-11-06).
     """
     from wu8_governed_sources import METAL_SIZES, metal_identity
 
     require(
-        type(row) is int and row in CATALOGUE_METAL_ROWS,
+        type(row) is int
+        and (row in CATALOGUE_METAL_ROWS or row in CATALOGUE_MODULAR_ROWS),
         "catalogue METAL row outside scope",
     )
     source = resolve_metal_source(source_version)
@@ -204,11 +212,18 @@ def resolve_catalogue_metal_cost(
         "catalogue METAL row values must be literal integers",
     )
     h, w, d = size
-    require(
-        label == f"{h}х{w}х{d} ",
-        "catalogue METAL special form factor requires separate cost mapping",
-    )
-    if size in METAL_SIZES:
+    if row in CATALOGUE_MODULAR_ROWS:
+        found = MODULAR_LABEL.fullmatch(label) if isinstance(label, str) else None
+        require(
+            found is not None and found.group(3, 4, 5) == (str(h), str(w), str(d)),
+            "catalogue modular enclosure label/size mismatch",
+        )
+    else:
+        require(
+            label == f"{h}х{w}х{d} ",
+            "catalogue METAL special form factor requires separate cost mapping",
+        )
+    if size in METAL_SIZES and row in CATALOGUE_METAL_ROWS:
         require(
             METAL_SIZES[size] == (row, *work),
             "catalogue METAL row conflicts with approved size mapping",
@@ -218,7 +233,11 @@ def resolve_catalogue_metal_cost(
     require(source == resolve_metal_source(source["version"]), "metal source drift")
     return {
         **result,
-        "cabinet_code": f"CATALOGUE-METAL-ROW-{row}",
+        "cabinet_code": (
+            f"CATALOGUE-METAL-ROW-{row}"
+            if row in CATALOGUE_METAL_ROWS
+            else f"CATALOGUE-{'KRN' if row < 73 else 'KRV'}-ROW-{row}"
+        ),
         "dimensions_mm": list(size),
         "identity": identity,
         "metal_source": source,

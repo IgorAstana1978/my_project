@@ -71,18 +71,14 @@ EXTRA_SHR_LABELS = {
     22: "ВН-32 2Р 16-25-40-63А",
     23: "ВН-32 1Р 16-25-40-63А",
 }
-# Igor 2026-11-06: CHINT apparatus is priced from the earlier main table
-# "Таблица 05.01.2026 верная" (same sheets, rows and labels as the active one);
-# EKF keeps the active baseline. Enclosure and AVR sources are unchanged.
+# Igor 2026-11-06 (later decision): all apparatus and its installation work,
+# CHINT and EKF alike, are priced from the active baseline
+# "Таблица 09.09.2026 верная-2" — the correct and latest table. A brand that
+# needs its own pinned table would be listed here as {"path", "sha256"}.
+# Enclosures and metal cabinets come from the metal price list.
 BRAND_PRICE_SOURCES: dict[str, dict[str, str] | None] = {
     "EKF": None,
-    "CHINT": {
-        "path": str(
-            Path(r"C:\Users\IgorN\Documents\invoice_quote_filler_data\prices\current")
-            / "Таблица 05.01.2026 верная.xlsx"
-        ),
-        "sha256": "79b3ace77e84b87c46eb708f1c3b2ae63b5c6d75c5ebf6889c12b99624112ba1",
-    },
+    "CHINT": None,
 }
 RCBO_CURVES = {"B", "C"}
 SWITCH_RATINGS = {16, 25, 40, 63, 80, 100}
@@ -727,10 +723,14 @@ def catalogue_enclosure_cost(
 ) -> dict[str, Any]:
     """Bridge a cabinet-sizing catalogue identity to its exact cost source.
 
-    Igor 2026-11-06: METAL rows price from their own METAL workbook row; КРН/КРВ
-    rows map only to the unique CAB-* identity bound to the same METAL row.
-    Label dimensions must equal the source; any other row stays closed.
+    Igor 2026-11-06: every catalogue enclosure (METAL, КРН, КРВ) is priced from
+    its own row of the latest metal price list. КРН/КРВ rows must still map to
+    the unique CAB-* identity bound to the same row, and that row's label must
+    name the same enclosure. Label dimensions must equal the source; any other
+    row stays closed.
     """
+    from governed_metal_cost import resolve_catalogue_metal_cost
+
     label = item["cabinet"]["cabinet_label"]
     size = governed_sources.dimensions(label)
     require(
@@ -738,8 +738,6 @@ def catalogue_enclosure_cost(
         "confirmed cabinet/size rule conflict",
     )
     if family == "METAL":
-        from governed_metal_cost import resolve_catalogue_metal_cost
-
         result = resolve_catalogue_metal_cost(row)
     else:
         matches = [
@@ -748,7 +746,13 @@ def catalogue_enclosure_cost(
             if code.startswith(f"CAB-{family}-") and record[3] == row
         ]
         require(len(matches) == 1, "catalogue cabinet has no exact cost identity")
-        result = governed_sources.cabinet_cost(workbook["КРН"], baseline, matches[0])
+        name = governed_sources.CABINETS[matches[0]][0]
+        result = resolve_catalogue_metal_cost(row)
+        require(
+            str(result["identity"]["label"]).startswith(f"Корпус {name} "),
+            "catalogue cabinet/source name conflict",
+        )
+        result = {**result, "cabinet_code": matches[0], "commercial_identity": name}
     require(
         tuple(result["dimensions_mm"]) == size,
         "catalogue cabinet label/source dimension conflict",

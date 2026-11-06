@@ -7,9 +7,10 @@ Usage: python -I tools/claude/price_boards.py <boards.json> <out.json>
      "cabinet": {"family": "METAL", "row": 35, "label": "700х500х250 ",
                  "code": "CATALOGUE-METAL-ROW-35"},
      "bom": [["MCCB 3P 80-100A", 1], ["MCB 3P D 10-63A", 6]]}
-Categories are the keys of `future_case_hardening.CATEGORIES` (CHINT January
-table); cabinet rows/labels are the price catalogue rows (КРН 60-72, METAL
-8-56). Same sources and canonical formula as price_boards_2etazh.py.
+Categories are the keys of `future_case_hardening.CATEGORIES`. Apparatus and
+its installation work (CHINT and EKF) come from the active baseline
+"Таблица 09.09.2026 верная-2"; cabinets (КРН 60-72, КРВ 73-80, METAL 8-56)
+from their row of the latest metal price list (Igor 2026-11-06).
 NOT the governed Case chain: no Human Approval or Case artifact.
 """
 
@@ -27,9 +28,6 @@ from price_baseline_contract import (  # noqa: E402
     sha256_file,
 )
 
-src = f.BRAND_PRICE_SOURCES["CHINT"]
-assert sha256_file(Path(src["path"])) == src["sha256"]
-jan = load_workbook(src["path"], read_only=True, data_only=False)
 base = resolve_active_price_baseline(
     Path(
         r"C:\Users\IgorN\Documents\invoice_quote_filler_data\prices"
@@ -41,7 +39,7 @@ main = load_workbook(base.path, read_only=True, data_only=False)
 
 def row(cat):
     sheet, r, label = f.CATEGORIES[cat]
-    ws = jan[sheet]
+    ws = main[sheet]
     assert " ".join(str(ws.cell(r, 1).value).split()) == label, cat
     return D(str(ws.cell(r, 2).value)), D(str(ws.cell(r, 3).value)), f"{sheet}!{r}"
 
@@ -78,7 +76,7 @@ for board in boards:
             "cabinet_locator": c.get("source_locator"),
         }
     )
-assert sha256_file(Path(src["path"])) == src["sha256"]
+assert sha256_file(base.path) == base.sha256
 Path(sys.argv[2]).write_text(
     json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8"
 )
