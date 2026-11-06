@@ -14,6 +14,7 @@ import re
 import secrets
 import sys
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -232,6 +233,7 @@ class Journal:
         if event in {"STARTUP", "HOLD"}:
             if data not in (
                 {"reason": "FOREGROUND"},
+                {"reason": "BACKGROUND"},
                 {"reason": "CONFIG_MISMATCH"},
                 {"reason": "LOCAL_OR_TRANSPORT_HOLD"},
             ):
@@ -609,7 +611,13 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> None:
     )
 
 
-def reply(config: Config, journal: Journal, api: BotAPI, case_id: str) -> None:
+def reply(
+    config: Config,
+    journal: Journal,
+    api: BotAPI,
+    case_id: str,
+    confirm: Callable[[], bool],
+) -> None:
     """Operator-confirmed reply to the private chat the Case came from."""
     if config.outbox is None:
         print("WU13 SEND DISABLED: profile v1 is receive-only", flush=True)
@@ -636,7 +644,7 @@ def reply(config: Config, journal: Journal, api: BotAPI, case_id: str) -> None:
     message_id = integer(update["message"]["message_id"])
     kinds = "+".join(p.suffix.lower()[1:] for p in files)
     print(f"WU13 SEND READY: {kinds} to the request chat; type confirm", flush=True)
-    if sys.stdin.readline().strip() != "confirm":
+    if not confirm():
         print("WU13 SEND CANCELLED", flush=True)
         return
     # Re-check identity and files after the operator's pause.
@@ -659,16 +667,33 @@ def reply(config: Config, journal: Journal, api: BotAPI, case_id: str) -> None:
     print("WU13 SENT", flush=True)
 
 
-def run(config: Config) -> None:
+def run(
+    config: Config,
+    *,
+    token: Callable[[Config], str] | None = None,
+    read: Callable[[], str] | None = None,
+    confirm: Callable[[], bool] | None = None,
+) -> None:
+    """Foreground by default; the background runner passes its own sources."""
+    background = token is not None
+    read = read or sys.stdin.readline
+    if confirm is None:
+        source = read
+
+        def confirm() -> bool:
+            return source().strip() == "confirm"
+
     with receiver_lock(config.receipts) as fresh:
         journal = Journal(config)
         if not fresh and not journal.records:
             raise TelegramHold("initialized audit missing or empty")
         try:
             verify_local(config, journal)
-            journal.append("STARTUP", {"reason": "FOREGROUND"})
+            journal.append(
+                "STARTUP", {"reason": "BACKGROUND" if background else "FOREGROUND"}
+            )
             started = time.monotonic()
-            api = BotAPI(hidden_token(config))
+            api = BotAPI((token or hidden_token)(config))
             bot = wire.api_result(api.call("getMe"))
             if (
                 not isinstance(bot, dict)
@@ -687,14 +712,14 @@ def run(config: Config) -> None:
                 flush=True,
             )
             while True:
-                command = sys.stdin.readline().strip()
+                command = read().strip()
                 if command in {"", "stop"}:
                     return
                 if time.monotonic() - started >= MAX_RUN_SECONDS:
                     raise TelegramHold("foreground coordination expired or invalid")
                 target = re.fullmatch(r"send (CASE-TELEGRAM-[A-F0-9]{64})", command)
                 if target:
-                    reply(config, journal, api, target.group(1))
+                    reply(config, journal, api, target.group(1), confirm)
                     continue
                 if command != "poll":
                     raise TelegramHold("foreground coordination expired or invalid")

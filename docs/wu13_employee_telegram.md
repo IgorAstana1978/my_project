@@ -67,6 +67,31 @@ the original message, checks that Telegram confirms the same chat, then appends
 `SENT`. Both records hold only the Case ID and a digest of the outbox file
 names+hashes. The generic `call()` allow-list is unchanged (no `sendMessage`).
 
+## Background runner (Igor's decision 2026-11-06)
+
+Igor chose automation: "only send the project, Claude works with it".
+`scripts/wu13_employee_daemon.py run <profile>` (started hidden with `pythonw`
+at Windows logon) drives the same `run()` without a terminal:
+
+- the token is read from Windows Credential Manager (generic credential
+  `wu13/<bot_username>/telegram-token`, this Windows user), saved once with
+  `save-token <profile>` through the same masked dialog; never in files, argv,
+  environment or logs;
+- it polls once a minute and ends each run after 50 minutes (below the one-hour
+  limit), then restarts with the usual no-offset first poll; STARTUP records
+  `BACKGROUND`;
+- a reply is sent only for a Case whose empty request file
+  `send_queue/<CASE_ID>` (next to the profile, outside all roots) appears; the
+  file is consumed once and is the operator confirmation. It is created only
+  after Igor's explicit "yes" for that Case (in chat to Claude, or by Igor);
+  all `send` checks above still apply;
+- any HOLD is logged with a fixed line in `bot.log`; it retries after 5 minutes
+  and stops after 3 consecutive failures; `status.json` shows RUNNING / RETRY /
+  HOLD / STOPPED. An unfinished send still holds until Igor checks the chat.
+
+A Claude scheduled task reads the new Cases and prepares a draft quote for
+Igor; it never creates a `send_queue` file on its own.
+
 Each Case is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is
