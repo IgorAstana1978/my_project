@@ -18,6 +18,34 @@ admitted version, не mutable CURRENT. `quote_request_for` создаёт opt-i
 по default/цене/семейству. CLI выдаёт отдельную оценку каждого щита.
 Выбор не меняет технические факты и не является Human Approval.
 
+Рекомендация (решение Игоря 2026-11-06, `cabinet_sizing.quote_recommendation.v0.2`):
+при `HOLD_QUOTE_CHOICE_REQUIRED` details дополнительно содержат
+`quote_recommendation` — один предложенный кандидат, причина (`reason`) и до трёх
+альтернатив только из PASS `quote_candidates`. Цель — приблизить подсказку к
+выбору инженеров ПТО. Порядок уровней:
+
+1. `DIN_ONLY_MODULAR_BOX` — если щит проходит в модульном боксе КРН/КРВ (на
+   практике это только щиты из одних DIN-аппаратов), предлагается наименьший по
+   объёму такой бокс;
+2. `METAL_FRONT_FILL_MAX_20_PERCENT_DEPTH_MIN_250` — иначе наименьший по фасаду
+   В×Ш (затем В, Ш, Г) METAL, у которого планировочные габариты аппаратов
+   занимают не более 20% фасада и глубина не меньше 250 мм;
+3. `SMALLEST_ELIGIBLE_VOLUME_FALLBACK` — иначе наименьший внешний объём.
+
+В том же решении: в v0.5 quote discovery без reserve policy модульные корпуса
+КРН/КРВ проверяются с DIN-резервом 0% (они рассчитаны ровно на число модулей в
+названии), как и в существующей family policy `cabinet_reserve.by_family.v0.1`.
+Ёмкость каждой рейки и PANEL-правила не меняются; METAL и v0.4 сохраняют 25%.
+
+Глубина 250 мм — стандартная рабочая глубина ПТО. Порог 20% и уровни откалиброваны по одному тестовому Case (выбор ПТО: ЩО-6 →
+METAL 800×600×250, заполнение 17.7%; НЩР и АВР → КРН-36) и требуют проверки на
+других проектах. `metal_price_available` показывает, есть ли размер в
+утверждённых ценах METAL (`wu8_governed_sources.METAL_SIZES`), но на выбор не
+влияет. Статус `RECOMMENDATION_ONLY_NOT_A_CHOICE`: рекомендация ничего не
+выбирает, HOLD сохраняется, отчёт и provenance не меняются. Выбор по-прежнему
+делается только явной записью кода в `quote_choices` после решения Игоря. Если
+PASS-кандидатов нет, значение `null`.
+
 Допустим существующий FIT расчётной модели либо узкий DIN capacity-only proof:
 strict UNKNOWN вызван только отсутствием physical mounting/depth/install/IP,
 DIN capacity PASS, PANEL NOT_APPLICABLE и все units DIN. Исходный UNKNOWN не
@@ -55,6 +83,19 @@ source-proven non-DIN зоны допустимы; исторические wrap
 geometry также даёт HOLD: module profile доказывает площадь/ownership, но не
 содержит H/W/D и проверяемого inclusion binding к base layout. Core PANEL
 footprints, уже участвующие в расчётной модели, этим правилом не блокируются.
+
+Мостик к цене (решение Игоря 2026-11-06): `future_case_hardening.ordinary_enclosure_cost`
+принимает коды `CATALOGUE-METAL-ROW-N`, `CATALOGUE-KRN-ROW-N`, `CATALOGUE-KRV-ROW-N`.
+METAL-строка 8–56 со стандартной подписью `В×Ш×Г ` считается
+`governed_metal_cost.resolve_catalogue_metal_cost` из своей строки того же
+METAL-прайса, что и Case pricing (GENESIS 2026.06.18), с точной проверкой
+формул D/H–N/Q; O/P/S берутся из строки, а для десяти утверждённых размеров
+обязаны совпадать с `METAL_SIZES`. Специальные исполнения (подпись с
+суффиксом) остаются закрытыми. КРН/КРВ отображаются только на единственный
+`CAB-*` из `CABINETS` с той же METAL-строкой (КРН-12…96, КРВ-12…72) и считаются
+прежним `cabinet_cost`; КРН-9/КРВ-9/КРН-120+ закрыты. Размеры из подписи
+обязаны совпасть с источником. Мостик не меняет `METAL_SIZES`, pragmatic
+whitelist и исторические отчёты; согласование цены/срока/КП остаётся отдельным.
 
 Confirmed artifact schema и approval-record schema не меняются. После HA1
 существующий следующий шаг — calculator-input draft; verified prices, approvals

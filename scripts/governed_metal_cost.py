@@ -168,6 +168,63 @@ def resolve_versioned_metal_cost(
     }
 
 
+CATALOGUE_METAL_ROWS = range(8, 57)
+CATALOGUE_PRICE_SOURCE_VERSION = "2026.06.18"
+
+
+def resolve_catalogue_metal_cost(
+    row: int, *, source_version: str = CATALOGUE_PRICE_SOURCE_VERSION
+) -> dict[str, Any]:
+    """Cost of a catalogue METAL row (Igor 2026-11-06 sizing-to-price bridge).
+
+    Only a standard `HxWxD ` label is accepted; its O/P/S work values come from
+    the row itself and the full D-row formula chain is verified exactly. The
+    approved ten sizes must also equal their code-controlled values. Case
+    pricing keeps the GENESIS source by default, like `metal_cost`.
+    """
+    from wu8_governed_sources import METAL_SIZES, metal_identity
+
+    require(
+        type(row) is int and row in CATALOGUE_METAL_ROWS,
+        "catalogue METAL row outside scope",
+    )
+    source = resolve_metal_source(source_version)
+    workbook = Path(source["path"])
+    book = load_workbook(workbook, read_only=True, data_only=False, keep_links=False)
+    try:
+        require(book.sheetnames == ["Лист1"], "metal sheet identity drift")
+        s = book["Лист1"]
+        size = tuple(s[f"{c}{row}"].value for c in "EFG")
+        work = tuple(s[f"{c}{row}"].value for c in "OPS")
+        label = s[f"A{row}"].value
+    finally:
+        book.close()
+    require(
+        all(type(v) is int and v > 0 for v in (*size, *work)),
+        "catalogue METAL row values must be literal integers",
+    )
+    h, w, d = size
+    require(
+        label == f"{h}х{w}х{d} ",
+        "catalogue METAL special form factor requires separate cost mapping",
+    )
+    if size in METAL_SIZES:
+        require(
+            METAL_SIZES[size] == (row, *work),
+            "catalogue METAL row conflicts with approved size mapping",
+        )
+    identity = metal_identity(row, label, size, *work)
+    result = _inspect_cost(workbook, source["sha256"], identity)
+    require(source == resolve_metal_source(source["version"]), "metal source drift")
+    return {
+        **result,
+        "cabinet_code": f"CATALOGUE-METAL-ROW-{row}",
+        "dimensions_mm": list(size),
+        "identity": identity,
+        "metal_source": source,
+    }
+
+
 def _inspect_cost(
     workbook: Path, expected_sha256: str, identity: dict[str, Any]
 ) -> dict[str, Any]:

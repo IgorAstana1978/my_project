@@ -860,9 +860,129 @@ def test_quote_discovery_evaluates_candidates_without_selecting_or_approving(
         sizing.size_composition("CASE", [item], proposed)
     assert held.value.details["quote_candidates"] == ["FIT"]
     assert "cabinet" not in held.value.details
+    recommendation = held.value.details["quote_recommendation"]
+    assert recommendation["status"] == "RECOMMENDATION_ONLY_NOT_A_CHOICE"
+    assert recommendation["recommended"]["cabinet_code"] == "FIT"
+    assert recommendation["alternatives"] == []
     assert selector.request_for("CASE", [item])["schema_version"] == (
         selector.CURRENT_REQUEST_SCHEMA
     )
+
+
+def test_quote_discovery_recommends_comfortable_metal_over_tight_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any
+) -> None:
+    item, request = expanded(tmp_path, monkeypatch)
+    monkeypatch.setattr(selector.planning, "request_for", lambda *args: request)
+    inject(
+        monkeypatch,
+        [
+            record("TIGHT", size=[300, 400, 150]),
+            record("ROOMY", size=[1200, 1000, 300]),
+        ],
+    )
+    with pytest.raises(sizing.SizingHold, match="HOLD_QUOTE_CHOICE_REQUIRED") as held:
+        sizing.size_composition(
+            "CASE", [item], selector.quote_request_for("CASE", [item])
+        )
+    recommendation = held.value.details["quote_recommendation"]
+    assert recommendation["rule"] == selector.RECOMMENDATION_RULE
+    assert recommendation["reason"] == "METAL_FRONT_FILL_MAX_20_PERCENT_DEPTH_MIN_250"
+    assert recommendation["recommended"]["cabinet_code"] == "ROOMY"
+    assert recommendation["recommended"]["metal_price_available"] is False
+    assert [a["cabinet_code"] for a in recommendation["alternatives"]] == ["TIGHT"]
+    assert recommendation["alternatives"][0]["front_fill_percent"] is not None
+    assert "cabinet" not in held.value.details
+
+
+def _outcome(
+    code: str,
+    family: str,
+    size: Any,
+    status: str = "PASS",
+    occupied: Any = None,
+) -> Any:
+    return {
+        "cabinet_code": code,
+        "cabinet_label": f" {code} ",
+        "family": family,
+        "dimensions_mm": size,
+        "layout": (
+            None
+            if occupied is None
+            else {"placements": [{"dimensions_mm": [str(a) for a in occupied]}]}
+        ),
+        "quote_assessment": {"calculation_status": status, "reasons": []},
+    }
+
+
+def test_quote_recommendation_tiers_and_absence() -> None:
+    assert selector.quote_recommendation([]) is None
+    assert (
+        selector.quote_recommendation(
+            [
+                _outcome("HELD", "METAL", [500, 400, 250], "HOLD"),
+                _outcome("NO-SIZE", "METAL", None),
+            ]
+        )
+        is None
+    )
+    assert selector.front_fill(_outcome("X", "METAL", [500, 400, 250])) is None
+    empty = _outcome("E", "METAL", [500, 400, 250], occupied=[1, 1, 1])
+    empty["layout"]["placements"] = []
+    assert selector.front_fill(empty) is None
+
+    # PTO: an all-DIN board that passes in a modular box gets the smallest box.
+    modular = selector.quote_recommendation(
+        [
+            _outcome("METAL-OK", "METAL", [800, 600, 250], occupied=[100, 100, 50]),
+            _outcome("KRN-36", "KRN", [540, 330, 100]),
+            _outcome("KRV-12", "KRV", [275, 320, 125]),
+        ]
+    )
+    assert modular is not None
+    assert modular["reason"] == "DIN_ONLY_MODULAR_BOX"
+    assert modular["recommended"]["cabinet_code"] == "KRV-12"
+    assert modular["recommended"]["front_fill_percent"] is None
+    assert [a["cabinet_code"] for a in modular["alternatives"]] == [
+        "KRN-36",
+        "METAL-OK",
+    ]
+
+    # PTO: otherwise the smallest METAL front with <=20% fill and depth >=250.
+    # 300x300 = 90000 mm2 of devices: 600x400 = 37.5%, 800x600 = 18.75%.
+    devices = [300, 300, 90]
+    metal = selector.quote_recommendation(
+        [
+            _outcome("TIGHT", "METAL", [600, 400, 250], occupied=devices),
+            _outcome("SHALLOW", "METAL", [800, 600, 200], occupied=devices),
+            _outcome("DEEP", "METAL", [800, 600, 300], occupied=devices),
+            _outcome("PTO", "METAL", [800, 600, 250], occupied=devices),
+            _outcome("BIG", "METAL", [1000, 800, 250], occupied=devices),
+        ]
+    )
+    assert metal is not None
+    assert metal["reason"] == "METAL_FRONT_FILL_MAX_20_PERCENT_DEPTH_MIN_250"
+    assert metal["recommended"]["cabinet_code"] == "PTO"
+    assert metal["recommended"]["front_fill_percent"] == "18.8"
+    assert metal["recommended"]["metal_price_available"] is False
+    assert [a["cabinet_code"] for a in metal["alternatives"]] == [
+        "DEEP",
+        "BIG",
+        "TIGHT",
+    ]
+
+    # Nothing comfortable: the smallest eligible volume, priced flag preserved.
+    fallback = selector.quote_recommendation(
+        [
+            _outcome("B", "METAL", [600, 400, 250], occupied=devices),
+            _outcome("A", "METAL", [500, 400, 250], occupied=devices),
+        ]
+    )
+    assert fallback is not None
+    assert fallback["reason"] == "SMALLEST_ELIGIBLE_VOLUME_FALLBACK"
+    assert fallback["recommended"]["cabinet_code"] == "A"
+    assert fallback["recommended"]["metal_price_available"] is True
 
 
 @pytest.mark.parametrize(
@@ -895,6 +1015,23 @@ def test_quote_capacity_requires_complete_calculational_proof(
     assert selection["provenance"]["candidate_outcomes"][0]["status"] == "UNKNOWN"
     assert selection["layout"]["din_capacity_assessment"]["capacity_only"] is True
     assert selection["physical_fit_status"] == "NOT_VERIFIED"
+
+
+def test_quote_modular_box_uses_zero_din_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, synthetic_sources: Any
+) -> None:
+    # 12 x 54 mm = 648 mm: exactly the rated КРН-36 capacity, no 25% reserve.
+    outcome, item, request = capacity_outcome(
+        tmp_path, monkeypatch, synthetic_sources, [54] * 12
+    )
+    assert outcome["din_capacity_assessment"]["status"] == "NO_FIT"
+    request = quote_request(request, synthetic_sources, {"I": "CATALOGUE-KRN-ROW-64"})
+    selection = sizing.size_composition("CASE", [item], request)["items"][0]
+    capacity = selection["layout"]["din_capacity_assessment"]
+    assert selection["calculation_status"] == "PASS"
+    assert capacity["status"] == "PASS"
+    assert capacity["reserve_required_percent"] == "0"
+    assert capacity["free_mm"] == "0"
 
 
 @pytest.mark.parametrize(

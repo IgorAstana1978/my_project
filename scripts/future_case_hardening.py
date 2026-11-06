@@ -649,12 +649,68 @@ def check_avr_bom(rules: Mapping[str, Any], bom: Sequence[Mapping[str, Any]]) ->
         )
 
 
+CATALOGUE_CODE = re.compile(r"CATALOGUE-(METAL|KRN|KRV)-ROW-([1-9][0-9]*)")
+CATALOGUE_PREFIXES = (
+    "CATALOGUE-METAL-ROW-",
+    "CATALOGUE-KRN-ROW-",
+    "CATALOGUE-KRV-ROW-",
+)
+
+
+def catalogue_enclosure_cost(
+    workbook: Any,
+    baseline: Any,
+    rules: Mapping[str, Any],
+    item: Mapping[str, Any],
+    family: str,
+    row: int,
+) -> dict[str, Any]:
+    """Bridge a cabinet-sizing catalogue identity to its exact cost source.
+
+    Igor 2026-11-06: METAL rows price from their own METAL workbook row; КРН/КРВ
+    rows map only to the unique CAB-* identity bound to the same METAL row.
+    Label dimensions must equal the source; any other row stays closed.
+    """
+    label = item["cabinet"]["cabinet_label"]
+    size = governed_sources.dimensions(label)
+    require(
+        rules["enclosure_mm"] is None or tuple(rules["enclosure_mm"]) == size,
+        "confirmed cabinet/size rule conflict",
+    )
+    if family == "METAL":
+        from governed_metal_cost import resolve_catalogue_metal_cost
+
+        result = resolve_catalogue_metal_cost(row)
+    else:
+        matches = [
+            code
+            for code, record in governed_sources.CABINETS.items()
+            if code.startswith(f"CAB-{family}-") and record[3] == row
+        ]
+        require(len(matches) == 1, "catalogue cabinet has no exact cost identity")
+        result = governed_sources.cabinet_cost(workbook["КРН"], baseline, matches[0])
+    require(
+        tuple(result["dimensions_mm"]) == size,
+        "catalogue cabinet label/source dimension conflict",
+    )
+    return {
+        **result,
+        "technical_cabinet_code": item["cabinet"]["cabinet_code"],
+        "source_designation": label,
+    }
+
+
 def ordinary_enclosure_cost(
     workbook: Any, baseline: Any, rules: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Resolve confirmed cabinet identity; keep raw designation as provenance."""
     _, item = load_technical_binding(rules["context"], rules["technical_binding"])
     code = item["cabinet"]["cabinet_code"]
+    catalogue = CATALOGUE_CODE.fullmatch(code)
+    if catalogue:
+        return catalogue_enclosure_cost(
+            workbook, baseline, rules, item, catalogue[1], int(catalogue[2])
+        )
     if code in governed_sources.CABINETS:
         result = governed_sources.cabinet_cost(workbook["КРН"], baseline, code)
         require(
@@ -832,7 +888,7 @@ def calculate_future_price(
                 context, rules["technical_binding"]
             )
             if technical_item["cabinet"]["cabinet_code"].startswith(
-                ("METAL-", "CAB-KRN", "CAB-KRV")
+                ("METAL-", "CAB-KRN", "CAB-KRV", *CATALOGUE_PREFIXES)
             ) or re.match(
                 r"^ЩР[нНвВ](?=$|[\s-])", technical_item["cabinet"]["cabinet_label"]
             ):

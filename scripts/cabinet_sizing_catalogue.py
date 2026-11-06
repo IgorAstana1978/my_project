@@ -491,6 +491,102 @@ def quote_assessment(outcome: Any, units: Any) -> dict[str, Any]:
     }
 
 
+RECOMMENDATION_RULE = "cabinet_sizing.quote_recommendation.v0.2"
+RECOMMENDATION_ALTERNATIVES = 3
+MODULAR_FAMILIES = ("KRN", "KRV")
+# Calibrated on the PTO choices for the WU15 test Case (2026-11-06):
+# ЩО-6 -> METAL 800x600x250 (17.7% front fill), НЩР/АВР -> КРН-36.
+METAL_MAX_FRONT_FILL = Decimal("0.20")
+METAL_MIN_DEPTH_MM = 250
+
+
+def front_fill(candidate: Any) -> Decimal | None:
+    """Share of the outer front H*W taken by planned device envelopes."""
+    layout = candidate.get("layout")
+    if not layout or not layout.get("placements"):
+        return None
+    h, w, _ = candidate["dimensions_mm"]
+    area = sum(
+        Decimal(p["dimensions_mm"][0]) * Decimal(p["dimensions_mm"][1])
+        for p in layout["placements"]
+    )
+    return area / (Decimal(h) * Decimal(w))
+
+
+def quote_recommendation(outcomes: Any) -> dict[str, Any] | None:
+    """Suggest one calculationally eligible cabinet; never a choice or approval.
+
+    Igor's decision of 2026-11-06, aiming at the PTO engineers' choices:
+    1. an all-DIN board that passes in a modular box (КРН/КРВ) gets the
+       smallest such box;
+    2. otherwise the smallest METAL front (H*W, then H, W, depth) whose planned
+       devices take at most 20% of the front and whose depth is at least 250mm;
+    3. otherwise the smallest eligible outer volume.
+    The result only informs `quote_choices`.
+    """
+    from wu8_governed_sources import METAL_SIZES
+
+    eligible = [
+        c
+        for c in outcomes
+        if c["quote_assessment"]["calculation_status"] == "PASS"
+        and c["dimensions_mm"] is not None
+    ]
+    if not eligible:
+        return None
+
+    def volume(c: Any) -> tuple[Any, ...]:
+        h, w, d = c["dimensions_mm"]
+        return (h * w * d, h, w, d, c["cabinet_code"])
+
+    def front(c: Any) -> tuple[Any, ...]:
+        h, w, d = c["dimensions_mm"]
+        return (h * w, h, w, d, c["cabinet_code"])
+
+    def comfortable(c: Any) -> bool:
+        fill = front_fill(c)
+        return (
+            c["family"] == "METAL"
+            and fill is not None
+            and fill <= METAL_MAX_FRONT_FILL
+            and c["dimensions_mm"][2] >= METAL_MIN_DEPTH_MM
+        )
+
+    modular = sorted(
+        (c for c in eligible if c["family"] in MODULAR_FAMILIES), key=volume
+    )
+    metal = sorted((c for c in eligible if comfortable(c)), key=front)
+    tiers = [
+        ("DIN_ONLY_MODULAR_BOX", modular),
+        ("METAL_FRONT_FILL_MAX_20_PERCENT_DEPTH_MIN_250", metal),
+        ("SMALLEST_ELIGIBLE_VOLUME_FALLBACK", sorted(eligible, key=volume)),
+    ]
+    reason = next(name for name, tier in tiers if tier)
+    ranked: list[Any] = []
+    for _, tier in tiers:
+        ranked.extend(c for c in tier if c not in ranked)
+
+    def entry(c: Any) -> dict[str, Any]:
+        fill = front_fill(c)
+        return {
+            "cabinet_code": c["cabinet_code"],
+            "cabinet_label": c["cabinet_label"].strip(),
+            "family": c["family"],
+            "dimensions_mm": list(c["dimensions_mm"]),
+            "front_fill_percent": (None if fill is None else str(round(fill * 100, 1))),
+            "metal_price_available": c["family"] == "METAL"
+            and tuple(c["dimensions_mm"]) in METAL_SIZES,
+        }
+
+    return {
+        "rule": RECOMMENDATION_RULE,
+        "status": "RECOMMENDATION_ONLY_NOT_A_CHOICE",
+        "reason": reason,
+        "recommended": entry(ranked[0]),
+        "alternatives": [entry(c) for c in ranked[1 : 1 + RECOMMENDATION_ALTERNATIVES]],
+    }
+
+
 def select(
     case_id: str, items: Any, request: Any = None, *, reserve_policy: Any = None
 ) -> dict[str, Any]:
@@ -532,6 +628,15 @@ def select(
             din_min, panel_min = reserve_policy_rules.thresholds(
                 reserve_policy, item["item_id"], record["family"]
             )
+            # Igor 2026-11-06: modular boxes are rated for the module count in
+            # their name, so quote discovery uses the family DIN reserve 0%.
+            modular_zero = (
+                quote
+                and reserve_policy is None
+                and record["family"] in MODULAR_FAMILIES
+            )
+            if modular_zero:
+                din_min = Decimal(0)
             if din_min not in shapes_by_reserve:
                 try:
                     shapes, panel = planning.planning_shapes(
@@ -561,7 +666,7 @@ def select(
                             "din_free_percent": din_min,
                             "panel_free_percent": panel_min,
                         }
-                        if reserve_policy is not None
+                        if reserve_policy is not None or modular_zero
                         else {}
                     ),
                 )
@@ -631,6 +736,7 @@ def select(
             ]
             choice = req["quote_choices"].get(item["item_id"])
             if choice is None:
+                details["quote_recommendation"] = quote_recommendation(outcomes)
                 hold("HOLD_QUOTE_CHOICE_REQUIRED", details)
             matches = [c for c in outcomes if c["cabinet_code"] == choice]
             if len(matches) != 1:
