@@ -52,6 +52,30 @@ ORDINARY_SHR_CATEGORIES = {"MCCB 3P 80-100A", "MCB 3P D 10-63A"}
 ORDINARY_SHR_CATEGORIES |= set(governed_sources.SHR_BREAKERS)
 for _category, _spec in governed_sources.SHR_BREAKERS.items():
     CATEGORIES[_category] = ("ЩР", _spec[0], governed_sources.SHR_LABELS[_spec[0]])
+# Igor 2026-11-06: every 30 mA differential breaker (any brand, e.g. IEK АВДТ32)
+# is priced as EKF АД-32; ЩР rows 5/6 are labelled "УЗО АД-32", but EKF АД-32 is
+# a differential breaker. Poles count the neutral (1P+N = 2). ВН-32 load
+# switches use their listed ratings only. Kept here, not in the SHA-pinned WU8
+# module, so the cabinet catalogue binding stays unchanged.
+EXTRA_SHR_BREAKERS = {
+    "RCBO 1P+N 30mA <=63A": (5, "RCBO", 2, None, 1, 63),
+    "RCBO 3P+N 30mA <=63A": (6, "RCBO", 4, None, 1, 63),
+    "SWITCH 3P 16-100A": (21, "SWITCH", 3, None, 16, 100),
+    "SWITCH 2P 16-63A": (22, "SWITCH", 2, None, 16, 63),
+    "SWITCH 1P 16-63A": (23, "SWITCH", 1, None, 16, 63),
+}
+EXTRA_SHR_LABELS = {
+    5: "УЗО АД-32 1Р+N до 63А EKF",
+    6: "УЗО АД-32 3Р+N до 63А EKF",
+    21: "ВН-32 3Р 16-25-40-63-80-100А",
+    22: "ВН-32 2Р 16-25-40-63А",
+    23: "ВН-32 1Р 16-25-40-63А",
+}
+RCBO_CURVES = {"B", "C"}
+SWITCH_RATINGS = {16, 25, 40, 63, 80, 100}
+ORDINARY_SHR_CATEGORIES |= set(EXTRA_SHR_BREAKERS)
+for _category, _spec in EXTRA_SHR_BREAKERS.items():
+    CATEGORIES[_category] = ("ЩР", _spec[0], EXTRA_SHR_LABELS[_spec[0]])
 for _topology, _source in governed_sources.AVR_SHEETS.items():
     for _rating in governed_sources.DRIVE_RATINGS:
         CATEGORIES[f"MCCB AVR {_topology} {_rating}A"] = (_source[0], 0, "")
@@ -96,7 +120,10 @@ def check_protection_category(component: Mapping[str, Any], category: str) -> No
         category in CATEGORIES
         and (
             (kind in MCCB_INSTALL_TYPES and category.startswith("MCCB "))
-            or (kind.startswith("modular_") and category.startswith("MCB "))
+            or (
+                kind.startswith("modular_")
+                and category.startswith(("MCB ", "RCBO ", "SWITCH "))
+            )
         ),
         "protection type/category conflict",
     )
@@ -108,15 +135,35 @@ def check_protection_category(component: Mapping[str, Any], category: str) -> No
     ratings = re.findall(
         r"(?<!\w)(?:([BCD])\s*(\d+)(?:\s*[AА])?|(\d+)\s*[AА])(?!\w)", label
     )
-    spec = governed_sources.SHR_BREAKERS.get(category)
+    spec = governed_sources.SHR_BREAKERS.get(category) or EXTRA_SHR_BREAKERS.get(
+        category
+    )
     expected_poles = spec[2] if spec else 3
+    neutral = 1 if re.search(r"[1-3]\s*[PР]\s*\+\s*N(?!\w)", label) else 0
     require(
-        len(poles) == 1 and int(poles[0]) == expected_poles, "protection poles unproven"
+        len(poles) == 1 and int(poles[0]) + neutral == expected_poles,
+        "protection poles unproven",
     )
     require(len(ratings) == 1, "protection rating ambiguous/missing")
     curve, trip_rating, plain_rating = ratings[0]
     rating = int(trip_rating or plain_rating)
-    if spec and spec[1] == "MCB":
+    if spec and spec[1] == "RCBO":
+        require(
+            kind == f"modular_{spec[2]}p"
+            and curve in RCBO_CURVES
+            and spec[4] <= rating <= spec[5]
+            and re.search(r"(?<!\d)30\s*(?:М|M)[AА](?!\w)", label) is not None,
+            "differential breaker type/characteristic/rating/leakage conflict",
+        )
+    elif spec and spec[1] == "SWITCH":
+        require(
+            kind == f"modular_{spec[2]}p"
+            and not curve
+            and spec[4] <= rating <= spec[5]
+            and rating in SWITCH_RATINGS,
+            "load switch type/rating conflict",
+        )
+    elif spec and spec[1] == "MCB":
         require(
             kind == f"modular_{spec[2]}p"
             and curve == spec[3]

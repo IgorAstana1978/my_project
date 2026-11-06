@@ -376,6 +376,12 @@ def test_material_without_work_is_explicit_audited_hold(
         ("MCB 1P D 10-63A", "ВА47 1P D10", "modular_1p"),
         ("MCB 3P B <=63A", "ВА47 3P B63", "modular_3p"),
         ("MCB 1P B <=63A", "ВА47 1P B6", "modular_1p"),
+        ("RCBO 1P+N 30mA <=63A", "QF1 АВДТ32 2P C16/30мА", "modular_2p"),
+        ("RCBO 1P+N 30mA <=63A", "АД-32 1P+N B20 30mA", "modular_2p"),
+        ("RCBO 3P+N 30mA <=63A", "АД-32 3P+N C40 30 мА", "modular_4p"),
+        ("SWITCH 3P 16-100A", "QF0 ВН-32 3P 25А", "modular_3p"),
+        ("SWITCH 2P 16-63A", "ВН-32 2P 63A", "modular_2p"),
+        ("SWITCH 1P 16-63A", "ВН-32 1P 16A", "modular_1p"),
     ],
 )
 def test_exact_shr_signature(category: str, label: str, kind: str) -> None:
@@ -385,6 +391,49 @@ def test_exact_shr_signature(category: str, label: str, kind: str) -> None:
         f.check_protection_category(
             {**component, "component_label": label + " 40A"}, category
         )
+
+
+@pytest.mark.parametrize(
+    "category,label,kind,reason",
+    [
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P C16/100мА", "modular_2p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P C16", "modular_2p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P D16/30мА", "modular_2p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P 16А/30мА", "modular_2p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P C80/30мА", "modular_2p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 2P C16/30мА", "modular_1p", "leakage"),
+        ("RCBO 1P+N 30mA <=63A", "АВДТ32 3P C16/30мА", "modular_2p", "poles"),
+        ("RCBO 3P+N 30mA <=63A", "АД-32 3P C16/30мА", "modular_4p", "poles"),
+        ("SWITCH 3P 16-100A", "ВН-32 3P 32А", "modular_3p", "load switch"),
+        ("SWITCH 3P 16-100A", "ВН-32 3P C25", "modular_3p", "load switch"),
+        ("SWITCH 3P 16-100A", "ВН-32 3P 125А", "modular_3p", "load switch"),
+        ("SWITCH 3P 16-100A", "ВН-32 3P 25А", "mccb_up_to_100a", "category conflict"),
+        ("SWITCH 2P 16-63A", "ВН-32 2P 80А", "modular_2p", "load switch"),
+    ],
+)
+def test_differential_and_switch_signatures_fail_closed(
+    category: str, label: str, kind: str, reason: str
+) -> None:
+    with pytest.raises(f.RuleError, match=reason):
+        f.check_protection_category(
+            {"install_type": kind, "component_label": label}, category
+        )
+
+
+def test_differential_and_switch_rows_bind_exact_price_labels() -> None:
+    assert f.EXTRA_SHR_BREAKERS["RCBO 1P+N 30mA <=63A"][0] == 5
+    assert f.EXTRA_SHR_LABELS[5] == "УЗО АД-32 1Р+N до 63А EKF"
+    assert f.EXTRA_SHR_LABELS[6] == "УЗО АД-32 3Р+N до 63А EKF"
+    assert f.EXTRA_SHR_LABELS[21] == "ВН-32 3Р 16-25-40-63-80-100А"
+    for category in (
+        "RCBO 1P+N 30mA <=63A",
+        "RCBO 3P+N 30mA <=63A",
+        "SWITCH 3P 16-100A",
+        "SWITCH 2P 16-63A",
+        "SWITCH 1P 16-63A",
+    ):
+        assert category in f.ORDINARY_SHR_CATEGORIES
+        assert f.CATEGORIES[category][0] == "ЩР"
 
 
 def test_ordinary_mccb_cannot_use_small_cabinet(

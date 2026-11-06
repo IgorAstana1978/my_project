@@ -106,3 +106,21 @@ the fix versus 56.25 pt needed by AutoFit; after the fix the rendered height is
 57 pt and the same native AutoFit requires 56.25 pt. These checks open a separate
 hidden Excel instance read-only, close without saving, and verify unchanged
 XLSX SHA. Fonts, widths, grid, formulas, height limits and legacy sizing remain.
+
+## Дифавтоматы и ВН-32 (решение Игоря 2026-11-06)
+
+Новые exact-категории ЩР без изменения прайса и формул:
+
+- `RCBO 1P+N 30mA <=63A` → ЩР!5 «УЗО АД-32 1Р+N до 63А EKF»;
+- `RCBO 3P+N 30mA <=63A` → ЩР!6 «УЗО АД-32 3Р+N до 63А EKF»;
+- `SWITCH 3P 16-100A` / `SWITCH 2P 16-63A` / `SWITCH 1P 16-63A` → ЩР!21/22/23 ВН-32.
+
+EKF АД-32 — дифавтомат, хотя строки подписаны «УЗО». По решению Игоря любой
+дифавтомат на 30 мА (любого бренда, например IEK АВДТ32) считается по АД-32 EKF.
+Подпись аппарата должна явно содержать число полюсов (`2P` или `1P+N` для
+1P+N, `4P`/`3P+N` для 3P+N; нейтраль считается полюсом), характеристику B или C,
+номинал 1–63 А и утечку ровно 30 мА; install type `modular_{полюса}p`.
+ВН-32 — только номиналы 16/25/40/63/80/100 А без характеристики. Иное — HOLD.
+Дифавтоматы 100–300 мА (КРН!28/29) на листе ЩР отсутствуют и пока закрыты.
+Категории заданы в `future_case_hardening.EXTRA_SHR_BREAKERS`, а не в
+`wu8_governed_sources.py`: SHA последнего закреплён в каталоге корпусов (КРН-36).
