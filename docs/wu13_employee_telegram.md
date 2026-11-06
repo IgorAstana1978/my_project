@@ -42,7 +42,36 @@ Use the existing Python to run `scripts/wu13_employee_telegram.py` with exactly
 one argument: the approved external profile path, in an interactive terminal
 (stdin and stdout must be TTYs). Do not execute this as part
 of offline tests or preflight. There is no service, background receiver,
-webhook, autostart, reply/send method or automatic polling loop.
+webhook, autostart, automatic reply or automatic polling loop.
+
+## Operator-confirmed reply (Igor's decision 2026-11-06)
+
+Igor allowed the bot to answer approved employees (Igor, PTO) **only in the
+same private chat the request came from**, and **only after an explicit
+operator command on the computer**. Profile v1 stays receive-only.
+
+Profile `wu13_employee_operational.v2` has the v1 fields plus `outbox_root`:
+an existing absolute directory outside Git, separate from and not nested with
+the receipt/Case/WU11 roots; the profile must be outside it. The operator puts
+the reply files in `outbox_root/<CASE_ID>/`: exactly one `.xlsx` and/or one
+`.pdf`, nothing else.
+
+At the prompt the operator types `send <CASE_ID>`. The adapter re-verifies all
+local evidence, refuses an unknown Case, an already-sent Case or a wrong outbox
+(prints a fixed REFUSED line, nothing is sent), then shows the file kinds and
+waits for `confirm`; any other answer cancels. After `confirm` it re-checks the
+evidence and that the files did not change, appends `SEND_INTENT`, calls only
+`sendDocument` (multipart, fixed host) for each file with `chat_id` taken from
+the recorded, still-authorized Case update and `reply_parameters` pointing at
+the original message, checks that Telegram confirms the same chat, then appends
+`SENT`. Both records hold only the Case ID and a digest of the outbox file
+names+hashes. The generic `call()` allow-list is unchanged (no `sendMessage`).
+
+Each Case is answered at most once. A `SEND_INTENT` without `SENT` (crash or
+transport failure mid-send) means the remote outcome is unknown: HOLD before
+token input until Igor checks the chat and a separately approved recovery is
+done. Sent outbox files must stay unchanged; any change is HOLD. Sending is not
+Human Approval and does not confirm composition, price or a document release.
 
 A local masked Tk dialog accepts the token once per run, validates its bot-ID
 prefix and retains it only in process memory. No argv/environment/file token

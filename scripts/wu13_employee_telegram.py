@@ -1,10 +1,17 @@
-"""Operator-started employee intake. Live execution needs separate Igor authority."""
+"""Operator-started employee intake and operator-confirmed reply to the same chat.
+
+Live execution needs separate Igor authority. Replies (profile v2 only) go solely
+to the private chat of the recorded employee request, after `send` + `confirm`
+(Igor's decision 2026-11-06).
+"""
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
+import secrets
 import sys
 import time
 from contextlib import contextmanager
@@ -18,6 +25,7 @@ import wu11_telegram_transport as wire
 from governed_case_intake import _pairs
 from governed_telegram_intake import (
     MAX_BYTES,
+    PROJECT_ROOT,
     TelegramHold,
     TelegramPolicy,
     encode,
@@ -31,6 +39,8 @@ from governed_telegram_intake import (
 )
 
 PROFILE = "wu13_employee_operational.v1"
+PROFILE_SEND = "wu13_employee_operational.v2"
+OUTBOX_SUFFIXES = (".xlsx", ".pdf")
 AUDIT = "_wu13-audit.jsonl"
 LOCK = "_wu13-receiver.lock"
 MAX_RUN_SECONDS = 3600
@@ -55,6 +65,7 @@ class Config:
     employees: frozenset[tuple[int, int]]
     receipts: Path
     cases: Path
+    outbox: Path | None = None
 
     @property
     def policy(self) -> TelegramPolicy:
@@ -65,18 +76,20 @@ class Config:
         safe_path(path.absolute())
         raw = path.read_bytes()
         value = load(raw)
-        if (
-            not isinstance(value, dict)
-            or set(value)
-            != {
-                "profile",
-                "bot_id",
-                "bot_username",
-                "employees",
-                "receipt_root",
-                "case_root",
-            }
-            or value["profile"] != PROFILE
+        fields = {
+            "profile",
+            "bot_id",
+            "bot_username",
+            "employees",
+            "receipt_root",
+            "case_root",
+        }
+        if not isinstance(value, dict) or not (
+            (value.get("profile") == PROFILE and set(value) == fields)
+            or (
+                value.get("profile") == PROFILE_SEND
+                and set(value) == fields | {"outbox_root"}
+            )
         ):
             raise TelegramHold("operational profile required")
         bot_id = integer(value["bot_id"])
@@ -110,7 +123,28 @@ class Config:
             for test in (wire.RECEIPTS.resolve(), wire.CASES.resolve()):
                 if root.is_relative_to(test) or test.is_relative_to(root):
                     raise TelegramHold("WU11 roots are forbidden")
-        if any(path.resolve().is_relative_to(root) for root in (receipts, cases)):
+        outbox = None
+        if "outbox_root" in value:
+            if not isinstance(value["outbox_root"], str) or not (
+                Path(value["outbox_root"]).is_absolute()
+            ):
+                raise TelegramHold("absolute operational roots required")
+            safe_path(Path(value["outbox_root"]).absolute())
+            outbox = Path(value["outbox_root"]).resolve()
+            others = (receipts, cases, wire.RECEIPTS.resolve(), wire.CASES.resolve())
+            if (
+                not outbox.is_dir()
+                or outbox.is_relative_to(PROJECT_ROOT)
+                or any(
+                    outbox.is_relative_to(other) or other.is_relative_to(outbox)
+                    for other in others
+                )
+            ):
+                raise TelegramHold("separate existing outbox outside Git required")
+        if any(
+            path.resolve().is_relative_to(root)
+            for root in (receipts, cases, *([outbox] if outbox else []))
+        ):
             raise TelegramHold("profile must be outside output roots")
         return cls(
             path.absolute(),
@@ -120,6 +154,7 @@ class Config:
             frozenset(pairs),
             receipts,
             cases,
+            outbox,
         )
 
     def unchanged(self) -> None:
@@ -202,6 +237,17 @@ class Journal:
             ):
                 raise TelegramHold("invalid audit diagnostic")
             return
+        if event in {"SEND_INTENT", "SENT"}:
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"case_id", "outbox_sha256"}
+                or not isinstance(data["case_id"], str)
+                or not re.fullmatch(r"CASE-TELEGRAM-[A-F0-9]{64}", data["case_id"])
+                or not isinstance(data["outbox_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", data["outbox_sha256"])
+            ):
+                raise TelegramHold("invalid audit reply")
+            return
         fields = (
             {"update_id", "raw_sha256", "reason"}
             if event == "REJECT"
@@ -263,6 +309,27 @@ class Journal:
                     raise TelegramHold("duplicate audit identity")
                 result[key] = record
         return result
+
+    def replies(self) -> dict[str, str]:
+        """Case -> sent outbox digest; an unfinished intent means unknown outcome."""
+        intents: dict[str, str] = {}
+        sent: dict[str, str] = {}
+        for record in self.records:
+            data = record["data"]
+            if record["event"] == "SEND_INTENT":
+                if data["case_id"] in intents:
+                    raise TelegramHold("duplicate reply intent")
+                intents[data["case_id"]] = data["outbox_sha256"]
+            elif record["event"] == "SENT":
+                if (
+                    intents.get(data["case_id"]) != data["outbox_sha256"]
+                    or data["case_id"] in sent
+                ):
+                    raise TelegramHold("reply audit inconsistent")
+                sent[data["case_id"]] = data["outbox_sha256"]
+        if intents != sent:
+            raise TelegramHold("reply outcome unknown: inspect the Telegram chat")
+        return sent
 
 
 def authorized(update: dict[str, Any], config: Config) -> bool:
@@ -340,9 +407,92 @@ def verify_local(config: Config, journal: Journal) -> None:
             or result.case_id != data["case_id"]
         ):
             raise TelegramHold("duplicate verification failed")
+    replies = journal.replies()
+    if replies and config.outbox is None:
+        raise TelegramHold("reply audit without outbox")
+    for case_id, digest in replies.items():
+        if case_id not in names or outbox_files(config, case_id)[1] != digest:
+            raise TelegramHold("sent reply changed")
+
+
+def outbox_files(config: Config, case_id: str) -> tuple[list[Path], str]:
+    """Exactly one .xlsx and/or one .pdf prepared by the operator for the Case."""
+    if config.outbox is None:
+        raise TelegramHold("reply outbox not configured")
+    folder = config.outbox / case_id
+    safe_path(folder)
+    if not folder.is_dir():
+        raise TelegramHold("reply files missing")
+    files = list(folder.iterdir())
+    suffixes = [p.suffix.lower() for p in files]
+    if (
+        not files
+        or len(set(suffixes)) != len(suffixes)
+        or not set(suffixes) <= set(OUTBOX_SUFFIXES)
+    ):
+        raise TelegramHold("reply files must be one .xlsx and/or one .pdf")
+    files.sort(key=lambda p: OUTBOX_SUFFIXES.index(p.suffix.lower()))
+    hashes = {}
+    for path in files:
+        safe_path(path)
+        if (
+            not path.is_file()
+            or not 0 < path.stat().st_size <= MAX_BYTES
+            or not re.fullmatch(r'[^\\/:*?"<>|\x00-\x1f]{1,128}', path.name)
+        ):
+            raise TelegramHold("unsafe reply file")
+        hashes[path.name] = sha(path.read_bytes())
+    return files, sha(encode(hashes))
 
 
 class BotAPI(wire.BotAPI):
+    def send_document(
+        self, chat_id: int, reply_to: int, name: str, body: bytes
+    ) -> bytes:
+        """sendDocument only; the caller takes chat_id from the verified Case."""
+        boundary = secrets.token_hex(16)
+        fields = {
+            "chat_id": str(chat_id),
+            "reply_parameters": json.dumps(
+                {"message_id": reply_to, "allow_sending_without_reply": True}
+            ),
+        }
+        parts = [
+            (
+                f"--{boundary}\r\nContent-Disposition: form-data; "
+                f'name="{key}"\r\n\r\n{value}\r\n'
+            ).encode()
+            for key, value in fields.items()
+        ]
+        parts.append(
+            (
+                f"--{boundary}\r\nContent-Disposition: form-data; "
+                f'name="document"; filename="{name}"\r\n'
+                "Content-Type: application/octet-stream\r\n\r\n"
+            ).encode()
+            + body
+            + f"\r\n--{boundary}--\r\n".encode()
+        )
+        connection = http.client.HTTPSConnection("api.telegram.org", timeout=60)
+        try:
+            connection.request(
+                "POST",
+                f"/bot{self._secret}/sendDocument",
+                body=b"".join(parts),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+            response = connection.getresponse()
+            if response.status != 200:
+                raise TelegramHold("Telegram HTTP request rejected")
+            raw = response.read(MAX_BYTES + 1)
+            if len(raw) > MAX_BYTES:
+                raise TelegramHold("Telegram response too large")
+            return raw
+        except Exception:
+            raise TelegramHold("Telegram transport unavailable or rejected") from None
+        finally:
+            connection.close()
+
     def call(self, method: str, parameters: dict[str, str] | None = None) -> bytes:
         parameters = parameters or {}
         permitted = {
@@ -459,6 +609,56 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> None:
     )
 
 
+def reply(config: Config, journal: Journal, api: BotAPI, case_id: str) -> None:
+    """Operator-confirmed reply to the private chat the Case came from."""
+    if config.outbox is None:
+        print("WU13 SEND DISABLED: profile v1 is receive-only", flush=True)
+        return
+    verify_local(config, journal)
+    accepted = {
+        r["data"]["case_id"]
+        for r in journal.dispositions().values()
+        if r["event"] == "ACCEPT"
+    }
+    if case_id not in accepted:
+        print("WU13 SEND REFUSED: unknown Case", flush=True)
+        return
+    if case_id in journal.replies():
+        print("WU13 SEND REFUSED: already sent", flush=True)
+        return
+    try:
+        files, digest = outbox_files(config, case_id)
+    except TelegramHold:
+        print("WU13 SEND REFUSED: outbox needs one .xlsx and/or one .pdf", flush=True)
+        return
+    update = load((config.receipts / case_id / "update.json").read_bytes())
+    chat_id = update["message"]["chat"]["id"]
+    message_id = integer(update["message"]["message_id"])
+    kinds = "+".join(p.suffix.lower()[1:] for p in files)
+    print(f"WU13 SEND READY: {kinds} to the request chat; type confirm", flush=True)
+    if sys.stdin.readline().strip() != "confirm":
+        print("WU13 SEND CANCELLED", flush=True)
+        return
+    # Re-check identity and files after the operator's pause.
+    verify_local(config, journal)
+    if outbox_files(config, case_id)[1] != digest:
+        raise TelegramHold("reply files changed before confirm")
+    journal.append("SEND_INTENT", {"case_id": case_id, "outbox_sha256": digest})
+    for path in files:
+        result = wire.api_result(
+            api.send_document(chat_id, message_id, path.name, path.read_bytes())
+        )
+        if (
+            not isinstance(result, dict)
+            or not isinstance(result.get("chat"), dict)
+            or result["chat"].get("id") != chat_id
+            or not isinstance(result.get("document"), dict)
+        ):
+            raise TelegramHold("reply not confirmed by Telegram")
+    journal.append("SENT", {"case_id": case_id, "outbox_sha256": digest})
+    print("WU13 SENT", flush=True)
+
+
 def run(config: Config) -> None:
     with receiver_lock(config.receipts) as fresh:
         journal = Journal(config)
@@ -482,14 +682,21 @@ def run(config: Config) -> None:
             # after a week of inactivity. Re-read the earliest unconfirmed batch.
             offset = None
             print(
-                "WU13 READY: local poll / stop; STOP before HUMAN_APPROVAL_1",
+                "WU13 READY: local poll / send CASE-ID / stop; "
+                "STOP before HUMAN_APPROVAL_1",
                 flush=True,
             )
             while True:
                 command = sys.stdin.readline().strip()
                 if command in {"", "stop"}:
                     return
-                if command != "poll" or time.monotonic() - started >= MAX_RUN_SECONDS:
+                if time.monotonic() - started >= MAX_RUN_SECONDS:
+                    raise TelegramHold("foreground coordination expired or invalid")
+                target = re.fullmatch(r"send (CASE-TELEGRAM-[A-F0-9]{64})", command)
+                if target:
+                    reply(config, journal, api, target.group(1))
+                    continue
+                if command != "poll":
                     raise TelegramHold("foreground coordination expired or invalid")
                 verify_local(config, journal)
                 parameters = {"limit": "100", "timeout": "0"}
