@@ -250,6 +250,17 @@ class Journal:
             ):
                 raise TelegramHold("invalid audit reply")
             return
+        if event == "NOTICE":
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"case_id", "text_sha256"}
+                or not isinstance(data["case_id"], str)
+                or not re.fullmatch(r"CASE-TELEGRAM-[A-F0-9]{64}", data["case_id"])
+                or not isinstance(data["text_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", data["text_sha256"])
+            ):
+                raise TelegramHold("invalid audit notice")
+            return
         fields = (
             {"update_id", "raw_sha256", "reason"}
             if event == "REJECT"
@@ -448,6 +459,19 @@ def outbox_files(config: Config, case_id: str) -> tuple[list[Path], str]:
 
 
 class BotAPI(wire.BotAPI):
+    def send_message(self, chat_id: int, reply_to: int, text: str) -> bytes:
+        """sendMessage only; the caller takes chat_id from the verified Case."""
+        parameters = {
+            "chat_id": str(chat_id),
+            "text": text,
+            "reply_parameters": json.dumps(
+                {"message_id": reply_to, "allow_sending_without_reply": True}
+            ),
+        }
+        return self._request(
+            f"/bot{self._secret}/sendMessage", urlencode(parameters).encode("ascii")
+        )
+
     def send_document(
         self, chat_id: int, reply_to: int, name: str, body: bytes
     ) -> bytes:
@@ -667,12 +691,50 @@ def reply(
     print("WU13 SENT", flush=True)
 
 
+MAX_NOTICE_CHARS = 1000
+
+
+def notify(
+    config: Config, journal: Journal, api: BotAPI, case_id: str, text: str
+) -> None:
+    """Short status text to the private chat of an accepted Case (no files)."""
+    verify_local(config, journal)
+    accepted = {
+        r["data"]["case_id"]
+        for r in journal.dispositions().values()
+        if r["event"] == "ACCEPT"
+    }
+    if (
+        config.outbox is None
+        or case_id not in accepted
+        or not 0 < len(text.strip()) <= MAX_NOTICE_CHARS
+        or re.search(r"[\x00-\x09\x0b-\x1f]", text)
+    ):
+        print("WU13 NOTICE REFUSED", flush=True)
+        return
+    update = load((config.receipts / case_id / "update.json").read_bytes())
+    chat_id = update["message"]["chat"]["id"]
+    message_id = integer(update["message"]["message_id"])
+    result = wire.api_result(api.send_message(chat_id, message_id, text.strip()))
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("chat"), dict)
+        or result["chat"].get("id") != chat_id
+    ):
+        raise TelegramHold("notice not confirmed by Telegram")
+    journal.append(
+        "NOTICE", {"case_id": case_id, "text_sha256": sha(text.strip().encode())}
+    )
+    print("WU13 NOTICE SENT", flush=True)
+
+
 def run(
     config: Config,
     *,
     token: Callable[[Config], str] | None = None,
     read: Callable[[], str] | None = None,
     confirm: Callable[[], bool] | None = None,
+    notice: Callable[[str], str | None] | None = None,
 ) -> None:
     """Foreground by default; the background runner passes its own sources."""
     background = token is not None
@@ -720,6 +782,12 @@ def run(
                 target = re.fullmatch(r"send (CASE-TELEGRAM-[A-F0-9]{64})", command)
                 if target:
                     reply(config, journal, api, target.group(1), confirm)
+                    continue
+                target = re.fullmatch(r"notify (CASE-TELEGRAM-[A-F0-9]{64})", command)
+                if target and notice is not None:
+                    text = notice(target.group(1))
+                    if text is not None:
+                        notify(config, journal, api, target.group(1), text)
                     continue
                 if command != "poll":
                     raise TelegramHold("foreground coordination expired or invalid")

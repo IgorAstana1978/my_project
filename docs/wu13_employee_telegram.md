@@ -92,6 +92,14 @@ at Windows logon) drives the same `run()` without a terminal:
 A Claude scheduled task reads the new Cases and prepares a draft quote for
 Igor; it never creates a `send_queue` file on its own.
 
+Notices (Igor's decision 2026-11-06, "notify both on the phone and in
+Telegram"): a UTF-8 text file `notify_queue/<CASE_ID>.txt` (≤ 4000 bytes) is
+consumed once and sent with `sendMessage` (fixed method, not via `call()`) as a
+reply in that accepted Case's private chat; text 1–1000 characters, no control
+characters except newline, profile v2 only. No files, no quote — only status
+text such as "draft ready, total, questions". The journal records `NOTICE` with
+the Case ID and the text digest. A notice is not Human Approval.
+
 Each Case is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is

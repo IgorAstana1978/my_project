@@ -1,5 +1,6 @@
 """Background runner: minute polling, queued sends, restarts and HOLD limits."""
 
+import io
 import json
 import sys
 from pathlib import Path
@@ -162,3 +163,85 @@ def test_credential_round_trip(
         bg._advapi().CredDeleteW("wu13/pytest-synthetic/token", 1, 0)
     with pytest.raises(op.TelegramHold):
         bg.stored_token(config)
+
+
+def test_notice_queue_sends_short_text_to_request_chat(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = event(5)
+    data["message"]["chat"]["id"] = data["message"]["from"]["id"] = 456
+    api = SendAPI(send_config, [[data], [], [], [], []])
+    monkeypatch.setattr(op, "BotAPI", lambda _: api)
+    clock = Clock()
+    base = send_config.path.parent
+    state: dict[str, Any] = {}
+
+    def sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+        records = dispositions(send_config)
+        if 5 in records and "queued" not in state:
+            case_id = records[5]["data"]["case_id"]
+            folder = base / bg.NOTICES
+            (folder / f"{case_id}.txt").write_text("Черновик готов", encoding="utf-8")
+            (folder / ("CASE-TELEGRAM-" + "C" * 64 + ".txt")).write_bytes(b"x")
+            (folder / "junk.txt").write_bytes(b"x")
+            (folder / ("CASE-TELEGRAM-" + "D" * 64 + ".txt")).write_bytes(b"\xff")
+            (folder / "sub").mkdir()
+            state["queued"] = case_id
+        if len([m for m, _ in api.calls if m == "getUpdates"]) >= 4:
+            raise KeyboardInterrupt
+
+    assert (
+        bg.serve(
+            send_config,
+            token=lambda _: "opaque-synthetic-secret",
+            sleep=sleep,
+            clock=clock,
+        )
+        == 0
+    )
+    assert api.sent == [(456, 5, "TEXT", "Черновик готов".encode())]
+    events = [r["event"] for r in op.Journal(send_config).records]
+    assert events.count("NOTICE") == 1 and "SEND_INTENT" not in events
+
+
+@pytest.mark.parametrize("fault", ["empty", "control", "v1", "wrong_chat"])
+def test_notice_refused_or_unconfirmed(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    data = event(5)
+    run_api = SendAPI(send_config, [[data]])
+    monkeypatch.setattr(op, "BotAPI", lambda _: run_api)
+    monkeypatch.setattr(op, "hidden_token", lambda _: "opaque-synthetic-secret")
+    monkeypatch.setattr(op.sys, "stdin", io.StringIO("poll\nstop\n"))
+    op.run(send_config)
+    case_id = dispositions(send_config)[5]["data"]["case_id"]
+    journal = op.Journal(send_config)
+    api = SendAPI(send_config, [])
+    text = {"empty": "  ", "control": "a\x07b"}.get(fault, "ok")
+    if fault == "v1":
+        object.__setattr__(send_config, "outbox", None)
+        monkeypatch.setattr(op.Config, "unchanged", lambda self: None)
+    api.wrong_chat = fault == "wrong_chat"
+    if fault == "wrong_chat":
+        with pytest.raises(op.TelegramHold):
+            op.notify(send_config, journal, api, case_id, text)
+    else:
+        op.notify(send_config, journal, api, case_id, text)
+    assert "NOTICE" not in [r["event"] for r in op.Journal(send_config).records]
+    with pytest.raises(op.TelegramHold):
+        op.Journal.validate("NOTICE", {"case_id": case_id})
+
+
+def test_send_message_uses_fixed_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = op.BotAPI("opaque-synthetic-secret")
+    seen: list[Any] = []
+
+    def request(*args: Any) -> bytes:
+        seen.append(args)
+        return b"ok"
+
+    monkeypatch.setattr(api, "_request", request)
+    assert api.send_message(456, 5, "Черновик") == b"ok"
+    path, body = seen[0]
+    assert path.endswith("/sendMessage") and b"chat_id=456" in body

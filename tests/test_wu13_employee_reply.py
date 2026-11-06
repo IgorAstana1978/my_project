@@ -40,6 +40,14 @@ class SendAPI(API):
         result = {"chat": {"id": chat}, "document": {"file_id": "x"}}
         return cast(bytes, op.encode({"ok": True, "result": result}))
 
+    def send_message(self, chat_id: int, reply_to: int, text: str) -> bytes:
+        if self.fail:
+            raise op.TelegramHold("synthetic transport failure")
+        self.sent.append((chat_id, reply_to, "TEXT", text.encode()))
+        chat = chat_id + 1 if self.wrong_chat else chat_id
+        result = {"chat": {"id": chat}, "text": text}
+        return cast(bytes, op.encode({"ok": True, "result": result}))
+
 
 def accepted_case(config: op.Config, monkeypatch: pytest.MonkeyPatch) -> str:
     data = event(5)
