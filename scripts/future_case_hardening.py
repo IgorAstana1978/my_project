@@ -71,6 +71,19 @@ EXTRA_SHR_LABELS = {
     22: "ВН-32 2Р 16-25-40-63А",
     23: "ВН-32 1Р 16-25-40-63А",
 }
+# Igor 2026-11-06: CHINT apparatus is priced from the earlier main table
+# "Таблица 05.01.2026 верная" (same sheets, rows and labels as the active one);
+# EKF keeps the active baseline. Enclosure and AVR sources are unchanged.
+BRAND_PRICE_SOURCES: dict[str, dict[str, str] | None] = {
+    "EKF": None,
+    "CHINT": {
+        "path": str(
+            Path(r"C:\Users\IgorN\Documents\invoice_quote_filler_data\prices\current")
+            / "Таблица 05.01.2026 верная.xlsx"
+        ),
+        "sha256": "79b3ace77e84b87c46eb708f1c3b2ae63b5c6d75c5ebf6889c12b99624112ba1",
+    },
+}
 RCBO_CURVES = {"B", "C"}
 SWITCH_RATINGS = {16, 25, 40, 63, 80, 100}
 ORDINARY_SHR_CATEGORIES |= set(EXTRA_SHR_BREAKERS)
@@ -800,7 +813,11 @@ def calculate_future_price(
     require(family is None or family == rules["family"], "technical family conflict")
     family = rules["family"]
     require(rules["K"] == str(K_BY_FAMILY[family]), "K drift")
-    require(rules["automation_brand"] == "EKF", "non-EKF category authority required")
+    require(
+        rules["automation_brand"] in BRAND_PRICE_SOURCES,
+        "non-EKF category authority required",
+    )
+    brand_source = BRAND_PRICE_SOURCES[rules["automation_brand"]]
     check_avr_bom(rules, bom)
     require(cabinet_cost.get("role") == "ENCLOSURE_COST", "cabinet must be cost")
     cost = number(bound_value(cabinet_cost), zero=True)
@@ -819,6 +836,15 @@ def calculate_future_price(
     device_work = Decimal(0)
     cabinet_source = None
     with_baseline = load_workbook(baseline.path, read_only=True, data_only=False)
+    price_book = with_baseline
+    if brand_source is not None:
+        require(
+            sha256_file(Path(brand_source["path"])) == brand_source["sha256"],
+            "brand price source SHA drift",
+        )
+        price_book = load_workbook(
+            brand_source["path"], read_only=True, data_only=False
+        )
     avr_sources = []
     try:
         for line in bom:
@@ -829,6 +855,7 @@ def calculate_future_price(
             avr = governed_sources.avr_category(category)
             if avr is not None:
                 require(family == "АВР", "AVR category/family mismatch")
+                require(brand_source is None, "non-EKF AVR category authority required")
                 _, technical_item = load_technical_binding(
                     context, rules["technical_binding"]
                 )
@@ -880,6 +907,7 @@ def calculate_future_price(
                     }
                 )
                 continue
+            ws = price_book[sheet]
             require(
                 " ".join(str(ws.cell(row, 1).value).split()) == label,
                 "category identity drift",
@@ -946,7 +974,14 @@ def calculate_future_price(
                 )
     finally:
         with_baseline.close()
+        if price_book is not with_baseline:
+            price_book.close()
     require(sha256_file(baseline.path) == baseline.sha256, "workbook drift")
+    if brand_source is not None:
+        require(
+            sha256_file(Path(brand_source["path"])) == brand_source["sha256"],
+            "brand price source changed during calculation",
+        )
     current = resolve_active_price_baseline(selector)
     require(current == baseline, "baseline changed during calculation")
     if cabinet_source is not None:
@@ -984,6 +1019,8 @@ def calculate_future_price(
         "workbook_sha256": baseline.sha256,
         "manifest_sha256": baseline.manifest_sha256,
         "client_send_authorized": False,
+        "automation_brand": rules["automation_brand"],
+        "brand_price_source": None if brand_source is None else dict(brand_source),
         "governed_sources_policy": governed_sources.policy_binding(),
         **({"avr_sources": avr_sources} if avr_sources else {}),
         **({"cabinet_source": cabinet_source} if cabinet_source is not None else {}),

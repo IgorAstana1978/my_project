@@ -349,3 +349,84 @@ def test_protection_cannot_hide_under_other_role(tmp_path: Path) -> None:
     source["items"][0]["technical_classification"]["roles"]["M1"] = "OTHER"
     with pytest.raises(f.RuleError, match="role conflict"):
         governed(save_source(tmp_path, source))
+
+
+def chint_table(tmp_path: Path, monkeypatch: Any, material: int) -> Path:
+    path = tmp_path / "chint-table.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "ЩР"
+    for column, value in enumerate(["ВА47 3Р D 10-63A", material, 540], 1):
+        sheet.cell(16, column, value)
+    book.save(path)
+    book.close()
+    monkeypatch.setattr(
+        f,
+        "BRAND_PRICE_SOURCES",
+        {"EKF": None, "CHINT": {"path": str(path), "sha256": sha256_file(path)}},
+    )
+    return path
+
+
+def chint_calculate(tmp_path: Path, monkeypatch: Any, brand: str = "CHINT") -> Any:
+    source = ordinary_source(tmp_path)
+    source["items"][0]["technical_classification"]["overrides"] = {
+        "human": {"automation_brand": binding(tmp_path, "brand.json", brand)}
+    }
+    rules, bom = governed(save_source(tmp_path, source))
+    assert rules["automation_brand"] == brand
+    prices(tmp_path, monkeypatch)
+    return f.calculate_future_price(
+        CONTEXT,
+        bom=bom,
+        rules=rules,
+        selector=tmp_path / "selector.json",
+        cabinet_cost={**binding(tmp_path, "cost.json", 7678), "role": "ENCLOSURE_COST"},
+        work_source=binding(tmp_path, "work.json", 3240),
+    )
+
+
+def test_chint_apparatus_priced_from_its_pinned_table(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    chint_table(tmp_path, monkeypatch, 3000)
+    result = chint_calculate(tmp_path, monkeypatch)
+    # (7678 + 6*3000*1.2 + 3240) * 1.25 * 1.15 -> 46745; EKF table gives 57095.
+    assert result["unit_price_kzt"] == 46745
+    assert result["automation_brand"] == "CHINT"
+    assert result["brand_price_source"] == f.BRAND_PRICE_SOURCES["CHINT"]
+    assert result["rows"][0]["unit_material_kzt"] == "3000"
+    assert result["cabinet_source"]["source_locator"] == "КРН!M7"
+
+
+def test_chint_table_drift_and_unknown_brand_hold(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    path = chint_table(tmp_path, monkeypatch, 3000)
+    path.write_bytes(path.read_bytes() + b"drift")
+    with pytest.raises(f.RuleError, match="brand price source SHA drift"):
+        chint_calculate(tmp_path, monkeypatch)
+    with pytest.raises(f.RuleError, match="non-EKF category authority"):
+        chint_calculate(tmp_path, monkeypatch, "IEK")
+
+
+def test_chint_table_change_during_calculation_holds(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    path = chint_table(tmp_path, monkeypatch, 3000)
+    original = f.number
+
+    def drift_after_read(value: Any, **kwargs: Any) -> Any:
+        if value == 540:
+            path.write_bytes(path.read_bytes() + b"drift")
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(f, "number", drift_after_read)
+    with pytest.raises(f.RuleError, match="brand price source changed"):
+        chint_calculate(tmp_path, monkeypatch)
+
+
+def test_chint_is_closed_for_avr_switching_categories() -> None:
+    assert "require(brand_source is None" in Path(f.__file__).read_text(
+        encoding="utf-8"
+    )
