@@ -162,6 +162,10 @@ def parse_event(
         "document",
         "entities",
         "caption_entities",
+        # Telegram "Reply": the quoted message is kept as provenance only
+        # (WU13 answers to the bot's questions, Igor's decision 2026-11-07).
+        "reply_to_message",
+        "quote",
     }
     if not isinstance(message, dict) or set(message) - allowed_fields:
         raise TelegramHold("unsupported message input")

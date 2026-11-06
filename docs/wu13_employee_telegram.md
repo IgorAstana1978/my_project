@@ -110,6 +110,25 @@ journal records revision 2+ as `"revision": N` in `SEND_INTENT`/`SENT`;
 revisions must go 1, 2, 3 in order. Every sent revision folder must stay
 unchanged.
 
+Questions (Igor's decision 2026-11-07): `ask <CASE_ID> <user_id>` (background:
+file `ask_queue/<CASE_ID>.<user_id>.txt`) sends a short text, up to 1000
+characters, about an accepted Case to the private chat that the profile pairs
+with that employee (Igor or a PTO engineer). Telegram must confirm that chat;
+the journal records `QUESTION` with the Case, the user ID and the text digest.
+Answers arrive as ordinary messages, including Telegram "Reply" messages
+(`reply_to_message` / `quote` are kept as provenance), and become new Cases.
+An answer is data for that one quote. It never changes rules, prices, the
+formula, the bot or access, and it is never Human Approval. Only Igor decides
+those, and only Igor's explicit "yes" sends a quote.
+
+Adding employees (PTO engineers): stop the bot, copy `profile.json` to
+`profile.before.json`, add the new `user_id`/`chat_id` pairs to `profile.json`,
+then run `python wu13_employee_telegram.py reconfigure profile.before.json
+profile.json`. The command refuses any change other than adding employees
+(same bot, roots and outbox; nobody removed). It journals
+`RECONFIGURE {from, to}` (configuration digests) and re-verifies every earlier
+Case under the new profile. Any other profile change still HOLDs.
+
 Each Case revision is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is

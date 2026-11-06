@@ -208,6 +208,7 @@ class Journal:
         self.records: list[dict[str, Any]] = []
         self.raw = self.path.read_bytes() if self.path.exists() else b""
         previous = "0" * 64
+        current: str | None = None
         for raw in self.raw.splitlines(keepends=True):
             record = load(raw)
             if (
@@ -219,11 +220,16 @@ class Journal:
             ):
                 raise TelegramHold("audit chain inconsistent")
             self.validate(record["event"], record["data"])
-            if self.records and record["config"] != self.records[0]["config"]:
+            current = current or record["config"]
+            if record["config"] != current:
                 raise TelegramHold("audit configuration inconsistent")
+            if record["event"] == "RECONFIGURE":
+                if record["data"]["from"] != current:
+                    raise TelegramHold("audit configuration inconsistent")
+                current = record["data"]["to"]
             self.records.append(record)
             previous = sha(raw)
-        self.config = self.records[0]["config"] if self.records else config.digest
+        self.config = current or config.digest
         if self.config != config.digest:
             self.append("HOLD", {"reason": "CONFIG_MISMATCH"})
             raise TelegramHold("operational configuration mismatch")
@@ -257,6 +263,31 @@ class Journal:
                 or not re.fullmatch(r"[a-f0-9]{64}", data["outbox_sha256"])
             ):
                 raise TelegramHold("invalid audit reply")
+            return
+        if event == "RECONFIGURE":
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"from", "to"}
+                or not all(
+                    isinstance(v, str) and re.fullmatch(r"[a-f0-9]{64}", v)
+                    for v in data.values()
+                )
+                or data["from"] == data["to"]
+            ):
+                raise TelegramHold("invalid audit reconfiguration")
+            return
+        if event == "QUESTION":
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"case_id", "user_id", "text_sha256"}
+                or not isinstance(data["case_id"], str)
+                or not re.fullmatch(r"CASE-TELEGRAM-[A-F0-9]{64}", data["case_id"])
+                or type(data["user_id"]) is not int
+                or data["user_id"] <= 0
+                or not isinstance(data["text_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", data["text_sha256"])
+            ):
+                raise TelegramHold("invalid audit question")
             return
         if event == "NOTICE":
             if (
@@ -494,15 +525,13 @@ def outbox_files(
 
 
 class BotAPI(wire.BotAPI):
-    def send_message(self, chat_id: int, reply_to: int, text: str) -> bytes:
-        """sendMessage only; the caller takes chat_id from the verified Case."""
-        parameters = {
-            "chat_id": str(chat_id),
-            "text": text,
-            "reply_parameters": json.dumps(
+    def send_message(self, chat_id: int, reply_to: int | None, text: str) -> bytes:
+        """sendMessage only; chat_id comes from the verified Case or profile."""
+        parameters = {"chat_id": str(chat_id), "text": text}
+        if reply_to is not None:
+            parameters["reply_parameters"] = json.dumps(
                 {"message_id": reply_to, "allow_sending_without_reply": True}
-            ),
-        }
+            )
         return self._request(
             f"/bot{self._secret}/sendMessage", urlencode(parameters).encode("ascii")
         )
@@ -787,6 +816,79 @@ def notify(
     print("WU13 NOTICE SENT", flush=True)
 
 
+def ask(
+    config: Config,
+    journal: Journal,
+    api: BotAPI,
+    case_id: str,
+    user_id: int,
+    text: str,
+) -> None:
+    """Question about an accepted Case to one employee's private chat.
+
+    Igor 2026-11-07: Claude may ask Igor or a PTO engineer listed in the profile.
+    The answer arrives as an ordinary message (a new Case) and is data for that
+    quote only; it never changes rules, prices, the bot or access.
+    """
+    verify_local(config, journal)
+    accepted = {
+        r["data"]["case_id"]
+        for r in journal.dispositions().values()
+        if r["event"] == "ACCEPT"
+    }
+    chats = [c for u, c in config.employees if u == user_id]
+    if (
+        config.outbox is None
+        or case_id not in accepted
+        or len(chats) != 1
+        or not 0 < len(text.strip()) <= MAX_NOTICE_CHARS
+        or re.search(r"[\x00-\x09\x0b-\x1f]", text)
+    ):
+        print("WU13 QUESTION REFUSED", flush=True)
+        return
+    chat_id = chats[0]
+    result = wire.api_result(api.send_message(chat_id, None, text.strip()))
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("chat"), dict)
+        or result["chat"].get("id") != chat_id
+    ):
+        raise TelegramHold("question not confirmed by Telegram")
+    journal.append(
+        "QUESTION",
+        {
+            "case_id": case_id,
+            "user_id": user_id,
+            "text_sha256": sha(text.strip().encode()),
+        },
+    )
+    print("WU13 QUESTION SENT", flush=True)
+
+
+def reconfigure(old: Config, new: Config) -> None:
+    """Add employees (Igor's explicit "yes", bot stopped): journal the change.
+
+    Everything except the employee list must stay identical, and nobody may
+    be removed, so earlier Cases keep verifying.
+    """
+    same = ("bot_id", "username", "receipts", "cases", "outbox")
+    if (
+        any(getattr(old, f) != getattr(new, f) for f in same)
+        or old.outbox is None
+        or not old.employees < new.employees
+    ):
+        raise TelegramHold("only adding employees is allowed")
+    with receiver_lock(old.receipts) as fresh:
+        if fresh:
+            raise TelegramHold("initialized audit missing or empty")
+        journal = Journal(old)
+        verify_local(old, journal)
+        journal.append("RECONFIGURE", {"from": old.digest, "to": new.digest})
+    with receiver_lock(new.receipts):
+        verify_local(new, Journal(new))
+    print("WU13 RECONFIGURED", flush=True)
+
+
 def run(
     config: Config,
     *,
@@ -794,6 +896,7 @@ def run(
     read: Callable[[], str] | None = None,
     confirm: Callable[[], bool] | None = None,
     notice: Callable[[str], str | None] | None = None,
+    question: Callable[[str], str | None] | None = None,
 ) -> None:
     """Foreground by default; the background runner passes its own sources."""
     background = token is not None
@@ -848,6 +951,21 @@ def run(
                     if text is not None:
                         notify(config, journal, api, target.group(1), text)
                     continue
+                target = re.fullmatch(
+                    r"ask (CASE-TELEGRAM-[A-F0-9]{64}) ([1-9][0-9]{0,15})", command
+                )
+                if target and question is not None:
+                    text = question(f"{target.group(1)}.{target.group(2)}")
+                    if text is not None:
+                        ask(
+                            config,
+                            journal,
+                            api,
+                            target.group(1),
+                            int(target.group(2)),
+                            text,
+                        )
+                    continue
                 if command != "poll":
                     raise TelegramHold("foreground coordination expired or invalid")
                 verify_local(config, journal)
@@ -875,6 +993,14 @@ def run(
 
 
 def main() -> int:
+    if len(sys.argv) == 4 and sys.argv[1] == "reconfigure":
+        # Run with the bot stopped: old profile copy, then the new profile.
+        try:
+            reconfigure(Config.read(Path(sys.argv[2])), Config.read(Path(sys.argv[3])))
+            return 0
+        except BaseException:
+            print("WU13 HOLD: reconfiguration refused", flush=True)
+            return 2
     try:
         if len(sys.argv) != 2 or not sys.stdin.isatty() or not sys.stdout.isatty():
             raise TelegramHold("exact approved profile path required")
