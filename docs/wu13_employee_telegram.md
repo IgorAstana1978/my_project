@@ -100,7 +100,17 @@ characters except newline, profile v2 only. No files, no quote — only status
 text such as "draft ready, total, questions". The journal records `NOTICE` with
 the Case ID and the text digest. A notice is not Human Approval.
 
-Each Case is answered at most once. A `SEND_INTENT` without `SENT` (crash or
+Changed quote (Igor's decision 2026-11-06, "send again if the quote
+changed"): after the first reply, `send <CASE_ID>` sends the next revision N
+from its own folder `outbox_root/<CASE_ID>.<N>/` (N = 2, 3, … up to 99, same
+one `.xlsx` and/or one `.pdf` rule), with the same confirmation (`confirm`, or
+the `send_queue` file after Igor's explicit "yes"). Files identical to an
+earlier sent revision are refused; a missing next folder is refused. The
+journal records revision 2+ as `"revision": N` in `SEND_INTENT`/`SENT`;
+revisions must go 1, 2, 3 in order. Every sent revision folder must stay
+unchanged.
+
+Each Case revision is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is
 done. Sent outbox files must stay unchanged; any change is HOLD. Sending is not

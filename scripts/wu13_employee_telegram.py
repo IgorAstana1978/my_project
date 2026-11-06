@@ -240,9 +240,17 @@ class Journal:
                 raise TelegramHold("invalid audit diagnostic")
             return
         if event in {"SEND_INTENT", "SENT"}:
+            # Revision 1 has no "revision" field (original records stay valid).
             if (
                 not isinstance(data, dict)
-                or set(data) != {"case_id", "outbox_sha256"}
+                or set(data) - {"revision"} != {"case_id", "outbox_sha256"}
+                or (
+                    "revision" in data
+                    and (
+                        type(data["revision"]) is not int
+                        or not 2 <= data["revision"] <= MAX_REVISION
+                    )
+                )
                 or not isinstance(data["case_id"], str)
                 or not re.fullmatch(r"CASE-TELEGRAM-[A-F0-9]{64}", data["case_id"])
                 or not isinstance(data["outbox_sha256"], str)
@@ -323,26 +331,39 @@ class Journal:
                 result[key] = record
         return result
 
-    def replies(self) -> dict[str, str]:
-        """Case -> sent outbox digest; an unfinished intent means unknown outcome."""
-        intents: dict[str, str] = {}
-        sent: dict[str, str] = {}
+    def replies(self) -> dict[str, dict[int, str]]:
+        """Case -> {revision: sent outbox digest}; revisions go 1, 2, 3 in order.
+
+        An unfinished intent means the remote outcome is unknown.
+        """
+        intents: dict[tuple[str, int], str] = {}
+        sent: dict[tuple[str, int], str] = {}
         for record in self.records:
             data = record["data"]
+            if record["event"] not in {"SEND_INTENT", "SENT"}:
+                continue
+            key = (data["case_id"], data.get("revision", 1))
             if record["event"] == "SEND_INTENT":
-                if data["case_id"] in intents:
-                    raise TelegramHold("duplicate reply intent")
-                intents[data["case_id"]] = data["outbox_sha256"]
-            elif record["event"] == "SENT":
+                done = [r for c, r in sent if c == key[0]]
                 if (
-                    intents.get(data["case_id"]) != data["outbox_sha256"]
-                    or data["case_id"] in sent
+                    key in intents
+                    or len(intents) != len(sent)
+                    or key[1] != len(done) + 1
+                    or data["outbox_sha256"]
+                    in {d for (c, _), d in sent.items() if c == key[0]}
                 ):
+                    raise TelegramHold("duplicate reply intent")
+                intents[key] = data["outbox_sha256"]
+            else:
+                if intents.get(key) != data["outbox_sha256"] or key in sent:
                     raise TelegramHold("reply audit inconsistent")
-                sent[data["case_id"]] = data["outbox_sha256"]
+                sent[key] = data["outbox_sha256"]
         if intents != sent:
             raise TelegramHold("reply outcome unknown: inspect the Telegram chat")
-        return sent
+        result: dict[str, dict[int, str]] = {}
+        for (case_id, revision), digest in sent.items():
+            result.setdefault(case_id, {})[revision] = digest
+        return result
 
 
 def authorized(update: dict[str, Any], config: Config) -> bool:
@@ -423,16 +444,30 @@ def verify_local(config: Config, journal: Journal) -> None:
     replies = journal.replies()
     if replies and config.outbox is None:
         raise TelegramHold("reply audit without outbox")
-    for case_id, digest in replies.items():
-        if case_id not in names or outbox_files(config, case_id)[1] != digest:
-            raise TelegramHold("sent reply changed")
+    for case_id, revisions in replies.items():
+        for revision, digest in revisions.items():
+            if (
+                case_id not in names
+                or outbox_files(config, case_id, revision)[1] != digest
+            ):
+                raise TelegramHold("sent reply changed")
 
 
-def outbox_files(config: Config, case_id: str) -> tuple[list[Path], str]:
+MAX_REVISION = 99
+
+
+def outbox_folder(case_id: str, revision: int) -> str:
+    """`<CASE_ID>` for the first reply, `<CASE_ID>.<N>` for changed quotes."""
+    return case_id if revision == 1 else f"{case_id}.{revision}"
+
+
+def outbox_files(
+    config: Config, case_id: str, revision: int = 1
+) -> tuple[list[Path], str]:
     """Exactly one .xlsx and/or one .pdf prepared by the operator for the Case."""
     if config.outbox is None:
         raise TelegramHold("reply outbox not configured")
-    folder = config.outbox / case_id
+    folder = config.outbox / outbox_folder(case_id, revision)
     safe_path(folder)
     if not folder.is_dir():
         raise TelegramHold("reply files missing")
@@ -655,27 +690,51 @@ def reply(
     if case_id not in accepted:
         print("WU13 SEND REFUSED: unknown Case", flush=True)
         return
-    if case_id in journal.replies():
-        print("WU13 SEND REFUSED: already sent", flush=True)
+    # Igor 2026-11-06: a changed quote may be sent again as the next
+    # revision, from its own folder `<CASE_ID>.<N>`, with the same confirmation.
+    previous = journal.replies().get(case_id, {})
+    revision = len(previous) + 1
+    if revision > MAX_REVISION:
+        print("WU13 SEND REFUSED: too many revisions", flush=True)
         return
     try:
-        files, digest = outbox_files(config, case_id)
+        files, digest = outbox_files(config, case_id, revision)
     except TelegramHold:
-        print("WU13 SEND REFUSED: outbox needs one .xlsx and/or one .pdf", flush=True)
+        if previous:
+            print(
+                f"WU13 SEND REFUSED: already sent; a changed quote goes to "
+                f"outbox folder <CASE_ID>.{revision}",
+                flush=True,
+            )
+        else:
+            print(
+                "WU13 SEND REFUSED: outbox needs one .xlsx and/or one .pdf",
+                flush=True,
+            )
+        return
+    if digest in previous.values():
+        print("WU13 SEND REFUSED: files equal an earlier sent revision", flush=True)
         return
     update = load((config.receipts / case_id / "update.json").read_bytes())
     chat_id = update["message"]["chat"]["id"]
     message_id = integer(update["message"]["message_id"])
     kinds = "+".join(p.suffix.lower()[1:] for p in files)
-    print(f"WU13 SEND READY: {kinds} to the request chat; type confirm", flush=True)
+    print(
+        f"WU13 SEND READY: revision {revision}, {kinds} to the request chat; "
+        "type confirm",
+        flush=True,
+    )
     if not confirm():
         print("WU13 SEND CANCELLED", flush=True)
         return
     # Re-check identity and files after the operator's pause.
     verify_local(config, journal)
-    if outbox_files(config, case_id)[1] != digest:
+    if outbox_files(config, case_id, revision)[1] != digest:
         raise TelegramHold("reply files changed before confirm")
-    journal.append("SEND_INTENT", {"case_id": case_id, "outbox_sha256": digest})
+    record: dict[str, Any] = {"case_id": case_id, "outbox_sha256": digest}
+    if revision > 1:
+        record["revision"] = revision
+    journal.append("SEND_INTENT", record)
     for path in files:
         result = wire.api_result(
             api.send_document(chat_id, message_id, path.name, path.read_bytes())
@@ -687,7 +746,7 @@ def reply(
             or not isinstance(result.get("document"), dict)
         ):
             raise TelegramHold("reply not confirmed by Telegram")
-    journal.append("SENT", {"case_id": case_id, "outbox_sha256": digest})
+    journal.append("SENT", record)
     print("WU13 SENT", flush=True)
 
 

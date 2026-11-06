@@ -252,3 +252,73 @@ def test_send_document_multipart_to_fixed_host(
     assert 'name="chat_id"\r\n\r\n456\r\n' in body
     assert '"message_id": 5' in body and 'filename="КП.xlsx"' in body
     assert "BODY" in body
+
+
+def test_changed_quote_is_sent_again_as_next_revision(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Igor 2026-11-06: a changed quote is sent again, never an identical one."""
+    case_id = accepted_case(send_config, monkeypatch)
+    prepare(send_config, case_id, ["КП.pdf"])
+    run(
+        send_config,
+        SendAPI(send_config, []),
+        monkeypatch,
+        f"send {case_id}\nconfirm\nstop\n",
+    )
+    assert send_config.outbox is not None
+    second = send_config.outbox / f"{case_id}.2"
+    second.mkdir()
+    (second / "КП.pdf").write_bytes(
+        b"SYNTHETIC " + "КП.pdf".encode()
+    )  # same as revision 1
+    same = SendAPI(send_config, [])
+    run(send_config, same, monkeypatch, f"send {case_id}\nstop\n")
+    assert not same.sent
+    (second / "КП.pdf").write_bytes(b"CHANGED quote")
+    api = SendAPI(send_config, [])
+    run(send_config, api, monkeypatch, f"send {case_id}\nconfirm\nstop\n")
+    assert [(c, r, n, b) for c, r, n, b in api.sent] == [
+        (456, 5, "КП.pdf", b"CHANGED quote")
+    ]
+    records = op.Journal(send_config).records
+    assert records[-1]["data"]["revision"] == 2 and records[-1]["event"] == "SENT"
+    assert op.Journal(send_config).replies()[case_id].keys() == {1, 2}
+    # No third folder: refused; a sent revision folder must stay unchanged.
+    third = SendAPI(send_config, [])
+    run(send_config, third, monkeypatch, f"send {case_id}\nstop\n")
+    assert not third.sent
+    (second / "КП.pdf").write_bytes(b"edited after sending")
+    with pytest.raises(op.TelegramHold):
+        run(send_config, SendAPI(send_config, []), monkeypatch, "stop\n")
+
+
+@pytest.mark.parametrize("revision", [1, 0, 100, "2", True])
+def test_invalid_reply_revision_record(revision: Any) -> None:
+    data = {"case_id": "CASE-TELEGRAM-" + "A" * 64, "outbox_sha256": "0" * 64}
+    with pytest.raises(op.TelegramHold):
+        op.Journal.validate("SENT", {**data, "revision": revision})
+    op.Journal.validate("SENT", {**data, "revision": 2})
+
+
+def test_revision_out_of_order_holds(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_id = accepted_case(send_config, monkeypatch)
+    journal = op.Journal(send_config)
+    record = {"case_id": case_id, "outbox_sha256": "0" * 64, "revision": 2}
+    journal.append("SEND_INTENT", record)
+    with pytest.raises(op.TelegramHold, match="duplicate reply intent"):
+        op.Journal(send_config).replies()
+
+
+def test_too_many_revisions_refused(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case_id = accepted_case(send_config, monkeypatch)
+    sent = {r: f"{r:064x}" for r in range(1, op.MAX_REVISION + 1)}
+    monkeypatch.setattr(op.Journal, "replies", lambda self: {case_id: sent})
+    monkeypatch.setattr(op, "verify_local", lambda *a: None)
+    api = SendAPI(send_config, [])
+    op.reply(send_config, op.Journal(send_config), api, case_id, lambda: True)
+    assert not api.sent
