@@ -81,7 +81,12 @@ def test_background_receives_and_sends_queued_reply(
         send_config, token=lambda _: "opaque-synthetic-secret", sleep=sleep, clock=clock
     )
     assert result == 0
-    assert [(c, r, n) for c, r, n, _ in api.sent] == [(456, 5, "КП.xlsx")]
+    assert [(c, r, n) for c, r, n, _ in api.sent] == [
+        (123, 5, "FORWARD"),  # Igor sees the PTO request
+        (456, 5, "КП.xlsx"),
+        (123, None, "TEXT"),  # and what the bot sent back
+        (123, 502, "FORWARD"),
+    ]
     assert state["queued"] in op.Journal(send_config).replies()
     assert status(send_config)["state"] == "STOPPED"
     events = [r["event"] for r in op.Journal(send_config).records]
@@ -200,7 +205,11 @@ def test_notice_queue_sends_short_text_to_request_chat(
         )
         == 0
     )
-    assert api.sent == [(456, 5, "TEXT", "Черновик готов".encode())]
+    assert api.sent == [
+        (123, 5, "FORWARD", b"456"),
+        (456, 5, "TEXT", "Черновик готов".encode()),
+        (123, None, "TEXT", "Бот → 456:\nЧерновик готов".encode()),
+    ]
     events = [r["event"] for r in op.Journal(send_config).records]
     assert events.count("NOTICE") == 1 and "SEND_INTENT" not in events
 

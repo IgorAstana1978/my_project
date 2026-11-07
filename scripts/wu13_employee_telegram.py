@@ -67,6 +67,8 @@ class Config:
     receipts: Path
     cases: Path
     outbox: Path | None = None
+    # First profile entry; sees copies of all PTO traffic (Igor 2026-11-07).
+    owner: tuple[int, int] | None = None
 
     @property
     def policy(self) -> TelegramPolicy:
@@ -156,6 +158,7 @@ class Config:
             receipts,
             cases,
             outbox,
+            pairs[0],
         )
 
     def unchanged(self) -> None:
@@ -275,6 +278,15 @@ class Journal:
                 or data["from"] == data["to"]
             ):
                 raise TelegramHold("invalid audit reconfiguration")
+            return
+        if event == "COPY":
+            if (
+                not isinstance(data, dict)
+                or set(data) != {"case_id"}
+                or not isinstance(data["case_id"], str)
+                or not re.fullmatch(r"CASE-TELEGRAM-[A-F0-9]{64}", data["case_id"])
+            ):
+                raise TelegramHold("invalid audit copy")
             return
         if event == "QUESTION":
             if (
@@ -536,6 +548,20 @@ class BotAPI(wire.BotAPI):
             f"/bot{self._secret}/sendMessage", urlencode(parameters).encode("ascii")
         )
 
+    def forward_message(
+        self, chat_id: int, from_chat_id: int, message_id: int
+    ) -> bytes:
+        """forwardMessage only; both chats come from the profile."""
+        parameters = {
+            "chat_id": str(chat_id),
+            "from_chat_id": str(from_chat_id),
+            "message_id": str(message_id),
+        }
+        return self._request(
+            f"/bot{self._secret}/forwardMessage",
+            urlencode(parameters).encode("ascii"),
+        )
+
     def send_document(
         self, chat_id: int, reply_to: int, name: str, body: bytes
     ) -> bytes:
@@ -705,6 +731,7 @@ def reply(
     api: BotAPI,
     case_id: str,
     confirm: Callable[[], bool],
+    mirror: bool = False,
 ) -> None:
     """Operator-confirmed reply to the private chat the Case came from."""
     if config.outbox is None:
@@ -764,6 +791,7 @@ def reply(
     if revision > 1:
         record["revision"] = revision
     journal.append("SEND_INTENT", record)
+    sent_ids = []
     for path in files:
         result = wire.api_result(
             api.send_document(chat_id, message_id, path.name, path.read_bytes())
@@ -775,7 +803,11 @@ def reply(
             or not isinstance(result.get("document"), dict)
         ):
             raise TelegramHold("reply not confirmed by Telegram")
+        if type(result.get("message_id")) is int:
+            sent_ids.append(result["message_id"])
     journal.append("SENT", record)
+    if mirror:
+        copy_out(config, api, chat_id, "КП отправлено", tuple(sent_ids))
     print("WU13 SENT", flush=True)
 
 
@@ -783,7 +815,12 @@ MAX_NOTICE_CHARS = 1000
 
 
 def notify(
-    config: Config, journal: Journal, api: BotAPI, case_id: str, text: str
+    config: Config,
+    journal: Journal,
+    api: BotAPI,
+    case_id: str,
+    text: str,
+    mirror: bool = False,
 ) -> None:
     """Short status text to the private chat of an accepted Case (no files)."""
     verify_local(config, journal)
@@ -813,7 +850,72 @@ def notify(
     journal.append(
         "NOTICE", {"case_id": case_id, "text_sha256": sha(text.strip().encode())}
     )
+    if mirror:
+        copy_out(config, api, chat_id, text.strip())
     print("WU13 NOTICE SENT", flush=True)
+
+
+def employee_name(config: Config, user_id: int) -> str:
+    """Telegram first/last name from the employee's own accepted messages."""
+    for path in sorted(config.receipts.glob("CASE-TELEGRAM-*/update.json")):
+        user = load(path.read_bytes())["message"]["from"]
+        if user.get("id") == user_id:
+            name = " ".join(
+                str(user[k]) for k in ("first_name", "last_name") if user.get(k)
+            )
+            return name or str(user_id)
+    return str(user_id)
+
+
+def confirmed(raw: bytes, chat_id: int) -> dict[str, Any]:
+    result = wire.api_result(raw)
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("chat"), dict)
+        or result["chat"].get("id") != chat_id
+    ):
+        raise TelegramHold("copy not confirmed by Telegram")
+    return result
+
+
+def copy_out(
+    config: Config,
+    api: BotAPI,
+    chat_id: int,
+    text: str,
+    message_ids: tuple[int, ...] = (),
+) -> None:
+    """Igor sees what the bot sent to a PTO engineer (text and/or files)."""
+    if config.owner is None or chat_id == config.owner[1]:
+        return
+    users = [u for u, c in config.employees if c == chat_id]
+    name = employee_name(config, users[0]) if len(users) == 1 else str(chat_id)
+    owner = config.owner[1]
+    confirmed(api.send_message(owner, None, f"Бот → {name}:\n{text}"), owner)
+    for message_id in message_ids:
+        confirmed(api.forward_message(owner, chat_id, message_id), owner)
+
+
+def mirror_incoming(config: Config, journal: Journal, api: BotAPI) -> None:
+    """Forward every accepted PTO message to Igor once (journalled COPY)."""
+    if config.owner is None:
+        return
+    copied = {r["data"]["case_id"] for r in journal.records if r["event"] == "COPY"}
+    for record in journal.records:
+        if record["event"] != "ACCEPT" or record["data"]["case_id"] in copied:
+            continue
+        case_id = record["data"]["case_id"]
+        message = load((config.receipts / case_id / "update.json").read_bytes())[
+            "message"
+        ]
+        if (message["from"]["id"], message["chat"]["id"]) == config.owner:
+            continue
+        owner = config.owner[1]
+        confirmed(
+            api.forward_message(owner, message["chat"]["id"], message["message_id"]),
+            owner,
+        )
+        journal.append("COPY", {"case_id": case_id})
 
 
 def ask(
@@ -823,6 +925,7 @@ def ask(
     case_id: str,
     user_id: int,
     text: str,
+    mirror: bool = False,
 ) -> None:
     """Question about an accepted Case to one employee's private chat.
 
@@ -862,6 +965,8 @@ def ask(
             "text_sha256": sha(text.strip().encode()),
         },
     )
+    if mirror:
+        copy_out(config, api, chat_id, text.strip())
     print("WU13 QUESTION SENT", flush=True)
 
 
@@ -876,6 +981,7 @@ def reconfigure(old: Config, new: Config) -> None:
         any(getattr(old, f) != getattr(new, f) for f in same)
         or old.outbox is None
         or not old.employees < new.employees
+        or old.owner != new.owner
     ):
         raise TelegramHold("only adding employees is allowed")
     with receiver_lock(old.receipts) as fresh:
@@ -897,6 +1003,7 @@ def run(
     confirm: Callable[[], bool] | None = None,
     notice: Callable[[str], str | None] | None = None,
     question: Callable[[str], str | None] | None = None,
+    mirror: bool = False,
 ) -> None:
     """Foreground by default; the background runner passes its own sources."""
     background = token is not None
@@ -943,13 +1050,13 @@ def run(
                     raise TelegramHold("foreground coordination expired or invalid")
                 target = re.fullmatch(r"send (CASE-TELEGRAM-[A-F0-9]{64})", command)
                 if target:
-                    reply(config, journal, api, target.group(1), confirm)
+                    reply(config, journal, api, target.group(1), confirm, mirror)
                     continue
                 target = re.fullmatch(r"notify (CASE-TELEGRAM-[A-F0-9]{64})", command)
                 if target and notice is not None:
                     text = notice(target.group(1))
                     if text is not None:
-                        notify(config, journal, api, target.group(1), text)
+                        notify(config, journal, api, target.group(1), text, mirror)
                     continue
                 target = re.fullmatch(
                     r"ask (CASE-TELEGRAM-[A-F0-9]{64}) ([1-9][0-9]{0,15})", command
@@ -964,6 +1071,7 @@ def run(
                             target.group(1),
                             int(target.group(2)),
                             text,
+                            mirror,
                         )
                     continue
                 if command != "poll":
@@ -980,6 +1088,8 @@ def run(
                     raise TelegramHold("unordered or regressing queue")
                 for raw in events:
                     process(raw, config, journal, api)
+                if mirror:
+                    mirror_incoming(config, journal, api)
                 verify_local(config, journal)
                 if ids:
                     offset = ids[-1] + 1

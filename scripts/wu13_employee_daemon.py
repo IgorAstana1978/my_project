@@ -8,7 +8,9 @@ after Igor's explicit "yes" for that Case. A short text in
 `notify_queue/<CASE_ID>.txt` (e.g. "draft ready") is sent to that Case's chat
 as a plain message, no files. A question in
 `ask_queue/<CASE_ID>.<user_id>.txt` goes to that employee's own chat (Igor or
-PTO from the profile; Igor's decision 2026-11-07). Everything else is unchanged WU13:
+PTO from the profile; Igor's decision 2026-11-07). Igor (the first profile
+entry) gets a copy of every PTO message and of everything the bot sends to
+PTO. Everything else is unchanged WU13:
 same profile, lock, journal, checks and HOLD behaviour.
 
 Usage:
@@ -235,6 +237,7 @@ def serve(
                 confirm=lambda: True,
                 notice=feeder.notice,
                 question=feeder.notice,
+                mirror=True,
             )
             failures = 0
         except BaseException as error:  # noqa: BLE001 - fixed diagnostics only

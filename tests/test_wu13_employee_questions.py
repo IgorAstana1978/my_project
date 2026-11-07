@@ -1,5 +1,6 @@
 """Questions to employees and adding PTO engineers (Igor's decision 2026-11-07)."""
 
+import io
 import json
 from pathlib import Path
 from typing import Any
@@ -150,6 +151,27 @@ def test_journal_rejects_unannounced_config_change(
             op.Journal.validate("RECONFIGURE", bad)
 
 
+def test_owner_messages_are_not_copied_and_pto_copies_once(
+    send_config: op.Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner, pto = event(5), event(6)
+    pto["message"]["chat"]["id"] = pto["message"]["from"]["id"] = 456
+    pto["message"]["from"]["first_name"] = "Марат"
+    api = SendAPI(send_config, [[owner, pto]])
+    run(send_config, api, monkeypatch, "poll\nstop\n")
+    assert api.sent == []  # foreground run without mirror copies nothing
+    for expected in ([(123, 6, "FORWARD", b"456")], []):
+        api = SendAPI(send_config, [[owner, pto]])
+        monkeypatch.setattr(op, "BotAPI", lambda _, api=api: api)
+        monkeypatch.setattr(op.sys, "stdin", io.StringIO("poll\nstop\n"))
+        op.run(send_config, mirror=True)
+        assert api.sent == expected  # only the PTO message, and only once
+    assert op.employee_name(send_config, 456) == "Марат"
+    assert op.employee_name(send_config, 999) == "999"
+    with pytest.raises(op.TelegramHold):
+        op.Journal.validate("COPY", {"case_id": "x"})
+
+
 def test_background_sends_queued_question(
     send_config: op.Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -177,6 +199,9 @@ def test_background_sends_queued_question(
         send_config, token=lambda _: "opaque-synthetic-secret", sleep=sleep, clock=clock
     )
     assert result == 0
-    assert api.sent == [(456, None, "TEXT", "Размер ок?".encode())]
+    assert api.sent == [
+        (456, None, "TEXT", "Размер ок?".encode()),
+        (123, None, "TEXT", "Бот → 456:\nРазмер ок?".encode()),
+    ]
     assert events(send_config).count("QUESTION") == 1
     assert list((base / bg.QUESTIONS).iterdir()) == []

@@ -37,7 +37,18 @@ class SendAPI(API):
             raise op.TelegramHold("synthetic transport failure")
         self.sent.append((chat_id, reply_to, name, body))
         chat = chat_id + 1 if self.wrong_chat else chat_id
-        result = {"chat": {"id": chat}, "document": {"file_id": "x"}}
+        result = {
+            "chat": {"id": chat},
+            "document": {"file_id": "x"},
+            "message_id": 500 + len(self.sent),
+        }
+        return cast(bytes, op.encode({"ok": True, "result": result}))
+
+    def forward_message(
+        self, chat_id: int, from_chat_id: int, message_id: int
+    ) -> bytes:
+        self.sent.append((chat_id, message_id, "FORWARD", str(from_chat_id).encode()))
+        result = {"chat": {"id": chat_id}, "message_id": 900 + len(self.sent)}
         return cast(bytes, op.encode({"ok": True, "result": result}))
 
     def send_message(self, chat_id: int, reply_to: int, text: str) -> bytes:

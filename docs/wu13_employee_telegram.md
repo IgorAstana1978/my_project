@@ -129,6 +129,15 @@ profile.json`. The command refuses any change other than adding employees
 `RECONFIGURE {from, to}` (configuration digests) and re-verifies every earlier
 Case under the new profile. Any other profile change still HOLDs.
 
+Copies for Igor (Igor's decision 2026-11-07): the background runner passes
+`mirror=True`. The first employee in the profile (Igor) is the owner and must
+stay first. Every accepted message from another employee is forwarded to the
+owner's chat once (`forwardMessage`; journal `COPY {case_id}`, retried after a
+HOLD). Every question, notice and quote the bot sends to another employee is
+also sent to the owner as `Бот → <name>:` plus the text, with sent files
+forwarded. The owner's own messages are not copied. Reconfiguration keeps the
+owner unchanged.
+
 Each Case revision is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is
