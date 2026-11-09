@@ -734,7 +734,9 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> str | 
     if not authorized(update, config):
         reason = "UNAUTHORIZED"
     else:
-        document = attachment(update["message"])
+        message = update["message"]
+        detail = "unsupported attachment"
+        document = attachment(message)
         if document is not None:
             if document:
                 body = download(api, document)
@@ -745,8 +747,17 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> str | 
                 parse_event(
                     raw, body, sha(body) if body is not None else None, config.policy
                 )
-            except TelegramHold:
-                reason = "UNSUPPORTED"
+            except TelegramHold as error:
+                reason, detail = "UNSUPPORTED", str(error)
+        if reason:
+            # Field names and fixed texts only: never values or file contents.
+            fields = ",".join(sorted(message))
+            inner = message.get("document")
+            names = ",".join(sorted(inner)) if isinstance(inner, dict) else "-"
+            print(
+                f"WU13 REJECT DETAIL: {detail}; fields={fields}; document={names}",
+                flush=True,
+            )
     if reason:
         journal.append(
             "REJECT", {"update_id": update_id, "raw_sha256": sha(raw), "reason": reason}

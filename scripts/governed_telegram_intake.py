@@ -285,10 +285,10 @@ def parse_event(
         if any(char in filename for char in "/\\:\x00") or filename in {".", ".."}:
             raise TelegramHold("unsafe document filename")
         suffix = Path(filename).suffix.lower()
-        if (
-            suffix not in SOURCE_TYPES
-            or document.get("mime_type", SOURCE_TYPES[suffix][0])
-            != SOURCE_TYPES[suffix][0]
+        # The declared MIME type is the sender's claim (forwarded files often
+        # say application/octet-stream); the content signature below decides.
+        if suffix not in SOURCE_TYPES or not isinstance(
+            document.get("mime_type", ""), str
         ):
             raise TelegramHold("unsupported document type")
         if (
@@ -305,9 +305,14 @@ def parse_event(
             document_bytes
         ):
             raise TelegramHold("document size mismatch")
-        if not document_bytes.startswith(SOURCE_TYPES[suffix][1]) or (
-            suffix == ".webp" and document_bytes[8:12] != b"WEBP"
-        ):
+        if suffix == ".pdf":
+            # PDF readers accept the header anywhere in the first kilobyte.
+            signed = b"%PDF-" in document_bytes[:1024]
+        else:
+            signed = document_bytes.startswith(SOURCE_TYPES[suffix][1]) and (
+                suffix != ".webp" or document_bytes[8:12] == b"WEBP"
+            )
+        if not signed:
             raise TelegramHold("document signature mismatch")
         suffix = ".jpg" if suffix == ".jpeg" else suffix
         name = f"source{suffix}"

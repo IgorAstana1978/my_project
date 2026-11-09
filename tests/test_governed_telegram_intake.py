@@ -248,7 +248,7 @@ def test_bad_documents(outputs: tuple[Path, Path], change: str) -> None:
     elif change == "suffix":
         doc["file_name"] = "input.xls"
     elif change == "mime":
-        doc["mime_type"] = "image/jpeg"
+        doc["mime_type"] = 5  # the declared type must at least be text
     elif change == "filename":
         doc["file_name"] = "../input.pdf"
     elif change == "file_id":

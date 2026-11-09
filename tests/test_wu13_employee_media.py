@@ -93,6 +93,12 @@ def test_picture_file_is_accepted(
         "thumb": preview,
     }
     data["message"]["forward_origin"] = {"type": "channel", "date": 1780000000}
+    if name.endswith(".pdf"):
+        # forwarded files may claim a generic type and start after a preamble
+        data["message"]["document"]["mime_type"] = "application/octet-stream"
+        body = b"\r\n" + body
+        api.bodies[name] = body
+        data["message"]["document"]["file_size"] = len(body)
     api.batches = [[data]]
     run(config, api, monkeypatch, "poll\nstop\n")
     assert dispositions(config)[2]["event"] == "ACCEPT"
