@@ -487,8 +487,13 @@ def test_credentials_in_metadata_and_document_hold(outputs: tuple[Path, Path]) -
     data = event()
     data["message"]["from"] = {"token": "ignored-secret-value"}
     assert receive(outputs, data).status == "HOLD"
-    body = b"%PDF-" + b"123456:" + b"x" * 25
+    body = b"%PDF-" + b"777:" + b"x" * 25  # this bot's own credential shape
     assert receive(outputs, event("pdf", body), body).status == "HOLD"
+    # chance "digits:letters" inside file bytes is not a credential (2026-11-09)
+    body = b"%PDF-" + b"123456:" + b"x" * 25 + b" 1777:" + b"y" * 25
+    policy = intake.TelegramPolicy(777, frozenset({-1001}))
+    raw = intake.encode(event("pdf", body))
+    assert intake.parse_event(raw, body, intake.sha(body), policy)[0]
 
 
 def test_oversized_inputs_hold(

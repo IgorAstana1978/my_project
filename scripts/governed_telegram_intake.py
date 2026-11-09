@@ -297,7 +297,11 @@ def parse_event(
             or len(document_bytes) > MAX_BYTES
         ):
             raise TelegramHold("missing or oversized document bytes")
-        if TOKEN_PATTERN.search(document_bytes):
+        # Binary files (PDF streams, pictures) often contain "12345:abc..."
+        # by chance (Igor 2026-11-09: a real PDF was refused). In file bytes
+        # look only for this bot's own credential shape.
+        own = re.compile(rb"(?<![0-9])%d:[A-Za-z0-9_-]{20,}" % policy.bot_id)
+        if own.search(document_bytes):
             raise TelegramHold("credential-like content is forbidden")
         if expected_document_sha256 != sha(document_bytes):
             raise TelegramHold("document SHA-256 mismatch")
