@@ -18,6 +18,44 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TOKEN_PATTERN = re.compile(rb"[0-9]{5,}:[A-Za-z0-9_-]{20,}")
 SCHEMA = "telegram_transport_receipt.v0.1"
 MAX_BYTES = 20 * 1024 * 1024
+# Igor 2026-11-09: photos of schemes and pictures sent as files are accepted
+# for the operator (Claude) to read; the extractor sees only a fixed note.
+IMAGE_NOTE = "image.txt"
+SOURCE_TYPES = {
+    ".pdf": ("application/pdf", (b"%PDF-",)),
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        (b"PK\x03\x04",),
+    ),
+    ".jpg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
+    ".png": ("image/png", (b"\x89PNG\r\n\x1a\n",)),
+}
+IMAGE_SUFFIXES = {".jpg", ".png"}
+PHOTO_FIELDS = {"file_id", "file_unique_id", "width", "height", "file_size"}
+
+
+def largest_photo(photos: Any) -> dict[str, Any]:
+    """Telegram sends one photo in several sizes; keep the largest one."""
+    if (
+        not isinstance(photos, list)
+        or not 0 < len(photos) <= 10
+        or not all(
+            isinstance(p, dict)
+            and not set(p) - PHOTO_FIELDS
+            and all(
+                isinstance(p.get(k), str) and 0 < len(p[k]) <= 255
+                for k in ("file_id", "file_unique_id")
+            )
+            and all(
+                type(p.get(k)) is int and p[k] > 0
+                for k in PHOTO_FIELDS - {"file_id", "file_unique_id"}
+            )
+            for p in photos
+        )
+    ):
+        raise TelegramHold("unsupported photo input")
+    return max(photos, key=lambda p: (p["width"] * p["height"], p["file_size"]))
 
 
 class TelegramHold(ValueError):
@@ -166,6 +204,20 @@ def parse_event(
         # (WU13 answers to the bot's questions, Igor's decision 2026-11-07).
         "reply_to_message",
         "quote",
+        # Igor 2026-11-09: photos, links, albums and forwarded files.
+        "photo",
+        "link_preview_options",
+        "media_group_id",
+        "has_media_spoiler",
+        "show_caption_above_media",
+        "forward_origin",
+        "forward_from",
+        "forward_from_chat",
+        "forward_from_message_id",
+        "forward_signature",
+        "forward_sender_name",
+        "forward_date",
+        "is_automatic_forward",
     }
     if not isinstance(message, dict) or set(message) - allowed_fields:
         raise TelegramHold("unsupported message input")
@@ -188,6 +240,11 @@ def parse_event(
             files[f"{field}.txt"] = body
             texts[field] = {"file": f"{field}.txt", "sha256": sha(body)}
     document = message.get("document")
+    if "photo" in message:
+        if document is not None:
+            raise TelegramHold("unsupported photo input")
+        photo = largest_photo(message["photo"])
+        document = {**photo, "file_name": "photo.jpg", "mime_type": "image/jpeg"}
     attachment = None
     if document is None:
         if (
@@ -208,6 +265,8 @@ def parse_event(
                 "file_name",
                 "mime_type",
                 "file_size",
+                "width",
+                "height",
             }
         ):
             raise TelegramHold("unsupported document input")
@@ -219,15 +278,10 @@ def parse_event(
         if any(char in filename for char in "/\\:\x00") or filename in {".", ".."}:
             raise TelegramHold("unsafe document filename")
         suffix = Path(filename).suffix.lower()
-        mime = {
-            ".pdf": "application/pdf",
-            ".xlsx": (
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-        }
         if (
-            suffix not in mime
-            or document.get("mime_type", mime[suffix]) != mime[suffix]
+            suffix not in SOURCE_TYPES
+            or document.get("mime_type", SOURCE_TYPES[suffix][0])
+            != SOURCE_TYPES[suffix][0]
         ):
             raise TelegramHold("unsupported document type")
         if (
@@ -244,12 +298,13 @@ def parse_event(
             document_bytes
         ):
             raise TelegramHold("document size mismatch")
-        if (suffix == ".pdf" and not document_bytes.startswith(b"%PDF-")) or (
-            suffix == ".xlsx" and not document_bytes.startswith(b"PK\x03\x04")
-        ):
+        if not document_bytes.startswith(SOURCE_TYPES[suffix][1]):
             raise TelegramHold("document signature mismatch")
+        suffix = ".jpg" if suffix == ".jpeg" else suffix
         name = f"source{suffix}"
         files[name] = document_bytes
+        if suffix in IMAGE_SUFFIXES:
+            files[IMAGE_NOTE] = f"Изображение {name} для разбора оператором.\n".encode()
         attachment = {**document, "file": name, "sha256": sha(document_bytes)}
     identity = {
         "bot_id": policy.bot_id,
@@ -357,13 +412,16 @@ def receive_event(
             ),
             None,
         )
+        image = source is not None and source.suffix in IMAGE_SUFFIXES
         result = run_case_extraction(
             case_id=case_id,
             canonical_root=cases,
             project_pdf=source if source and source.suffix == ".pdf" else None,
             spec_workbook=source if source and source.suffix == ".xlsx" else None,
             # Captions stay in the receipt, outside engineering/policy inputs.
-            request_text=text if source is None else None,
+            request_text=(
+                folder / IMAGE_NOTE if image else text if source is None else None
+            ),
         )
         if result.status != "PASS":
             raise TelegramHold("existing extraction failed; manual inspection required")

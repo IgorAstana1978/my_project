@@ -27,10 +27,12 @@ from governed_case_intake import _pairs
 from governed_telegram_intake import (
     MAX_BYTES,
     PROJECT_ROOT,
+    SOURCE_TYPES,
     TelegramHold,
     TelegramPolicy,
     encode,
     integer,
+    largest_photo,
     parse_event,
     receive_event,
     reject_credentials,
@@ -467,7 +469,9 @@ def verify_local(config: Config, journal: Journal) -> None:
         ):
             raise TelegramHold("local identity changed")
         documents = [
-            p for p in folder.iterdir() if p.name in {"source.pdf", "source.xlsx"}
+            p
+            for p in folder.iterdir()
+            if p.name in {"source.pdf", "source.xlsx", "source.jpg", "source.png"}
         ]
         body = documents[0].read_bytes() if documents else None
         result = receive_event(
@@ -677,26 +681,59 @@ def supported_document(value: Any) -> bool:
         and type(value.get("file_size")) is int
         and 0 < value["file_size"] <= MAX_BYTES
         and not any(c in value["file_name"] for c in "/\\:\x00")
-        and Path(value["file_name"]).suffix.lower() in {".pdf", ".xlsx"}
+        and Path(value["file_name"]).suffix.lower() in SOURCE_TYPES
     )
 
 
-def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> None:
+def attachment(message: dict[str, Any]) -> dict[str, Any] | None:
+    """The file to download: a document, or the largest size of a photo."""
+    if "photo" in message:
+        try:
+            return largest_photo(message["photo"])
+        except TelegramHold:
+            return {}
+    document = message.get("document")
+    return document if document is None or supported_document(document) else {}
+
+
+UNSUPPORTED_TEXT = (
+    "Бот не смог прочитать это сообщение. Принимаю текст, ссылки, фото и файлы "
+    "PDF, Excel, JPG, PNG. Голосовые, видео и архивы не принимаю — пришлите, "
+    "пожалуйста, текстом или файлом."
+)
+
+
+def tell_unsupported(config: Config, api: BotAPI, raw: bytes) -> None:
+    """Igor 2026-11-09: the sender learns at once; Igor gets the message too."""
+    message = load(raw)["message"]
+    chat_id, message_id = message["chat"]["id"], message["message_id"]
+    confirmed(api.send_message(chat_id, message_id, UNSUPPORTED_TEXT), chat_id)
+    if config.owner is None or chat_id == config.owner[1]:
+        return
+    owner = config.owner[1]
+    name = employee_name(config, message["from"]["id"])
+    text = f"Бот не принял сообщение от {name} (формат не поддерживается):"
+    confirmed(api.send_message(owner, None, text), owner)
+    confirmed(api.forward_message(owner, chat_id, message_id), owner)
+
+
+def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> str | None:
+    """Journal one update; return the REJECT reason the first time, else None."""
     update = load(raw)
     update_id = integer(update.get("update_id"), zero=True)
     previous = journal.dispositions().get(update_id)
     if previous:
         if previous["data"]["raw_sha256"] != sha(raw):
             raise TelegramHold("redelivery changed")
-        return
+        return None
     reason = None
     body = None
     if not authorized(update, config):
         reason = "UNAUTHORIZED"
     else:
-        document = update["message"].get("document")
+        document = attachment(update["message"])
         if document is not None:
-            if supported_document(document):
+            if document:
                 body = download(api, document)
             else:
                 reason = "UNSUPPORTED"
@@ -711,7 +748,7 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> None:
         journal.append(
             "REJECT", {"update_id": update_id, "raw_sha256": sha(raw), "reason": reason}
         )
-        return
+        return reason
     evidence = wire.deliver(raw, config.policy, config.receipts, config.cases, body)
     digest = tree_hash(config, evidence["case_id"], sync=True)
     journal.append(
@@ -723,6 +760,7 @@ def process(raw: bytes, config: Config, journal: Journal, api: BotAPI) -> None:
             "tree_sha256": digest,
         },
     )
+    return None
 
 
 def reply(
@@ -1087,7 +1125,8 @@ def run(
                 ):
                     raise TelegramHold("unordered or regressing queue")
                 for raw in events:
-                    process(raw, config, journal, api)
+                    if process(raw, config, journal, api) == "UNSUPPORTED" and mirror:
+                        tell_unsupported(config, api, raw)
                 if mirror:
                     mirror_incoming(config, journal, api)
                 verify_local(config, journal)

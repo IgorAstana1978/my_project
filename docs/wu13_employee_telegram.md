@@ -138,6 +138,16 @@ also sent to the owner as `Бот → <name>:` plus the text, with sent files
 forwarded. The owner's own messages are not copied. Reconfiguration keeps the
 owner unchanged.
 
+Pictures, links and unsupported messages (Igor's decision 2026-11-09):
+employees may send a photo (the largest Telegram size is stored as
+`source.jpg`), a JPG/PNG picture as a file (`source.jpg` / `source.png`),
+text with links, albums and forwarded messages. For pictures the extractor
+gets only the fixed note `image.txt`; the operator reads the picture. Any
+other message from an employee (voice, video, archive, ...) is rejected as
+`UNSUPPORTED`; in the background runner the sender is then told at once to
+send text or a file, and a message from another employee is also forwarded
+to the owner with a short note. A redelivered update is not answered again.
+
 Each Case revision is answered at most once. A `SEND_INTENT` without `SENT` (crash or
 transport failure mid-send) means the remote outcome is unknown: HOLD before
 token input until Igor checks the chat and a separately approved recovery is
