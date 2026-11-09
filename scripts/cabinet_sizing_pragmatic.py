@@ -55,11 +55,21 @@ def request_for(case_id: str, items: Any) -> dict[str, Any]:
     }
 
 
-def source_fact(case_id: str, item: Any, binding: Any) -> dict[str, Any]:
+def source_fact(
+    case_id: str, item: Any, binding: Any, *, installed: bool = False
+) -> dict[str, Any]:
     require(
         binding is not None, "HOLD_SOURCE_DIMENSIONS_INSTALL_HISTORY_EVIDENCE_REQUIRED"
     )
     fact = evidence.pragmatic_source_fact(case_id, item, binding)
+    if installed:
+        from cabinet_sizing_module_accounting import MIXED_SOURCE_SCHEMA
+
+        require(
+            fact.get("schema_version") == MIXED_SOURCE_SCHEMA,
+            "HOLD_MIXED_SOURCE_VERSION",
+        )
+        fact = fact["project_fact"]
     require(
         set(fact)
         == {
@@ -567,3 +577,230 @@ def select(
             }
         )
     )
+
+
+def mixed_layout(case_id: str, item: Any, request: Any, record: Any, data: Any) -> Any:
+    """Bounded full-inventory calculation using source zones and the exact packer."""
+    from decimal import Context, localcontext
+
+    from cabinet_sizing_module_accounting import (
+        MIXED_LAYOUT_SCHEMA,
+        installed_inventory,
+        inventory_projection,
+    )
+    from cabinet_sizing_selector import pack_panel
+
+    with localcontext(Context(prec=50)):
+        ledger_data, ledger, zones, geometry = installed_inventory(
+            case_id, item, request, record, data
+        )
+        outer = evidence.dimensions(record["dimensions_mm"])
+        boxes = []
+        din_zones = [z for z in zones.values() if z["kind"] == "DIN"]
+        if "din_capacity_binding" in record:
+            cap = record["din_capacity_binding"]
+            require(
+                cap.get("modules_per_rail") is not None
+                and len(din_zones) <= cap["rail_count"]
+                and all(
+                    evidence.number(z["capacity_mm"]) <= cap["rail_capacity_mm"]
+                    for z in din_zones
+                )
+                and sum((evidence.number(z["capacity_mm"]) for z in din_zones), ZERO)
+                <= cap["total_capacity_mm"]
+                and all(
+                    evidence.number(z["capacity_modules"]) <= cap["modules_per_rail"]
+                    for z in din_zones
+                ),
+                "HOLD_MIXED_CONSTRUCTION_CAPACITY_CONFLICT",
+            )
+        for zone in zones.values():
+            require(
+                zone["kind"] in {"DIN", "PANEL"}, "HOLD_MIXED_ZONE_KIND_UNSUPPORTED"
+            )
+            origin = evidence.dimensions(zone["origin_mm"], zero=True)
+            size = evidence.dimensions(zone["usable_mm"])
+            require(
+                all(origin[i] + size[i] <= outer[i] for i in range(3)),
+                "HOLD_MIXED_ZONE_OUTSIDE_CABINET",
+            )
+            plane = evidence.number(zone["mounting_plane_mm"], zero=True)
+            require(plane < size[2], "HOLD_MIXED_MOUNTING_PLANE")
+            require(
+                zone["panel_material"] in {"metal", "insulating"}
+                and type(zone["barriers_compatible"]) is bool,
+                "HOLD_MIXED_MOUNTING_MATERIAL",
+            )
+            evidence.number(zone["panel_thickness_mm"])
+            if zone["kind"] == "DIN":
+                require(
+                    evidence.number(zone["capacity_mm"]) <= size[1],
+                    "HOLD_MIXED_CAPACITY_OUTSIDE_GEOMETRY",
+                )
+            else:
+                require(
+                    evidence.number(zone["capacity_area_mm2"]) <= size[0] * size[1],
+                    "HOLD_MIXED_CAPACITY_OUTSIDE_GEOMETRY",
+                )
+            for other_origin, other_size in boxes:
+                require(
+                    any(
+                        origin[i] + size[i] <= other_origin[i]
+                        or other_origin[i] + other_size[i] <= origin[i]
+                        for i in (0, 1)
+                    ),
+                    "HOLD_MIXED_ZONES_OVERLAP",
+                )
+            boxes.append((origin, size))
+        profiles = {p["id"]: p for p in data["profiles"]}
+        instances = {i["id"]: i for i in data["instances"]}
+        core = {
+            u["component_id"]: u["envelope"]
+            for u in prepare(
+                item, request["devices"], evidence.envelopes(request["devices"])
+            )
+        }
+        budget = Budget()
+        placements = []
+        pair_by_group = {}
+        for zone in zones.values():
+            units = []
+            cursor = ZERO
+            origin = evidence.dimensions(zone["origin_mm"], zero=True)
+            size = evidence.dimensions(zone["usable_mm"])
+            plane = evidence.number(zone["mounting_plane_mm"], zero=True)
+            for group in ledger_data["boards"][0]["groups"]:
+                if group["zone_id"] != zone["id"]:
+                    continue
+                profile = profiles[group["profile_id"]]
+                shape = geometry[group["profile_id"]]
+                dims = evidence.dimensions(shape["dimensions_mm"])
+                require(
+                    isinstance(shape["clearance_mm"], list)
+                    and len(shape["clearance_mm"]) == 4
+                    and isinstance(shape["pair_gap_mm"], list)
+                    and len(shape["pair_gap_mm"]) == 2,
+                    "HOLD_MIXED_CLEARANCE_SCHEMA",
+                )
+                clear = [evidence.number(v, zero=True) for v in shape["clearance_mm"]]
+                pair = [evidence.number(v, zero=True) for v in shape["pair_gap_mm"]]
+                pair_by_group[group["id"]] = pair
+                for iid in group["instance_ids"]:
+                    cid = instances[iid]["component_id"]
+                    if cid is None:
+                        continue
+                    env = core[cid]
+                    require(
+                        env["body_reference"] is None,
+                        "HOLD_MIXED_BODY_REFERENCE_UNSUPPORTED",
+                    )
+                    require(
+                        all(dims[i] >= env["dimensions_mm"][i] for i in range(3))
+                        and all(clear[i] >= env["clearance_mm"][i] for i in range(4))
+                        and all(pair[i] >= env["pair_gap_mm"][i] for i in range(2))
+                        and pair[1] >= env["extra_gap_mm"],
+                        "HOLD_MIXED_BASE_ENVELOPE_UNDERBOUND",
+                    )
+                if zone["kind"] == "DIN":
+                    require(not any(pair), "HOLD_MIXED_DIN_PAIR_GAP_UNSUPPORTED")
+                    left = evidence.number(profile["left_gap_mm"], zero=True)
+                    right = evidence.number(profile["right_gap_mm"], zero=True)
+                    require(
+                        dims[1] == evidence.number(profile["width_mm"])
+                        and left >= clear[2]
+                        and right >= clear[3],
+                        "HOLD_MIXED_RESOURCE_GEOMETRY_CONFLICT",
+                    )
+                    cursor += left
+                    if (
+                        cursor + dims[1] + right > size[1]
+                        or clear[0] + dims[0] + clear[1] > size[0]
+                        or plane + dims[2] > size[2]
+                    ):
+                        return None
+                    placements.append(
+                        dict(
+                            group_id=group["id"],
+                            zone_id=zone["id"],
+                            origin_mm=[
+                                origin[0] + clear[0],
+                                origin[1] + cursor,
+                                origin[2] + plane,
+                            ],
+                            dimensions_mm=dims,
+                            instance_ids=group["instance_ids"],
+                        )
+                    )
+                    cursor += dims[1] + right
+                else:
+                    require(
+                        dims[0] * dims[1] == evidence.number(profile["area_mm2"]),
+                        "HOLD_MIXED_RESOURCE_GEOMETRY_CONFLICT",
+                    )
+                    units.append(
+                        dict(
+                            component_id=group["id"],
+                            unit=1,
+                            envelope=dict(
+                                dimensions_mm=dims,
+                                clearance_mm=clear,
+                                pair_gap_mm=pair,
+                                body_reference=None,
+                            ),
+                        )
+                    )
+            if zone["kind"] == "PANEL":
+                packed = pack_panel(units, dict(zone, zone_id=zone["id"]), budget)
+                if packed is None:
+                    return None
+                for placed in packed:
+                    group = next(
+                        g
+                        for g in ledger_data["boards"][0]["groups"]
+                        if g["id"] == placed["component_id"]
+                    )
+                    placements.append(
+                        dict(
+                            group_id=group["id"],
+                            zone_id=zone["id"],
+                            origin_mm=placed["origin_mm"],
+                            dimensions_mm=placed["dimensions_mm"],
+                            instance_ids=group["instance_ids"],
+                        )
+                    )
+        # Each zone is packed independently. Accept only a globally valid witness;
+        # failure here is uncertainty, not proof that no other placement can fit.
+        for index, first in enumerate(placements):
+            for second in placements[index + 1 :]:
+                if first["zone_id"] == second["zone_id"]:
+                    continue
+                gaps = [
+                    max(a, b)
+                    for a, b in zip(
+                        pair_by_group[first["group_id"]],
+                        pair_by_group[second["group_id"]],
+                        strict=True,
+                    )
+                ]
+                require(
+                    any(
+                        first["origin_mm"][axis]
+                        + first["dimensions_mm"][axis]
+                        + gaps[axis]
+                        <= second["origin_mm"][axis]
+                        or second["origin_mm"][axis]
+                        + second["dimensions_mm"][axis]
+                        + gaps[axis]
+                        <= first["origin_mm"][axis]
+                        for axis in (0, 1)
+                    ),
+                    "HOLD_MIXED_CROSS_ZONE_PAIR_GAP_UNCERTAIN",
+                )
+        return dict(
+            calculation_schema=MIXED_LAYOUT_SCHEMA,
+            placements=placements,
+            reserve=ledger["reserve"],
+            installed_inventory=inventory_projection(
+                ledger_data, ledger_data["boards"][0]
+            ),
+        )

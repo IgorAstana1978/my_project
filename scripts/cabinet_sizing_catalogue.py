@@ -9,6 +9,7 @@ from typing import Any
 import cabinet_catalogue as catalogue
 import cabinet_reserve_policy as reserve_policy_rules
 import cabinet_sizing_evidence as evidence
+import cabinet_sizing_module_accounting as modules
 import cabinet_sizing_pragmatic as planning
 import cabinet_sizing_selector as exact
 from cabinet_sizing import SizingHold, apparatus_hash, require
@@ -522,13 +523,44 @@ def select(
     records = inventory["records"]
     require(bool(records), "HOLD_EMPTY_CATALOGUE")
     classes = evidence.envelopes(req["devices"])
+    installed = {iid: modules.installed_source(req["source_facts"][iid]) for iid in ids}
+    mixed = any(value is not None for value in installed.values())
+    if mixed:
+        require(
+            quote and all(value is not None for value in installed.values()),
+            "HOLD_MIXED_EXPLICIT_QUOTE_OPT_IN",
+        )
+        policy = reserve_policy_rules.make(
+            case_id,
+            {
+                iid: {
+                    "DIN": value["project_min_din_free_percent"],
+                    "PANEL": value["project_min_panel_free_percent"],
+                }
+                for iid, value in installed.items()
+            },
+        )
+        require(
+            reserve_policy is None or reserve_policy == policy,
+            "HOLD_MIXED_PROJECT_POLICY_CONFLICT",
+        )
+        reserve_policy = policy
     selections = []
     for item in items:
         units = planning.prepare(item, req["devices"], classes)
-        fact = planning.source_fact(case_id, item, req["source_facts"][item["item_id"]])
+        fact = planning.source_fact(
+            case_id, item, req["source_facts"][item["item_id"]], installed=mixed
+        )
         shapes_by_reserve = {}
         outcomes = []
         for record in records:
+            if mixed:
+                outcomes.append(
+                    mixed_candidate(
+                        case_id, item, req, record, fact, installed[item["item_id"]]
+                    )
+                )
+                continue
             din_min, panel_min = reserve_policy_rules.thresholds(
                 reserve_policy, item["item_id"], record["family"]
             )
@@ -569,7 +601,7 @@ def select(
         require(
             fact
             == planning.source_fact(
-                case_id, item, req["source_facts"][item["item_id"]]
+                case_id, item, req["source_facts"][item["item_id"]], installed=mixed
             ),
             "HOLD_SOURCE_FACT_DRIFT",
         )
@@ -591,6 +623,12 @@ def select(
         )
         require(inventory == reread, "HOLD_CATALOGUE_SOURCE_DRIFT")
         validate_request(case_id, req)
+        if mixed:
+            require(
+                installed[item["item_id"]]
+                == modules.installed_source(req["source_facts"][item["item_id"]]),
+                "HOLD_MIXED_SOURCE_DRIFT",
+            )
         for record in records:
             if record["cabinet_code"] in catalogue.MOUNTING_SOURCES:
                 evidence.read(
@@ -736,3 +774,50 @@ def select(
             }
         )
     )
+
+
+def mixed_candidate(
+    case_id: str, item: Any, req: Any, record: Any, fact: Any, data: Any
+) -> Any:
+    """Do not use a partial DIN proof to authorize this separate full calculation."""
+    outcome = dict(
+        record,
+        status="UNKNOWN",
+        reasons=[],
+        layout=None,
+        physical_installation_status="HOLD",
+    )
+    if record["source_issues"] or record["dimensions_mm"] is None:
+        outcome["reasons"] = record["source_issues"] or [
+            "HOLD_MIXED_CABINET_DIMENSIONS"
+        ]
+        return outcome
+    if fact["dimensions_status"] == "EXPLICIT" and evidence.dimensions(
+        fact["dimensions_mm"]
+    ) != evidence.dimensions(record["dimensions_mm"]):
+        outcome.update(status="NO_FIT", reasons=["SOURCE_EXACT_DIMENSIONS_ONLY"])
+        return outcome
+    try:
+        require(
+            proven_mounting(record) is None,
+            "HOLD_MIXED_EXISTING_MOUNTING_RECONCILIATION_REQUIRED",
+        )
+        require(
+            fact["installation"] is None,
+            "HOLD_MIXED_INSTALLATION_CONSTRAINT_UNSUPPORTED",
+        )
+        layout = planning.mixed_layout(case_id, item, req, record, data)
+        outcome.update(
+            status="FIT" if layout is not None else "NO_FIT",
+            layout=layout,
+            reasons=[
+                (
+                    "MIXED_FULL_INVENTORY_CALCULATION"
+                    if layout is not None
+                    else "MIXED_SOURCE_ZONE_GEOMETRY_INSUFFICIENT"
+                )
+            ],
+        )
+    except SizingHold as exc:
+        outcome["reasons"] = [str(exc)]
+    return outcome

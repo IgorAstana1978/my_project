@@ -245,3 +245,25 @@ mounting kind должен совпадать, exact ширина/площадь
 range и collection count сохраняют точность acceptance comparisons. Recurring
 division используется только для отображения процента; pass/fail определяется
 точным сравнением произведений, без округления процента до границы.
+
+
+## Mixed installed geometry opt-in
+
+`cabinet_sizing.installed_source.v0.1` описан в sizing contract. Module v0.1
+schemas, positive nominal_modules requirement и family/project reserve policy
+не меняются. Общий inventory validator используется base calculation и ledger:
+полный набор source-bound products/profiles/instances/groups/zones проходит
+одинаковые resource, coverage, exact identity и ownership checks.
+
+Mixed base layout хранит canonical installed_inventory projection. При построении
+и повторной проверке wrapper она должна точно совпасть с final module evidence,
+включая источники, zone capacities, quantities, cabinet hash и project facts.
+Сначала verifier заново выполняет весь base mixed расчёт, затем ledger; поддельный
+layout marker или area-only claim не обходят прежние capacity-only guards.
+
+Source fact не содержит final sizing/composition hashes: эти bindings сохраняются
+в отдельном admitted module evidence. Это устраняет циклическую ссылку и не
+расширяет authority источника. Реальных admissions и Case writes нет. Synthetic
+fixtures доказывают mixed PASS, raw/source/result drift, ownership и geometry
+HOLD/NO_FIT, включая BODY_ONLY и недостающие nominal modules; native builder
+проверяет drift до phrase, после phrase и на publication recheck.

@@ -150,6 +150,24 @@ def _build(
         and data["sizing_sha256"] == sizing.digest(sizing_report),
         "HOLD_MODULE_COMPOSITION_BINDING",
     )
+    if is_mixed_report(sizing_report):
+        for _item, board, selection in zip(
+            items, data["boards"], sizing_report["items"], strict=True
+        ):
+            sizing.require(
+                inventory_projection(data, board)
+                == selection["layout"]["installed_inventory"],
+                "HOLD_MIXED_LEDGER_INVENTORY_DRIFT",
+            )
+    result = inventory_ledger(case_id, items, sizing_report, source, data)
+    sizing.require(evidence.read(source, ROLE) == data, "HOLD_MODULE_SOURCE_DRIFT")
+    return result
+
+
+def inventory_ledger(
+    case_id: str, items: Any, sizing_report: Any, source: Any, data: Any
+) -> dict[str, Any]:
+    """Common strict resource validation; callers first authenticate their source."""
     base_devices = reserve_rules.request(sizing_report).get("devices")
     base_classes = (
         evidence.envelopes(base_devices) if base_devices is not None else None
@@ -447,7 +465,6 @@ def _build(
                 "physical_fit": "NOT_ESTABLISHED_BY_MODULE_ACCOUNTING",
             }
         )
-    sizing.require(evidence.read(source, ROLE) == data, "HOLD_MODULE_SOURCE_DRIFT")
     return cast(
         dict[str, Any],
         serial(
@@ -675,3 +692,144 @@ def size_base(
         raise sizing.SizingHold(
             "HOLD_MODULE_MALFORMED_OR_UNAVAILABLE_EVIDENCE"
         ) from exc
+
+
+MIXED_SOURCE_SCHEMA = "cabinet_sizing.installed_source.v0.1"
+MIXED_LAYOUT_SCHEMA = "cabinet_sizing.installed_layout.v0.1"
+
+
+def is_mixed_report(report: Any) -> bool:
+    return any(
+        isinstance(s.get("layout"), dict)
+        and s["layout"].get("calculation_schema") == MIXED_LAYOUT_SCHEMA
+        for s in report["items"]
+    )
+
+
+def inventory_projection(data: Any, board: Any) -> dict[str, Any]:
+    """Bind ledger ownership, source facts and capacities to base geometry."""
+    pids = {i["product_id"] for i in board["instances"]}
+    profiles = {g["profile_id"] for g in board["groups"]}
+    return {
+        "products": {p["id"]: p for p in data["products"] if p["id"] in pids},
+        "profiles": {p["id"]: p for p in data["profiles"] if p["id"] in profiles},
+        "board": board,
+    }
+
+
+def installed_source(binding: Any) -> Any:
+    """The immutable source version is the opt-in; request/approval flags are not."""
+    data = evidence.read(binding, "pragmatic_source_fact")
+    if data.get("schema_version") != MIXED_SOURCE_SCHEMA:
+        return None
+    obj(
+        data,
+        "schema_version project_fact quantity inventory_scope products profiles "
+        "instances geometry candidates project_min_din_free_percent "
+        "project_min_panel_free_percent raw_sources",
+    )
+    sizing.require(data["inventory_scope"] == SCOPE, "HOLD_MIXED_COMPLETE_INVENTORY")
+    integer(data["quantity"])
+    for ref in collection(data["raw_sources"]):
+        obj(ref, "path sha256")
+        evidence.safe_bytes(Path(ref["path"]), ref["sha256"])
+    return data
+
+
+def installed_inventory(
+    case_id: str, item: Any, req: Any, record: Any, data: Any
+) -> Any:
+    """Validate the same products/ownership/resources later required by the ledger."""
+    candidates = unique(
+        data["candidates"],
+        "cabinet_code dimensions_mm zones groups source",
+        "cabinet_code",
+    )
+    sizing.require(
+        record["cabinet_code"] in candidates,
+        "HOLD_MIXED_CABINET_ZONE_EVIDENCE_REQUIRED",
+    )
+    candidate = candidates[record["cabinet_code"]]
+    sizing.require(
+        evidence.dimensions(candidate["dimensions_mm"])
+        == evidence.dimensions(record["dimensions_mm"]),
+        "HOLD_MIXED_CABINET_IDENTITY",
+    )
+    sizing.require(
+        data["quantity"] == item.get("quantity", item.get("quantity_guess")),
+        "HOLD_MIXED_QUANTITY_BINDING",
+    )
+    zones = unique(
+        candidate["zones"],
+        "id kind capacity_modules capacity_mm capacity_area_mm2 source "
+        "origin_mm usable_mm mounting_plane_mm panel_material "
+        "panel_thickness_mm barriers_compatible",
+        "id",
+    )
+    legacy_fields = (
+        "id kind capacity_modules capacity_mm capacity_area_mm2 source".split()
+    )
+    cabinet = dict(
+        cabinet_code=record["cabinet_code"],
+        cabinet_label=record["cabinet_label"],
+        cabinet_type=record["family"],
+        dimensions_mm=record["dimensions_mm"],
+    )
+    board = dict(
+        item_id=item["item_id"],
+        cabinet_sha256=sizing.digest(cabinet),
+        quantity=data["quantity"],
+        project_min_din_free_percent=data["project_min_din_free_percent"],
+        project_min_panel_free_percent=data["project_min_panel_free_percent"],
+        zones=[{k: z[k] for k in legacy_fields} for z in zones.values()],
+        instances=data["instances"],
+        groups=candidate["groups"],
+        source=candidate["source"],
+    )
+    normalized_item = dict(item, cabinet=cabinet)
+    normalized_item["components"] = [
+        dict(c, quantity=c.get("quantity", c.get("quantity_guess")))
+        for c in item["components"]
+    ]
+    base = dict(
+        schema_version="cabinet_sizing.catalogue.v0.5", case_id=case_id, sources=req
+    )
+    ledger_data = dict(
+        schema_version=EVIDENCE_SCHEMA,
+        case_id=case_id,
+        composition_sha256=composition_hash([normalized_item]),
+        sizing_sha256=sizing.digest(base),
+        inventory_scope=SCOPE,
+        products=data["products"],
+        profiles=data["profiles"],
+        boards=[board],
+        raw_sources=data["raw_sources"],
+    )
+    ledger = inventory_ledger(
+        case_id,
+        [normalized_item],
+        base,
+        req["source_facts"][item["item_id"]],
+        ledger_data,
+    )
+    geometry = unique(
+        data["geometry"],
+        "profile_id dimensions_mm clearance_mm pair_gap_mm extent_scope source",
+        "profile_id",
+    )
+    sizing.require(
+        set(geometry) == {p["id"] for p in data["profiles"]},
+        "HOLD_MIXED_GEOMETRY_COVERAGE",
+    )
+    raw = {(r["path"], r["sha256"]) for r in data["raw_sources"]}
+    for shape in geometry.values():
+        ref = obj(shape["source"], "path sha256 locator")
+        sizing.require(
+            bool(string(ref["locator"])) and (ref["path"], ref["sha256"]) in raw,
+            "HOLD_MODULE_UNBOUND_RAW_SOURCE",
+        )
+        sizing.require(
+            shape["extent_scope"] == "INSTALLED_ASSEMBLY_WITH_CONNECTIONS",
+            "HOLD_MIXED_INSTALLED_ASSEMBLY_REQUIRED",
+        )
+    return ledger_data, ledger["items"][0], zones, geometry

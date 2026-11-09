@@ -399,6 +399,7 @@ def verify_report(
     from cabinet_sizing_module_accounting import (
         REPORT_SCHEMA,
         algorithm_schema,
+        is_mixed_report,
         verify_sizing_report,
     )
 
@@ -407,6 +408,9 @@ def verify_report(
         verify_sizing_report(report, items, expected_case_id)
         base = report["base_report"]
         if algorithm_schema(base) == "cabinet_sizing.catalogue.v0.5":
+            if is_mixed_report(base):
+                # The full base and its exact ledger projection were recomputed above.
+                return
             for selection, board in zip(
                 base["items"], report["module_ledger"]["items"], strict=True
             ):

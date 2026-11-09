@@ -361,3 +361,63 @@ overall UNKNOWN, physical installation HOLD и основной `layout=null`.
 construction authority: их прежние UNKNOWN причины сохраняются, новые
 mounting bindings не создаются. Суффиксы моделей и внешние размеры не являются
 доказательством числа реек, вместимости или physical fit.
+
+
+## Installed inventory mixed opt-in v0.1 (2026-11-06)
+
+Отдельный immutable source schema `cabinet_sizing.installed_source.v0.1`
+является явным opt-in для QUOTE_PREPARATION. Request/report остаются v0.5,
+module evidence/ledger/wrapper v0.1 и approval schemas сохраняются. Caller flags,
+HWD/placements и новая authority не добавляются. Источник читается только по
+existing admitted `pragmatic_source_fact` role/path/SHA. AUTHORIZED не расширен.
+Default v0.4/v0.5 с прежними source schemas пересчитывается прежним путём.
+
+Source root имеет ровно: `schema_version project_fact quantity inventory_scope
+products profiles instances geometry candidates project_min_din_free_percent
+project_min_panel_free_percent raw_sources`. `project_fact` — прежний strict
+source fact с exact apparatus hash, Case/item, source dimensions/install/history.
+Все items одного opt-in request должны использовать эту source version и полный
+`ALL_INSTALLED_EQUIPMENT_AND_DIN_ACCESSORIES` scope; project facts перечитываются
+до расчёта и обязаны совпадать с module-backed reserve policy.
+
+Products/profiles/instances сохраняют прежние строгие module поля, включая
+положительные source-stated DIN nominal_modules. Никакой mm-only семантики нет.
+Geometry record: `profile_id dimensions_mm clearance_mm pair_gap_mm extent_scope
+source`. H/W/D и gaps числовые, source ref строго path/SHA/locator из raw_sources.
+Требуется reviewed technical extent `INSTALLED_ASSEMBLY_WITH_CONNECTIONS`;
+BODY_ONLY/unknown не проходят. Эта классификация сама не даёт admission/approval.
+Размеры core assembly и clearances не могут недооценивать admitted base envelope.
+Сложные body-reference anchors и DIN pair gaps пока unsupported/HOLD.
+
+Каждый candidate содержит ровно `cabinet_code dimensions_mm zones groups source`.
+Identity/HWD сверяются с fresh catalogue. Groups сохраняют source-bound ownership
+и assignment к exact zone IDs, не caller coordinates. Zone — прежние ledger поля
+плюс `origin_mm usable_mm mounting_plane_mm panel_material panel_thickness_mm
+barriers_compatible`. Одна DIN zone — одна рейка. Mandatory source capacities
+проверяются независимо от прямоугольника: DIN modules/mm, PANEL area; capacities
+не выводятся из H/W/D. Existing construction bounds, в частности КРН-36,
+не могут быть увеличены новым источником. Существующее отдельное mounting record
+требует reconciliation/HOLD. OTHER и explicit installation constraints пока HOLD.
+
+Проверяются bounds, plan-disjoint zones, depth, полный resource ledger и каждый
+instance ровно один раз. DIN row layout учитывает profile gaps; PANEL использует
+existing bounded exact rectangle packer и pair gaps. PANEL profile area обязана
+соответствовать полному прямоугольному H×W envelope. Для каждой пары footprints
+в разных зонах проверяются source pair gaps по итоговым положениям, включая пары
+DIN/PANEL. Нарушение даёт `HOLD_MIXED_CROSS_ZONE_PAIR_GAP_UNCERTAIN`, поскольку
+альтернативные межзонные размещения не исследованы. Доказанная невозможность
+размещения в заданной зоне даёт NO_FIT. Unsupported case и search exhaustion дают HOLD.
+
+Layout `cabinet_sizing.installed_layout.v0.1` содержит placements, reserves и
+полную inventory projection. Она строго сравнивается с final module source:
+products/profiles, instances, group ownership, capacities, source refs и cabinet
+binding. Base и source facts полностью пересчитываются при каждом verifier/recheck;
+сам layout marker не является доказательством. Bare v0.5 report по-прежнему не
+заменяет wrapper. Final module hashes не входят в source fact, поэтому нет
+циклического SHA binding. Три HA1 rechecks и no-overwrite не меняются.
+
+Прежние capacity-only/non-DIN guards остаются для прежнего пути. Mixed путь
+принимается только после полной base recomputation и совпадения ledger projection.
+Physical FIT/minimality/production suitability остаются NOT_VERIFIED; calculation
+PASS не выбирает/не утверждает SKU/корпус, не создаёт pricing mapping или downstream.
+Реальный Case и source admissions этим изменением не закрываются.
