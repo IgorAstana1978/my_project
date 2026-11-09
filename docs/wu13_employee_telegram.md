@@ -140,7 +140,8 @@ owner unchanged.
 
 Pictures, links and unsupported messages (Igor's decision 2026-11-09):
 employees may send a photo (the largest Telegram size is stored as
-`source.jpg`), a JPG/PNG picture as a file (`source.jpg` / `source.png`),
+`source.jpg`), a JPG/PNG/WEBP picture as a file (`source.jpg` / `.png` / `.webp`; Telegram
+previews `thumbnail`/`thumb` are ignored),
 text with links, albums and forwarded messages. For pictures the extractor
 gets only the fixed note `image.txt`; the operator reads the picture. Any
 other message from an employee (voice, video, archive, ...) is rejected as

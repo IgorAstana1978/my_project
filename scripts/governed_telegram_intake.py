@@ -30,8 +30,11 @@ SOURCE_TYPES = {
     ".jpg": ("image/jpeg", (b"\xff\xd8\xff",)),
     ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
     ".png": ("image/png", (b"\x89PNG\r\n\x1a\n",)),
+    ".webp": ("image/webp", (b"RIFF",)),
 }
-IMAGE_SUFFIXES = {".jpg", ".png"}
+IMAGE_SUFFIXES = {".jpg", ".png", ".webp"}
+# Telegram adds a small preview picture to many files; it is never downloaded.
+PREVIEW_FIELDS = {"thumbnail", "thumb"}
 PHOTO_FIELDS = {"file_id", "file_unique_id", "width", "height", "file_size"}
 
 
@@ -268,6 +271,10 @@ def parse_event(
                 "width",
                 "height",
             }
+            - PREVIEW_FIELDS
+            or not all(
+                isinstance(document[k], dict) for k in PREVIEW_FIELDS & set(document)
+            )
         ):
             raise TelegramHold("unsupported document input")
         for field in ("file_id", "file_unique_id", "file_name"):
@@ -298,7 +305,9 @@ def parse_event(
             document_bytes
         ):
             raise TelegramHold("document size mismatch")
-        if not document_bytes.startswith(SOURCE_TYPES[suffix][1]):
+        if not document_bytes.startswith(SOURCE_TYPES[suffix][1]) or (
+            suffix == ".webp" and document_bytes[8:12] != b"WEBP"
+        ):
             raise TelegramHold("document signature mismatch")
         suffix = ".jpg" if suffix == ".jpeg" else suffix
         name = f"source{suffix}"

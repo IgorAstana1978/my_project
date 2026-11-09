@@ -26,6 +26,7 @@ import wu11_telegram_transport as wire
 from governed_case_intake import _pairs
 from governed_telegram_intake import (
     MAX_BYTES,
+    PREVIEW_FIELDS,
     PROJECT_ROOT,
     SOURCE_TYPES,
     TelegramHold,
@@ -471,7 +472,8 @@ def verify_local(config: Config, journal: Journal) -> None:
         documents = [
             p
             for p in folder.iterdir()
-            if p.name in {"source.pdf", "source.xlsx", "source.jpg", "source.png"}
+            if p.name
+            in {"source.pdf", "source.xlsx", "source.jpg", "source.png", "source.webp"}
         ]
         body = documents[0].read_bytes() if documents else None
         result = receive_event(
@@ -674,6 +676,7 @@ def supported_document(value: Any) -> bool:
         isinstance(value, dict)
         and not set(value)
         - {"file_id", "file_unique_id", "file_name", "mime_type", "file_size"}
+        - PREVIEW_FIELDS
         and all(
             isinstance(value.get(k), str) and 0 < len(value[k]) <= 255
             for k in ("file_id", "file_unique_id", "file_name")
@@ -698,7 +701,7 @@ def attachment(message: dict[str, Any]) -> dict[str, Any] | None:
 
 UNSUPPORTED_TEXT = (
     "Бот не смог прочитать это сообщение. Принимаю текст, ссылки, фото и файлы "
-    "PDF, Excel, JPG, PNG. Голосовые, видео и архивы не принимаю — пришлите, "
+    "PDF, Excel, JPG, PNG, WEBP. Голосовые, видео и архивы не принимаю — пришлите, "
     "пожалуйста, текстом или файлом."
 )
 

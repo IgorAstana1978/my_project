@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 import wu13_employee_telegram as op  # type: ignore[import-not-found]
+from test_extract_mixed_source_composition import text_page, write_text_pdf
 from test_wu13_employee_reply import SendAPI, send_config
 from test_wu13_employee_telegram import config, dispositions, event, run
 
@@ -13,6 +14,7 @@ __all__ = ["config", "send_config"]
 
 JPEG = b"\xff\xd8\xff\xe0" + b"synthetic jpeg body" * 20
 PNG = b"\x89PNG\r\n\x1a\n" + b"synthetic png body" * 20
+WEBP = b"RIFF\x00\x01\x00\x00WEBPVP8 " + b"synthetic webp body" * 20
 
 
 def photo_event(update_id: int, body: bytes, api: SendAPI) -> dict[str, Any]:
@@ -61,24 +63,41 @@ def test_photo_is_accepted_as_largest_jpeg(
     op.verify_local(config, op.Journal(config))
 
 
-@pytest.mark.parametrize(("name", "body"), [("схема.png", PNG), ("фото.JPEG", JPEG)])
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [("схема.png", PNG), ("фото.JPEG", JPEG), ("i.webp", WEBP), ("р.pdf", None)],
+)
 def test_picture_file_is_accepted(
-    config: op.Config, monkeypatch: pytest.MonkeyPatch, name: str, body: bytes
+    config: op.Config,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    body: bytes | None,
 ) -> None:
+    if body is None:
+        path = tmp_path / "source.pdf"
+        write_text_pdf(path, [text_page()])
+        body = path.read_bytes()
     api = SendAPI(config, [])
     api.bodies[name] = body
     data = event(2)
     data["message"].pop("text")
+    preview = {"file_id": "t", "file_unique_id": "t", "width": 90, "height": 90}
     data["message"]["document"] = {
         "file_id": name,
         "file_unique_id": name,
         "file_name": name,
         "file_size": len(body),
+        # Telegram previews are kept as provenance and never downloaded
+        "thumbnail": preview,
+        "thumb": preview,
     }
+    data["message"]["forward_origin"] = {"type": "channel", "date": 1780000000}
     api.batches = [[data]]
     run(config, api, monkeypatch, "poll\nstop\n")
     assert dispositions(config)[2]["event"] == "ACCEPT"
-    suffix = ".png" if body == PNG else ".jpg"
+    assert [p["file_id"] for m, p in api.calls if m == "getFile"] == [name]
+    suffix = Path(name.lower()).suffix.replace("jpeg", "jpg")
     assert (folder(config, 2) / f"source{suffix}").read_bytes() == body
     op.verify_local(config, op.Journal(config))
 
