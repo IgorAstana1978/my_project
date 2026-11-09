@@ -523,6 +523,11 @@ def select(
     records = inventory["records"]
     require(bool(records), "HOLD_EMPTY_CATALOGUE")
     classes = evidence.envelopes(req["devices"])
+    # Resolve apparatus before reading project sources to preserve the legacy HOLD.
+    units_by_item = {
+        item["item_id"]: planning.prepare(item, req["devices"], classes)
+        for item in items
+    }
     installed = {iid: modules.installed_source(req["source_facts"][iid]) for iid in ids}
     mixed = any(value is not None for value in installed.values())
     if mixed:
@@ -547,7 +552,7 @@ def select(
         reserve_policy = policy
     selections = []
     for item in items:
-        units = planning.prepare(item, req["devices"], classes)
+        units = units_by_item[item["item_id"]]
         fact = planning.source_fact(
             case_id, item, req["source_facts"][item["item_id"]], installed=mixed
         )

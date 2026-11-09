@@ -347,6 +347,28 @@ def test_mixed_cannot_enlarge_known_construction_capacity(
         sizing.size_composition("CASE", [item], req)
 
 
+@pytest.mark.parametrize("quote", [False, True])
+@pytest.mark.parametrize("mapped", [False, True])
+def test_apparatus_mapping_precedes_source_discovery(
+    mixed: Any, quote: bool, mapped: bool
+) -> None:
+    item, req, _, _ = mixed
+    if not quote:
+        req["schema_version"] = "cabinet_sizing.catalogue_request.v0.4"
+        del req["quote_choices"]
+    # A drive-relative Windows path is non-absolute on both CI and Windows.
+    req["source_facts"]["I"]["path"] = "C:installed.json"
+    if not mapped:
+        item["components"][0]["component_code"] = "TEST-UNMAPPED"
+    expected = (
+        "HOLD_SOURCE_ABSOLUTE_PATH_REQUIRED"
+        if mapped
+        else "HOLD_UNMAPPED_OR_AMBIGUOUS_APPARATUS"
+    )
+    with pytest.raises(sizing.SizingHold, match=expected):
+        sizing.size_composition("CASE", [item], req)
+
+
 def test_unadmitted_installed_source_cannot_opt_in(
     monkeypatch: pytest.MonkeyPatch, mixed: Any
 ) -> None:
