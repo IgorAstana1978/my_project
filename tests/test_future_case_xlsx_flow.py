@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import build_future_case_document_source as flow  # type: ignore[import-not-found]
 import build_future_dinva_document as future  # type: ignore[import-not-found]
+import extract_mixed_source_composition_case as extraction  # type: ignore[import-not-found]
+import governed_rotated_extraction as cad  # type: ignore[import-not-found]
+import governed_telegram_intake as telegram  # type: ignore[import-not-found]
+import preflight_telegram_versioned_intake as handoff  # type: ignore[import-not-found]
 import pytest
+import wu13_employee_telegram as wu13  # type: ignore[import-not-found]
 from openpyxl import load_workbook  # type: ignore[import-untyped]
 from test_build_confirmed_composition_from_preliminary_bundle import (
     builder,
@@ -16,8 +22,13 @@ from test_build_confirmed_composition_from_preliminary_bundle import (
 from test_build_dinva_document_from_case import source_payload
 from test_cabinet_sizing import install_legacy_test_sources
 from test_dinva_v0_5_print_successor import print_successor
+from test_extract_mixed_source_composition import text_page, write_text_pdf
 from test_future_case_hardening import binding, price_chain
+from test_governed_schematic_extraction import CadPage, schematic
+from test_governed_versioned_extraction import evidence
 from test_render_dinva_classic_quote_invoice import canonical_file
+from test_wu13_employee_telegram import event
+from test_wu13_employee_telegram import snapshot as telegram_snapshot
 
 bridge = flow.bridge
 
@@ -53,7 +64,168 @@ def materialize(candidate: Any, output: Path, action: str, regenerate: Any) -> A
     return bridge.load(output, bridge.digest(output.read_bytes()))
 
 
-def composition_inputs(tmp_path: Path) -> dict[str, Any]:
+@pytest.fixture
+def telegram_handoff(tmp_path: Path) -> dict[str, Any]:
+    root = tmp_path / "cases"
+    receipts, reviews = root / "receipts", root / "reviews"
+    for directory in (receipts, reviews):
+        directory.mkdir(parents=True)
+    profile = snapshot(
+        tmp_path / "profile.json",
+        {
+            "profile": wu13.PROFILE,
+            "bot_id": 77777,
+            "bot_username": "synthetic_employee_bot",
+            "employees": [{"user_id": 123, "chat_id": 123}],
+            "receipt_root": str(receipts),
+            "case_root": str(reviews),
+        },
+    )
+    pdf = tmp_path / "synthetic.pdf"
+    write_text_pdf(pdf, [text_page(rating="63A")])
+    data = event()
+    request = "SYNTHETIC NEW_FUTURE: supply ЩС-85, 1 unit"
+    data["message"].pop("text")
+    data["message"]["caption"] = "SYNTHETIC unreviewed caption"
+    data["message"]["document"] = {
+        "file_id": "synthetic-pdf",
+        "file_unique_id": "synthetic-pdf",
+        "file_name": pdf.name,
+        "file_size": pdf.stat().st_size,
+    }
+    config = wu13.Config.read(profile.path)
+    body = pdf.read_bytes()
+    received = telegram.receive_event(
+        raw_update=telegram.encode(data),
+        policy=config.policy,
+        receipt_root=receipts,
+        case_root=reviews,
+        document_bytes=body,
+        expected_document_sha256=telegram.sha(body),
+    )
+    assert received.status == "REVIEW_REQUIRED", received.blocker
+    assert received.package is not None and received.case_id is not None
+    package = received.package
+    package_sha = telegram.sha(package.read_bytes())
+    working_case = root / received.case_id
+    shutil.copytree(reviews / received.case_id, working_case)
+    intake = snapshot(
+        tmp_path / "governed-intake.json",
+        {
+            "schema_version": "governed_case_extraction_intake.v0.1",
+            "case_id": received.case_id,
+            "extraction_version": "V001",
+            "project_pdf_path": str(package.with_name("source.pdf")),
+            "project_pdf_sha256": telegram.sha(body),
+            "base_manifest_sha256": telegram.sha(
+                (working_case / builder.MANIFEST_NAME).read_bytes()
+            ),
+            "client_request": {
+                **evidence(request),
+                "source_locator": f"{package}#sha256={package_sha}",
+            },
+            "human_decisions": [evidence("Synthetic scope review for ЩС-85")],
+            "requested_supply": [{"designation": "ЩС-85", "quantity": 1}],
+            "excluded_components": [],
+        },
+    )
+    return {
+        "profile": profile.path,
+        "package_path": package,
+        "package_sha256": package_sha,
+        "canonical_root": root,
+        "intake_json": intake.path,
+        "intake_sha256": intake.sha256,
+        "extraction_version": "V001",
+    }
+
+
+def test_telegram_handoff_reaches_versioned_review(
+    telegram_handoff: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = wu13.Config.read(telegram_handoff["profile"])
+    before = telegram_snapshot(config)
+    args = handoff.preflight(**telegram_handoff)
+    assert args == handoff.preflight(**telegram_handoff)
+    result = extract_telegram_review(args, monkeypatch)
+    assert result.status == "PASS", result.red_flags
+    assert (result.output_dir / builder.REVIEW_NAME).is_file()
+    assert not (result.output_dir / "confirmed").exists()
+    assert before == telegram_snapshot(config)
+    with pytest.raises(telegram.TelegramHold, match="already exists"):
+        handoff.preflight(**telegram_handoff)
+
+
+def extract_telegram_review(
+    args: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> Any:
+    diagram = schematic("ЩС-85", ["63А"], 0)
+    diagram.blocks = [
+        ("ВА88-32" if text == "ВА47-29" else text, x, y)
+        for text, x, y in diagram.blocks
+    ]
+    table = CadPage(
+        [
+            ("Позиция", 50, 740),
+            ("Наименование и техническая характеристика", 150, 740),
+            ("Тип, марка, обозначение", 350, 740),
+            ("Ед. измерения", 450, 740),
+            ("Кол.", 550, 740),
+            ("ЩС-85", 50, 700),
+            ("шт", 450, 700),
+            ("1", 550, 700),
+        ]
+    )
+    reader = type("Reader", (), {"is_encrypted": False, "pages": [diagram, table]})()
+    # Replace only the PDF reader for this synthetic file. Run the real
+    # governed extractor, validators and review-card builder.
+    with monkeypatch.context() as patch:
+        patch.setattr(cad.core, "PdfReader", lambda *_a, **_k: reader)
+        patch.setattr(cad, "PdfReader", lambda *_a, **_k: reader)
+        return extraction.run_versioned_case_extraction(**args)
+
+
+@pytest.mark.parametrize(
+    "fault", ["pin", "case", "source", "missing", "base", "locator", "same_root"]
+)
+def test_telegram_handoff_rejects_inconsistent_input(
+    telegram_handoff: dict[str, Any], fault: str
+) -> None:
+    args = telegram_handoff
+    package = args["package_path"]
+    intake = args["intake_json"]
+    config = wu13.Config.read(args["profile"])
+    case_id = package.parent.name
+    if fault == "pin":
+        args["package_sha256"] = "0" * 64
+    elif fault == "case":
+        data = json.loads(package.read_bytes())
+        data["case_id"] = "CASE-TELEGRAM-OTHER"
+        package.write_bytes(telegram.encode(data))
+        args["package_sha256"] = telegram.sha(package.read_bytes())
+    elif fault == "source":
+        path = package.with_name("source.pdf")
+        path.write_bytes(path.read_bytes()[:-1] + b" ")
+    elif fault == "missing":
+        (config.cases / case_id / builder.REVIEW_NAME).unlink()
+    elif fault == "base":
+        path = args["canonical_root"] / case_id / builder.DRAFT_NAME
+        path.write_bytes(path.read_bytes() + b" ")
+    elif fault == "locator":
+        data = json.loads(intake.read_bytes())
+        data["client_request"]["source_locator"] = "SYNTHETIC unrelated request"
+        intake.write_bytes(telegram.encode(data))
+        args["intake_sha256"] = telegram.sha(intake.read_bytes())
+    else:
+        args["canonical_root"] = config.cases
+    before = telegram_snapshot(config)
+    with pytest.raises(telegram.TelegramHold):
+        handoff.preflight(**args)
+    assert before == telegram_snapshot(config)
+    assert not (args["canonical_root"] / case_id / "extraction-V001").exists()
+
+
+def composition_inputs(tmp_path: Path, *, extracted: Any = None) -> dict[str, Any]:
     def equipment(draft: dict[str, Any]) -> None:
         draft["red_flags"] = ["Synthetic source warning."]
         draft["assumptions"] = ["Synthetic technical extraction assumption."]
@@ -64,17 +236,31 @@ def composition_inputs(tmp_path: Path) -> dict[str, Any]:
             install_type_guess="mccb_up_to_100a",
         )
 
-    root, draft = create_bundle(tmp_path, mutate_draft=equipment)
-    case = root / "CASE-TEST-001"
-    decisions = valid_batch_decisions(case, draft)
+    if extracted is None:
+        root, draft = create_bundle(tmp_path, mutate_draft=equipment)
+        case = composition_dir = root / "CASE-TEST-001"
+    else:
+        composition_dir = extracted.output_dir
+        case = composition_dir.parent
+        root = case.parent
+        draft = json.loads((composition_dir / builder.DRAFT_NAME).read_bytes())
+    item = draft["items"][0]
+    component_id = item["components"][0]["component_id"]
+    decisions = valid_batch_decisions(composition_dir, draft)
+    decisions["case_id"] = case.name
     decisions["items"][0]["manufacturer"] = "EKF"
-    decisions["items"][0]["quantity"] = 2
+    decisions["items"][0]["quantity"] = item["quantity_guess"]
+    if extracted is not None:
+        decisions["items"][0]["product_name"] = item["product_name_guess"]
     decisions["items"][0]["cabinet"].update(
         code="METAL-500X400X250-D22", label="500×400×250 IP31"
     )
     group = decisions["items"][0]["component_groups"][0]
     group.update(
-        final_description="EKF, Breaker 3P 63A", install_type="mccb_up_to_100a"
+        final_description=(
+            "EKF, ВА88-32 3P 63А" if extracted is not None else "EKF, Breaker 3P 63A"
+        ),
+        install_type="mccb_up_to_100a",
     )
     dp = snapshot(tmp_path / "composition-review.json", decisions)
     context = {
@@ -90,11 +276,11 @@ def composition_inputs(tmp_path: Path) -> dict[str, Any]:
             {
                 "circuit_id": "INPUT",
                 "conductor_mm2": 25,
-                "protection_component_ids": ["COMP-001"],
+                "protection_component_ids": [component_id],
             }
         ],
-        "roles": {"COMP-001": "POWER_BREAKER"},
-        "categories": {"COMP-001": "MCCB SHR 3P 16-63A"},
+        "roles": {component_id: "POWER_BREAKER"},
+        "categories": {component_id: "MCCB SHR 3P 16-63A"},
         "fuses": {},
         "interlocks": {"mechanical": False, "electrical": False},
         "overrides": {},
@@ -112,15 +298,29 @@ def composition_inputs(tmp_path: Path) -> dict[str, Any]:
             ],
         },
     )
-    return {"root": root, "case": case, "decisions": dp, "review": rp}
+    return {
+        "root": root,
+        "case": case,
+        "composition_dir": composition_dir,
+        "component_id": component_id,
+        "component_qty": group["total_quantity"],
+        "decisions": dp,
+        "review": rp,
+    }
 
 
 def build_composition(inputs: dict[str, Any], **kwargs: Any) -> Any:
+    version = (
+        None
+        if inputs["composition_dir"] == inputs["case"]
+        else inputs["composition_dir"].name.removeprefix("extraction-")
+    )
     return builder.run_builder(
         case_id=inputs["case"].name,
         confirmation_id="SYNTHETIC-COMPOSITION",
         approval_channel="synthetic_test_only",
         canonical_root=inputs["root"],
+        extraction_version=version,
         decisions_json=inputs["decisions"].path,
         future_review_json=inputs["review"].path,
         future_review_sha256=inputs["review"].sha256,
@@ -165,13 +365,17 @@ def test_synthetic_mccb_source_cabinet_and_panel_mounting_preserved(
 
 
 @pytest.fixture
-def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
+def chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> dict[str, Any]:
     monkeypatch.setenv("DINVA_RENDERER_TEST_MODE", "1")
-    inputs = composition_inputs(tmp_path)
-    result = build_composition(inputs, input_fn=lambda _: builder.APPROVAL_PHRASE)
-    assert result.status == "PASS", result.red_flags
-    cp = inputs["case"] / "confirmed" / builder.ARTIFACT_NAME
-    confirmed = bridge.load(cp, bridge.digest(cp.read_bytes()))
+    extracted = None
+    if getattr(request, "param", False):
+        package = request.getfixturevalue("telegram_handoff")
+        extracted = extract_telegram_review(handoff.preflight(**package), monkeypatch)
+        assert extracted.status == "PASS", extracted.red_flags
+    inputs = composition_inputs(tmp_path, extracted=extracted)
+    cp = inputs["composition_dir"] / "confirmed" / builder.ARTIFACT_NAME
     operator = snapshot(
         tmp_path / "operator.json",
         {
@@ -180,6 +384,24 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
             "completion_note": "Synthetic source review",
         },
     )
+    if extracted is not None:
+        blocked = build_composition(inputs, input_fn=lambda _: "")
+        assert blocked.status == "FAIL"
+        assert "exact technical composition approval phrase" in blocked.red_flags[0]
+        assert not cp.exists()
+        draft = inputs["composition_dir"] / builder.DRAFT_NAME
+        output = tmp_path / "forbidden-pricing-input.json"
+        blocked_price = flow.input_builder.build_price_calculator_input_draft(
+            draft, output
+        )
+        assert blocked_price.status == "FAIL" and not output.exists()
+    result = build_composition(
+        inputs,
+        approval_phrase="SYNTHETIC TEST ONLY",
+        input_fn=lambda _: "SYNTHETIC TEST ONLY",
+    )
+    assert result.status == "PASS", result.red_flags
+    confirmed = bridge.load(cp, bridge.digest(cp.read_bytes()))
 
     def make_input() -> Any:
         return flow.pricing_input(confirmed, operator)
@@ -187,7 +409,7 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
     completed = materialize(
         make_input(), tmp_path / "completed.json", "pricing-input", make_input
     )
-    price_chain(tmp_path, monkeypatch)
+    price_workbook = price_chain(tmp_path, monkeypatch)
     import future_case_hardening as rules  # type: ignore[import-not-found]
 
     monkeypatch.setattr(
@@ -197,7 +419,7 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
         **binding(tmp_path, "cabinet-cost.json", 12770),
         "role": "ENCLOSURE_COST",
     }
-    work = binding(tmp_path, "work-cost.json", 6000)
+    work = binding(tmp_path, "work-cost.json", 3000 * inputs["component_qty"])
     costs = snapshot(
         tmp_path / "costs.json",
         {
@@ -218,6 +440,14 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
         make_calc(), tmp_path / "calculation.json", "calculation", make_calc
     )
     p = calculated.payload()["items"][0]
+    if extracted is not None:
+        price = p["rule_application"]["price"]
+        assert price["workbook_sha256"] == telegram.sha(price_workbook.read_bytes())
+        assert price["rows"][0]["locator"] == "ЩР!B8"
+        assert price["rows"][0]["work_locator"] == "ЩР!C8"
+        assert price["K"] == "1.20"
+        assert price["work_kzt"] == "3000"
+        assert calculated.payload()["grand_total_kzt"] == 26292
     base = source_payload(tmp_path, inputs["case"].name, 1)
     base["metadata"]["amount_words"]["amount_kzt"] = calculated.payload()[
         "grand_total_kzt"
@@ -241,11 +471,11 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
                     "unit": "компл.",
                     "technical_display": [
                         {
-                            "component_id": "COMP-001",
+                            "component_id": inputs["component_id"],
                             "section": "",
                             "label": "EKF, Breaker 3P 63A",
                             "rating": "",
-                            "quantity": 2,
+                            "quantity": inputs["component_qty"],
                             "unit": "шт.",
                             "group_size": 1,
                             "source_locator": "/items/0/detailed_technical_composition",
@@ -298,6 +528,7 @@ def chain(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("chain", [False, True], indirect=True, ids=["base", "wu13"])
 def test_new_case_all_producers_to_validated_xlsx(
     chain: dict[str, Any], tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -354,7 +585,7 @@ def test_new_case_all_producers_to_validated_xlsx(
     workbook.close()
     assert plan.document["approval_provenance"]["client_send_authorized"] is False
     receipt = json.loads(
-        (chain["case"] / "confirmed" / builder.DECISIONS_NAME).read_bytes()
+        (chain["composition_dir"] / "confirmed" / builder.DECISIONS_NAME).read_bytes()
     )
     assert receipt["future_review"]["sha256"] == chain["review"].sha256
 
