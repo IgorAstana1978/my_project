@@ -258,3 +258,10 @@ CLI on each Python file sequentially, with the repository configuration.
 AutoCAD drawings (Igor 2026-11-10): a `.dwg` file up to 20 MB (signature `AC10`) is
 stored as `source.dwg` and handled like a picture: the extractor sees only the fixed
 note, and the operator converts it with `tools/claude/dwg_to_pdf.py` (DWG TrueView).
+
+Archives (Igor 2026-11-10): a `.rar` (signature `Rar!\x1a\x07`) or `.zip` (signature
+`PK\x03\x04`) file up to 20 MB is stored unopened as `source.rar` / `source.zip` and
+handled like a picture. The bot never unpacks it. The operator unpacks it with
+`tools/claude/unpack_archive.py` (7-Zip): password-protected archives, more than 300
+files or more than 500 MB unpacked are refused; only PDF, Excel, pictures and DWG are
+copied out, flat and renamed safely, into a fresh folder; nested archives are skipped.

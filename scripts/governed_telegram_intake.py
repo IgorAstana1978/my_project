@@ -34,8 +34,12 @@ SOURCE_TYPES = {
     # Igor 2026-11-10: AutoCAD drawings are accepted like pictures; the
     # operator converts them to PDF (tools/claude/dwg_to_pdf.py).
     ".dwg": ("application/acad", (b"AC10",)),
+    # Igor 2026-11-10: RAR and ZIP archives are stored as they are; the
+    # operator unpacks them (tools/claude/unpack_archive.py), never the bot.
+    ".rar": ("application/vnd.rar", (b"Rar!\x1a\x07",)),
+    ".zip": ("application/zip", (b"PK\x03\x04",)),
 }
-IMAGE_SUFFIXES = {".jpg", ".png", ".webp", ".dwg"}
+IMAGE_SUFFIXES = {".jpg", ".png", ".webp", ".dwg", ".rar", ".zip"}
 # Telegram adds a small preview picture to many files; it is never downloaded.
 PREVIEW_FIELDS = {"thumbnail", "thumb"}
 PHOTO_FIELDS = {"file_id", "file_unique_id", "width", "height", "file_size"}

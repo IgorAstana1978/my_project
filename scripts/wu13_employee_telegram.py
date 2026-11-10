@@ -480,6 +480,8 @@ def verify_local(config: Config, journal: Journal) -> None:
                 "source.png",
                 "source.webp",
                 "source.dwg",
+                "source.rar",
+                "source.zip",
             }
         ]
         body = documents[0].read_bytes() if documents else None
@@ -708,8 +710,9 @@ def attachment(message: dict[str, Any]) -> dict[str, Any] | None:
 
 UNSUPPORTED_TEXT = (
     "Бот не смог прочитать это сообщение. Принимаю текст, ссылки, фото и файлы "
-    "PDF, Excel, JPG, PNG, WEBP и чертежи Автокада DWG (до 20 МБ). Голосовые, "
-    "видео и архивы не принимаю — пришлите, пожалуйста, текстом или файлом."
+    "PDF, Excel, JPG, PNG, WEBP, чертежи Автокада DWG и архивы RAR/ZIP "
+    "(до 20 МБ). Голосовые и видео не принимаю — пришлите, пожалуйста, "
+    "текстом или файлом."
 )
 
 
