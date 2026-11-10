@@ -8,7 +8,9 @@ from typing import Any
 import build_future_case_document_source as flow  # type: ignore[import-not-found]
 import build_future_dinva_document as future  # type: ignore[import-not-found]
 import extract_mixed_source_composition_case as extraction  # type: ignore[import-not-found]
+import governed_case_intake as governed  # type: ignore[import-not-found]
 import governed_rotated_extraction as cad  # type: ignore[import-not-found]
+import governed_schematic_review as schematic_review  # type: ignore[import-not-found]
 import governed_telegram_intake as telegram  # type: ignore[import-not-found]
 import preflight_telegram_versioned_intake as handoff  # type: ignore[import-not-found]
 import pytest
@@ -154,6 +156,187 @@ def test_telegram_handoff_reaches_versioned_review(
     assert before == telegram_snapshot(config)
     with pytest.raises(telegram.TelegramHold, match="already exists"):
         handoff.preflight(**telegram_handoff)
+
+
+@pytest.fixture
+def schematic_handoff(telegram_handoff: dict[str, Any]) -> dict[str, Any]:
+    path = telegram_handoff["intake_json"]
+    intake = json.loads(path.read_bytes())
+    for field in (
+        "client_request",
+        "human_decisions",
+        "requested_supply",
+        "excluded_components",
+    ):
+        del intake[field]
+    intake.update(
+        schema_version=governed.SCHEMATIC_REVIEW_SCHEMA,
+        operator_package_locator=(
+            f"{telegram_handoff['package_path']}#sha256={telegram_handoff['package_sha256']}"
+        ),
+    )
+    telegram_handoff["intake_sha256"] = snapshot(path, intake).sha256
+    return telegram_handoff
+
+
+def test_schematic_only_publishes_hold_card_with_exact_pdf_facts(
+    schematic_handoff: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = wu13.Config.read(schematic_handoff["profile"])
+    original = telegram_snapshot(config)
+    args = handoff.preflight(**schematic_handoff)
+    pages = [
+        CadPage(
+            [
+                ("Принципиальная схема группового щита", 120, 60),
+                ("НЩР (ЩРн-36)", 205, 45),
+                ("17", 390, 68),
+                ("от ВРУ 3А", 117, 695),
+                ("QF0", 100, 650),
+                ("ВН-32", 100, 635),
+                ("3P 25А", 100, 620),
+                ("N", 97, 570),
+                ("PE", 95, 560),
+                ("QF1 АВДТ32 2P C16/30мА", 180, 530),
+                ("QF2", 220, 530),
+                ("ВА88-32", 240, 515),
+                ("3P 63А", 240, 500),
+                ("QF3 ВА88-32 3P 63А/неизвестно", 260, 530),
+                ("QF4 ВА88-32 3P 63А", 300, 530),
+                ("QF4 ВА88-32 3P 40А", 340, 530),
+            ]
+        ),
+        CadPage(
+            [
+                ("Принципиальная схема группового щита", 120, 60),
+                ("АВР", 205, 45),
+                ("17", 390, 68),
+                ("QF0 ВН-32 3P 25А", 100, 650),
+            ]
+        ),
+        CadPage(
+            [
+                ("Принципиальная схема группового щита", 120, 60),
+                ("17", 205, 45),
+                ("QF0 ВН-32 3P 25А", 100, 650),
+            ]
+        ),
+    ]
+    reader = type("Reader", (), {"is_encrypted": False, "pages": pages})()
+    monkeypatch.setattr(cad.core, "PdfReader", lambda *_a, **_k: reader)
+    monkeypatch.setattr(schematic_review, "PdfReader", lambda *_a, **_k: reader)
+    result = extraction.run_versioned_case_extraction(**args)
+    assert result.status == "PASS", result.red_flags
+    assert telegram_snapshot(config) == original
+    path = result.output_dir
+    manifest = json.loads((path / builder.MANIFEST_NAME).read_bytes())
+    assert manifest["scope_classification"] == []
+    assert "human_decision_applications" not in manifest
+    draft = json.loads((path / builder.DRAFT_NAME).read_bytes())
+    items = draft["items"]
+    assert [i["normalized_designation"] for i in items] == ["НЩР", "АВР"]
+    assert all(i["quantity_guess"] is None for i in items)
+    assert items[0]["cabinet_guess"]["label_guess"] == "ЩРн-36"
+    assert items[1]["cabinet_guess"]["label_guess"] is None
+    assert items[0]["cabinet_guess"]["code_guess"] is None
+    assert [c["rating_guess"] for c in items[0]["components"]] == ["25А", "C16/30мА"]
+    assert [p["raw_text"] for p in items[0]["components"][0]["provenance"]] == [
+        "QF0",
+        "ВН-32",
+        "3P 25А",
+    ]
+    assert {"от ВРУ 3А", "N", "PE"} <= {p["raw_text"] for p in items[0]["provenance"]}
+    card = (path / builder.REVIEW_NAME).read_text(encoding="utf-8")
+    assert governed.SCHEMATIC_REVIEW_HOLD in card
+    assert "unknown board designation" in card
+    assert (
+        "QF2 unresolved" in card
+        and "QF3 unresolved" in card
+        and "QF4 unresolved" in card
+    )
+    assert not (path / "confirmed").exists()
+    with pytest.raises(builder.WorkflowError, match="HOLD before HUMAN_APPROVAL_1"):
+        builder.load_snapshot(
+            builder.resolve_case_paths(
+                args["case_id"],
+                canonical_root=args["canonical_root"],
+                extraction_version="V001",
+            )
+        )
+    retry = extraction.run_versioned_case_extraction(**args)
+    assert retry.status == "FAIL" and "overwrite is forbidden" in retry.red_flags[0]
+
+
+def test_schematic_only_rejects_unpinned_or_changed_intake(
+    schematic_handoff: dict[str, Any],
+) -> None:
+    args = handoff.preflight(**schematic_handoff)
+    args.pop("intake_sha256")
+    result = extraction.run_versioned_case_extraction(**args)
+    assert "exact governed intake SHA-256" in result.red_flags[0]
+    args["intake_sha256"] = schematic_handoff["intake_sha256"]
+    intake = args["intake_json"]
+    intake.write_bytes(intake.read_bytes() + b"\n")
+    result = extraction.run_versioned_case_extraction(**args)
+    assert "exact governed intake SHA-256" in result.red_flags[0]
+    assert not result.output_dir.exists()
+
+
+def test_schematic_only_rejects_output_in_original_review_root(
+    schematic_handoff: dict[str, Any],
+) -> None:
+    args = handoff.preflight(**schematic_handoff)
+    config = wu13.Config.read(schematic_handoff["profile"])
+    original = telegram_snapshot(config)
+    args["canonical_root"] = config.cases
+    result = extraction.run_versioned_case_extraction(**args)
+    assert result.status == "FAIL" and "separate working Case" in result.red_flags[0]
+    assert telegram_snapshot(config) == original
+
+
+@pytest.mark.parametrize("fault", ["pdf", "base_card", "requested_supply"])
+def test_schematic_only_rechecks_source_and_rejects_supply_fields(
+    schematic_handoff: dict[str, Any], fault: str
+) -> None:
+    args = handoff.preflight(**schematic_handoff)
+    if fault == "pdf":
+        source = args["project_pdf"]
+        source.write_bytes(source.read_bytes() + b"\n")
+        message = "project PDF SHA-256 mismatch"
+    elif fault == "base_card":
+        case = args["canonical_root"] / args["case_id"]
+        (case / builder.REVIEW_NAME).write_text("changed card", encoding="utf-8")
+        message = "base file SHA-256 mismatch"
+    else:
+        path = args["intake_json"]
+        intake = json.loads(path.read_bytes())
+        intake["requested_supply"] = [{"designation": "НЩР", "quantity": 1}]
+        args["intake_sha256"] = snapshot(path, intake).sha256
+        message = "governed intake must have exact fields"
+    result = extraction.run_versioned_case_extraction(**args)
+    assert result.status == "FAIL" and message in result.red_flags[0]
+    assert not result.output_dir.exists()
+
+
+def test_schematic_only_refuses_cad_specification(
+    schematic_handoff: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = handoff.preflight(**schematic_handoff)
+    page = CadPage(
+        [
+            ("Позиция", 50, 740),
+            ("Наименование и техническая характеристика", 150, 740),
+            ("Тип, марка, обозначение", 350, 740),
+            ("Ед. измерения", 450, 740),
+            ("Кол.", 550, 740),
+        ]
+    )
+    reader = type("Reader", (), {"is_encrypted": False, "pages": [page]})()
+    monkeypatch.setattr(cad.core, "PdfReader", lambda *_a, **_k: reader)
+    monkeypatch.setattr(schematic_review, "PdfReader", lambda *_a, **_k: reader)
+    result = extraction.run_versioned_case_extraction(**args)
+    assert "cannot bypass a CAD specification" in result.red_flags[0]
+    assert not result.output_dir.exists()
 
 
 def extract_telegram_review(

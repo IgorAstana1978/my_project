@@ -18,6 +18,7 @@ from typing import Any, cast
 
 from governed_case_intake import GovernedIntake
 from governed_rotated_extraction import build_governed_rotated_artifacts
+from governed_schematic_review import build_schematic_review_artifacts
 from project_spec_extraction import (
     ExtractionArtifacts,
     ExtractionError,
@@ -542,9 +543,12 @@ def run_operator(
         if section_aware_intake is not None:
             artifacts = build_section_aware_artifacts(section_aware_intake)
         elif governed_intake is not None:
-            artifacts = build_governed_rotated_artifacts(
-                cast(Path, project_pdf), governed_intake
+            extractor = (
+                build_schematic_review_artifacts
+                if governed_intake.operator_package_locator is not None
+                else build_governed_rotated_artifacts
             )
+            artifacts = extractor(cast(Path, project_pdf), governed_intake)
         elif request_text is not None:
             artifacts = build_text_request_artifacts(request_text)
         else:

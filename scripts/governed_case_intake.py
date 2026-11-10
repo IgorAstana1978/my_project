@@ -13,6 +13,8 @@ from typing import Any
 
 HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 VERSION_RE = re.compile(r"V[0-9]{3}\Z")
+SCHEMATIC_REVIEW_SCHEMA = "governed_case_schematic_review_intake.v0.1"
+SCHEMATIC_REVIEW_HOLD = "HOLD before HUMAN_APPROVAL_1: schematic evidence only"
 
 
 class IntakeError(ValueError):
@@ -31,6 +33,7 @@ class GovernedIntake:
     base_manifest_sha256: str
     requested_supply: tuple[tuple[str, int], ...]
     excluded_components: tuple[tuple[str, int], ...]
+    operator_package_locator: str | None = None
 
 
 def _pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -98,23 +101,32 @@ def load_governed_intake(
         raise IntakeError(
             "governed intake cannot be read as strict UTF-8 JSON"
         ) from error
-    root = _object(
-        data,
-        "governed intake",
-        {
-            "schema_version",
-            "case_id",
-            "extraction_version",
-            "project_pdf_sha256",
-            "project_pdf_path",
-            "base_manifest_sha256",
+    common_fields = {
+        "schema_version",
+        "case_id",
+        "extraction_version",
+        "project_pdf_sha256",
+        "project_pdf_path",
+        "base_manifest_sha256",
+    }
+    schematic_review = (
+        isinstance(data, dict) and data.get("schema_version") == SCHEMATIC_REVIEW_SCHEMA
+    )
+    mode_fields = (
+        {"operator_package_locator"}
+        if schematic_review
+        else {
             "client_request",
             "human_decisions",
             "requested_supply",
             "excluded_components",
-        },
+        }
     )
-    if root["schema_version"] != "governed_case_extraction_intake.v0.1":
+    root = _object(data, "governed intake", common_fields | mode_fields)
+    if (
+        not schematic_review
+        and root["schema_version"] != "governed_case_extraction_intake.v0.1"
+    ):
         raise IntakeError("unsupported governed intake schema")
     if root["case_id"] != case_id or root["extraction_version"] != version:
         raise IntakeError("governed intake Case ID or version mismatch")
@@ -136,11 +148,98 @@ def load_governed_intake(
     if not isinstance(base_sha, str) or HASH_RE.fullmatch(base_sha) is None:
         raise IntakeError("base manifest SHA-256 is invalid")
     try:
-        actual_base_sha = hashlib.sha256(base_manifest.read_bytes()).hexdigest()
+        base_raw = base_manifest.read_bytes()
     except OSError as error:
         raise IntakeError("base manifest cannot be read") from error
-    if actual_base_sha != base_sha:
+    if hashlib.sha256(base_raw).hexdigest() != base_sha:
         raise IntakeError("base manifest SHA-256 mismatch")
+    if schematic_review:
+        locator = _text(root["operator_package_locator"], "operator_package_locator")
+        package_path, separator, package_sha = locator.rpartition("#sha256=")
+        package = Path(package_path)
+        if (
+            not separator
+            or not HASH_RE.fullmatch(package_sha)
+            or not package.is_absolute()
+            or package.name != "operator-package.json"
+            or package.parent.name != case_id
+            or project_pdf.resolve() != package.with_name("source.pdf")
+        ):
+            raise IntakeError(
+                "schematic review requires the exact WU13 PDF/package locator"
+            )
+        try:
+            if _unsafe_reparse(package):
+                raise IntakeError("schematic review package is unsafe")
+            package_raw = package.read_bytes()
+            review = json.loads(package_raw, object_pairs_hook=_pairs)
+            sources = json.loads(base_raw, object_pairs_hook=_pairs)["sources"]
+            original_review = Path(
+                _text(review["review_directory"], "review_directory")
+            )
+            if not original_review.is_absolute() or original_review.name != case_id:
+                raise IntakeError("schematic review directory binding mismatch")
+            working_case = base_manifest.parent.resolve()
+            if any(
+                working_case.is_relative_to(root) or root.is_relative_to(working_case)
+                for root in (
+                    original_review.parent.resolve(),
+                    package.parent.parent.resolve(),
+                )
+            ):
+                raise IntakeError("schematic review requires a separate working Case")
+            review_files = _object(
+                review["review_files"],
+                "schematic review files",
+                set(VERSIONED_FILES) - {"governed-intake.json"},
+            )
+            if (
+                hashlib.sha256(package_raw).hexdigest() != package_sha
+                or review["schema_version"] != "telegram_operator_review.v0.1"
+                or review["case_id"] != case_id
+                or review["status"] != "REVIEW_REQUIRED"
+                or review["stop_before"] != "HUMAN_APPROVAL_1"
+                or review["composition_confirmed"] is not False
+                or review["sending_authorized"] is not False
+                or review_files.get(base_manifest.name) != base_sha
+                or len(sources) != 1
+                or sources[0]["file_name"] != project_pdf.name
+                or sources[0]["source_type"] != "pdf"
+                or sources[0]["sha256"] != pdf_sha
+            ):
+                raise IntakeError("schematic review source/package binding mismatch")
+            for name, digest in review_files.items():
+                path = base_manifest.with_name(name)
+                if (
+                    _unsafe_reparse(path)
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != digest
+                ):
+                    raise IntakeError(
+                        f"schematic review base file SHA-256 mismatch: {name}"
+                    )
+        except (
+            OSError,
+            KeyError,
+            TypeError,
+            IndexError,
+            json.JSONDecodeError,
+        ) as error:
+            raise IntakeError(
+                "schematic review source/package is unavailable or invalid"
+            ) from error
+        return GovernedIntake(
+            path=source,
+            raw=raw,
+            sha256=hashlib.sha256(raw).hexdigest(),
+            case_id=case_id,
+            version=version,
+            project_pdf_sha256=pdf_sha,
+            project_pdf_path=project_pdf.resolve(),
+            base_manifest_sha256=base_sha,
+            requested_supply=(),
+            excluded_components=(),
+            operator_package_locator=locator,
+        )
     client_text = _evidence(root["client_request"], "client_request")
     decisions = root["human_decisions"]
     if not isinstance(decisions, list) or not decisions:
@@ -348,6 +447,7 @@ def verify_versioned_extraction(
     version: str,
     base_manifest: Path,
     owned_staging: Path | None = None,
+    allow_schematic_review: bool = False,
 ) -> str:
     """Verify immutable intake/binding and optional canonical confirmed output."""
     if VERSION_RE.fullmatch(version) is None:
@@ -436,6 +536,13 @@ def verify_versioned_extraction(
     )
     if manifest.get("governed_intake_sha256") != intake.sha256:
         raise IntakeError("manifest/governed intake SHA-256 mismatch")
+    schematic_review = intake.operator_package_locator is not None
+    if schematic_review and (not allow_schematic_review or "confirmed" in entries):
+        raise IntakeError(SCHEMATIC_REVIEW_HOLD)
+    if not schematic_review and manifest.get("review_mode") == SCHEMATIC_REVIEW_SCHEMA:
+        raise IntakeError(
+            "schematic review manifest requires a schematic review intake"
+        )
     classifications = manifest.get("scope_classification")
     if not isinstance(classifications, list):
         raise IntakeError("scope classification is missing")
@@ -481,14 +588,43 @@ def verify_versioned_extraction(
         (directory / "preliminary-composition-draft.json").read_text(encoding="utf-8")
     )
     items = draft.get("items") if isinstance(draft, dict) else None
-    if not isinstance(items, list) or len(items) != len(intake.requested_supply):
-        raise IntakeError("draft item set differs from governed requested supply")
-    if [
-        (item.get("product_name_guess"), item.get("quantity_guess"))
-        for item in items
-        if isinstance(item, dict)
-    ] != list(intake.requested_supply):
-        raise IntakeError("draft items differ from governed requested supply")
+    if schematic_review:
+        if (
+            classifications
+            or manifest.get("review_mode") != SCHEMATIC_REVIEW_SCHEMA
+            or manifest.get("review_status") != SCHEMATIC_REVIEW_HOLD
+            or not isinstance(items, list)
+            or any(
+                not isinstance(item, dict) or item.get("quantity_guess") is not None
+                for item in items
+            )
+            or SCHEMATIC_REVIEW_HOLD not in draft.get("red_flags", [])
+            or draft.get("extraction_summary", {}).get("ready_for_preliminary_workflow")
+            is not False
+            or draft.get("source", {}).get("raw_input_sha256")
+            != files["source-bundle-manifest.txt"]
+        ):
+            raise IntakeError("invalid schematic review HOLD or source binding")
+        from validate_preliminary_composition_draft import (
+            validate_preliminary_composition_draft,
+        )
+
+        if (
+            validate_preliminary_composition_draft(
+                directory / "preliminary-composition-draft.json"
+            ).status
+            != "PASS"
+        ):
+            raise IntakeError("schematic review preliminary safety validation failed")
+    else:
+        if not isinstance(items, list) or len(items) != len(intake.requested_supply):
+            raise IntakeError("draft item set differs from governed requested supply")
+        if [
+            (item.get("product_name_guess"), item.get("quantity_guess"))
+            for item in items
+            if isinstance(item, dict)
+        ] != list(intake.requested_supply):
+            raise IntakeError("draft items differ from governed requested supply")
     if "confirmed" in entries:
         _verify_confirmed_output(directory, case_id, files)
     if {entry.name for entry in directory.iterdir()} != expected_entries:

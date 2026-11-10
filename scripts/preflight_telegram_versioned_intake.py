@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import build_confirmed_composition_from_preliminary_bundle as composition
 from extract_mixed_source_composition_case import MANIFEST_NAME
@@ -35,6 +35,7 @@ class VersionedArguments(TypedDict):
     extraction_version: str
     intake_json: Path
     canonical_root: Path
+    intake_sha256: NotRequired[str]
 
 
 def preflight(
@@ -133,12 +134,14 @@ def preflight(
             project_pdf=pdf,
             base_manifest=paths.case_dir / MANIFEST_NAME,
         )
-        request = load(intake.raw)["client_request"]
+        locator = intake.operator_package_locator
+        if locator is None:
+            locator = load(intake.raw)["client_request"]["source_locator"]
         if (
             intake.sha256 != intake_sha256
             or intake.project_pdf_sha256 != receipt["document"]["sha256"]
             or intake.base_manifest_sha256 != hashes[MANIFEST_NAME]
-            or request["source_locator"] != f"{package_path}#sha256={package_sha256}"
+            or locator != f"{package_path}#sha256={package_sha256}"
         ):
             raise TelegramHold("governed intake does not bind the WU13 package")
         config.unchanged()
@@ -159,13 +162,16 @@ def preflight(
         RecursionError,
     ) as err:
         raise TelegramHold("malformed or unavailable governed intake evidence") from err
-    return {
+    arguments: VersionedArguments = {
         "case_id": case_id,
         "project_pdf": pdf,
         "extraction_version": extraction_version,
         "intake_json": intake_json,
         "canonical_root": canonical_root,
     }
+    if intake.operator_package_locator is not None:
+        arguments["intake_sha256"] = intake_sha256
+    return arguments
 
 
 def main() -> int:

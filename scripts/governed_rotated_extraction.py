@@ -603,6 +603,32 @@ def visible_pdf_blocks(
     return result
 
 
+def read_visible_page(page: Any) -> tuple[str, list[PdfBlock]]:
+    raw_blocks: list[tuple[str, float, float]] = []
+
+    def capture(
+        text: str,
+        cm: Sequence[float],
+        tm: Sequence[float],
+        font: Mapping[str, Any] | None,
+        font_size: float,
+    ) -> None:
+        collect_visible_pdf_block(
+            raw_blocks,
+            text,
+            cm,
+            tm,
+            font,
+            font_size,
+            rotation=page.rotation,
+            width=float(page.mediabox.width),
+            height=float(page.mediabox.height),
+        )
+
+    page_text = page.extract_text(visitor_text=capture) or ""
+    return page_text, visible_pdf_blocks(raw_blocks)
+
+
 def build_governed_rotated_artifacts(
     project_pdf: Path,
     intake: GovernedIntake,
@@ -623,31 +649,7 @@ def build_governed_rotated_artifacts(
     for page_number, page in enumerate(reader.pages, start=1):
         if page.rotation not in {90, 270}:
             continue
-        raw_blocks: list[tuple[str, float, float]] = []
-
-        def capture(
-            text: str,
-            cm: Sequence[float],
-            tm: Sequence[float],
-            font: Mapping[str, Any] | None,
-            font_size: float,
-            current_blocks: list[tuple[str, float, float]] = raw_blocks,
-            current_page: Any = page,
-        ) -> None:
-            collect_visible_pdf_block(
-                current_blocks,
-                text,
-                cm,
-                tm,
-                font,
-                font_size,
-                rotation=current_page.rotation,
-                width=float(current_page.mediabox.width),
-                height=float(current_page.mediabox.height),
-            )
-
-        page_text = page.extract_text(visitor_text=capture) or ""
-        blocks = visible_pdf_blocks(raw_blocks)
+        page_text, blocks = read_visible_page(page)
         page_boards = schematic_boards(project_pdf.name, page_number, blocks, page_text)
         if page_boards:
             schematic_page_counts[page_number] = sum(

@@ -128,6 +128,30 @@ requirement, is preserved in the bound intake; it is not an installed or
 priced component.
 No price or quote permission is created.
 
+## WU13 schematic-only review
+
+Use this explicit mode for a WU13 PDF with readable schematic labels and no CAD
+specification. The intake schema is `governed_case_schematic_review_intake.v0.1`.
+It has exactly seven fields: `schema_version`, `case_id`, `extraction_version`,
+`project_pdf_path`, `project_pdf_sha256`, `base_manifest_sha256`, and
+`operator_package_locator`. The locator is the absolute `operator-package.json`
+path followed by `#sha256=<package SHA-256>`. Use Igor's reviewed intake and pin
+its SHA-256 separately. Scope, quantities, exclusions, and decisions cannot be
+entered in this mode.
+
+Use a separate working Case containing byte-for-byte copies of the three WU13
+review files. Run `preflight_telegram_versioned_intake.py` with `--profile`,
+`--package-path`, `--package-sha256`, `--canonical-root`, `--intake-json`,
+`--intake-sha256`, and `--extraction-version`. After separate approval for the
+exact inputs and absent target, run the versioned Case command above with
+`--intake-sha256` from the preflight. For the CLI the working Case is directly
+under the canonical `production_ai_cases` root.
+
+The card records unambiguous text annotations with page and block locators.
+An apparatus row represents one labelled QF on the schematic. Cabinet supply
+quantities and full wiring remain unresolved. The output carries `HOLD before
+HUMAN_APPROVAL_1`; the confirmed-composition workflow rejects this version.
+
 ## Checked publication
 
 The wrapper calls the existing Phase 2.32 extractor directly, without a

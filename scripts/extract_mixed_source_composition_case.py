@@ -80,9 +80,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--spec-workbook", type=Path)
     parser.add_argument("--extraction-version")
     parser.add_argument("--intake-json", type=Path)
+    parser.add_argument("--intake-sha256")
     args = parser.parse_args(argv)
     if (args.extraction_version is None) != (args.intake_json is None):
         parser.error("--extraction-version and --intake-json are required together")
+    if args.intake_sha256 is not None and args.intake_json is None:
+        parser.error("--intake-sha256 requires --intake-json")
     if args.extraction_version is not None and (
         args.project_pdf is None or args.spec_workbook is not None
     ):
@@ -405,6 +408,7 @@ def run_versioned_case_extraction(
     project_pdf: Path,
     extraction_version: str,
     intake_json: Path,
+    intake_sha256: str | None = None,
     canonical_root: Path | None = None,
     operator_fn: Callable[..., Any] = run_operator,
     rename_fn: RenameFunction = os.rename,
@@ -448,6 +452,14 @@ def run_versioned_case_extraction(
             project_pdf=pdf,
             base_manifest=case_dir / MANIFEST_NAME,
         )
+        if (
+            intake_sha256 is not None or intake.operator_package_locator is not None
+        ) and intake.sha256 != intake_sha256:
+            raise CaseExtractionError(
+                "exact governed intake SHA-256 is required or differs"
+            )
+        if intake.operator_package_locator is not None:
+            result.source_mode = "pdf_only_schematic_review"
         target = case_dir / f"extraction-{extraction_version}"
         result.output_dir = target
         if path_entry_exists(target):
@@ -494,6 +506,7 @@ def run_versioned_case_extraction(
             version=extraction_version,
             base_manifest=case_dir / MANIFEST_NAME,
             owned_staging=owner,
+            allow_schematic_review=True,
         )
         if any(
             hashlib.sha256(path.read_bytes()).hexdigest() != original_hashes[path.name]
@@ -515,6 +528,7 @@ def run_versioned_case_extraction(
             case_id=case_id,
             version=extraction_version,
             base_manifest=case_dir / MANIFEST_NAME,
+            allow_schematic_review=True,
         )
         cleanup_error = remove_empty_owner_after_publication(owner)
         if cleanup_error is not None:
@@ -589,6 +603,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_pdf=args.project_pdf,
             extraction_version=args.extraction_version,
             intake_json=args.intake_json,
+            intake_sha256=args.intake_sha256,
         )
     print(format_report(result))
     return 0 if result.status == "PASS" else 1
