@@ -31,8 +31,11 @@ SOURCE_TYPES = {
     ".jpeg": ("image/jpeg", (b"\xff\xd8\xff",)),
     ".png": ("image/png", (b"\x89PNG\r\n\x1a\n",)),
     ".webp": ("image/webp", (b"RIFF",)),
+    # Igor 2026-11-10: AutoCAD drawings are accepted like pictures; the
+    # operator converts them to PDF (tools/claude/dwg_to_pdf.py).
+    ".dwg": ("application/acad", (b"AC10",)),
 }
-IMAGE_SUFFIXES = {".jpg", ".png", ".webp"}
+IMAGE_SUFFIXES = {".jpg", ".png", ".webp", ".dwg"}
 # Telegram adds a small preview picture to many files; it is never downloaded.
 PREVIEW_FIELDS = {"thumbnail", "thumb"}
 PHOTO_FIELDS = {"file_id", "file_unique_id", "width", "height", "file_size"}

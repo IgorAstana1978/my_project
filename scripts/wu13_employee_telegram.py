@@ -473,7 +473,14 @@ def verify_local(config: Config, journal: Journal) -> None:
             p
             for p in folder.iterdir()
             if p.name
-            in {"source.pdf", "source.xlsx", "source.jpg", "source.png", "source.webp"}
+            in {
+                "source.pdf",
+                "source.xlsx",
+                "source.jpg",
+                "source.png",
+                "source.webp",
+                "source.dwg",
+            }
         ]
         body = documents[0].read_bytes() if documents else None
         result = receive_event(
@@ -701,8 +708,8 @@ def attachment(message: dict[str, Any]) -> dict[str, Any] | None:
 
 UNSUPPORTED_TEXT = (
     "Бот не смог прочитать это сообщение. Принимаю текст, ссылки, фото и файлы "
-    "PDF, Excel, JPG, PNG, WEBP. Голосовые, видео и архивы не принимаю — пришлите, "
-    "пожалуйста, текстом или файлом."
+    "PDF, Excel, JPG, PNG, WEBP и чертежи Автокада DWG (до 20 МБ). Голосовые, "
+    "видео и архивы не принимаю — пришлите, пожалуйста, текстом или файлом."
 )
 
 

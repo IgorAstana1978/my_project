@@ -14,6 +14,7 @@ __all__ = ["config", "send_config"]
 
 JPEG = b"\xff\xd8\xff\xe0" + b"synthetic jpeg body" * 20
 PNG = b"\x89PNG\r\n\x1a\n" + b"synthetic png body" * 20
+DWG = b"AC1032" + b" synthetic drawing body" * 20
 WEBP = b"RIFF\x00\x01\x00\x00WEBPVP8 " + b"synthetic webp body" * 20
 
 
@@ -65,7 +66,13 @@ def test_photo_is_accepted_as_largest_jpeg(
 
 @pytest.mark.parametrize(
     ("name", "body"),
-    [("схема.png", PNG), ("фото.JPEG", JPEG), ("i.webp", WEBP), ("р.pdf", None)],
+    [
+        ("схема.png", PNG),
+        ("фото.JPEG", JPEG),
+        ("i.webp", WEBP),
+        ("ч.dwg", DWG),
+        ("р.pdf", None),
+    ],
 )
 def test_picture_file_is_accepted(
     config: op.Config,

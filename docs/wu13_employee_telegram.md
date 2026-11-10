@@ -254,3 +254,7 @@ ability to create synthetic junctions for existing WU11 tests. Sandbox denial
 of that operation is an environment failure, not an adapter PASS. If Black's
 worker pool is unavailable in the sandbox, invoke the same `black --check`
 CLI on each Python file sequentially, with the repository configuration.
+
+AutoCAD drawings (Igor 2026-11-10): a `.dwg` file up to 20 MB (signature `AC10`) is
+stored as `source.dwg` and handled like a picture: the extractor sees only the fixed
+note, and the operator converts it with `tools/claude/dwg_to_pdf.py` (DWG TrueView).
