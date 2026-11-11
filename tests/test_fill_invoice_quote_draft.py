@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -257,8 +258,10 @@ def run_script(
             str(output),
         ],
         cwd=PROJECT_ROOT,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
