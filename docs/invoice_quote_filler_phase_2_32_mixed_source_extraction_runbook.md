@@ -152,6 +152,54 @@ An apparatus row represents one labelled QF on the schematic. Cabinet supply
 quantities and full wiring remain unresolved. The output carries `HOLD before
 HUMAN_APPROVAL_1`; the confirmed-composition workflow rejects this version.
 
+### Read-only packet for HUMAN_APPROVAL_1 review
+
+For a bound schematic extraction with complete QF coverage, use the separate
+opt-in command after Igor reviews the exact decisions and their sources.
+Obtain the review input SHA-256 from that review record independently of the file.
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\prepare_schematic_ha1_review.py `
+  --case-id "<CASE-ID>" --extraction-version V001 `
+  --review-json "<ABSOLUTE-REVIEW-INPUT.json>" --review-sha256 "<IGOR-PINNED-SHA256>"
+```
+
+The exact `schematic_ha1_review_input.v0.1` fields are:
+
+- `schema_version`, `case_id`, `extraction_version` and `version_binding_sha256`
+  for the canonical extraction.
+- `igor_decision_locator` for Igor's separate decision covering the pinned input.
+- `composition_decisions`, `sizing_request` and `module_evidence`, each with
+  `path` (absolute) and `sha256`. Use the existing `igor_composition_decisions_input.v0.1`
+  to cover every extracted QF, acknowledge its warnings and record the exact
+  board quantities, brand and supply boundary. Preserve the board designations.
+  The `cabinet_sizing.catalogue_request.v0.5` must explicitly choose a cabinet for
+  each board and supply admitted mixed installed geometry with connections.
+  Supply a separate admitted `module_accounting.evidence.v0.1` for the same
+  inventory and resulting cabinet calculation.
+- `boards`, keyed by the exact item IDs. Each contains `qf_products` (component
+  ID to installed product ID), `accessories` (accessory instance ID to product
+  ID, explicitly `{}` only for a reviewed inventory with no accessories), and
+  `connections` and `technical_requirements` (each with `path`, `sha256` and
+  `locator` in the admitted module evidence's raw sources). The source records
+  must identify the reviewed wiring and applicable electrical requirements.
+
+The CLI verifies the canonical WU13 handoff, PDF and five extraction files,
+then recomputes the sizing, module ledger, installation constraints and exact
+inventory coverage. QF provenance and the admitted inventory are in the packet.
+Electrical requirements are passed to the reviewer with exact source references.
+Electrical applicability must be established from those sources during review.
+The v0.5 calculation retains `NOT_VERIFIED` for Physical FIT and minimality.
+
+Success prints a `schematic_ha1_review_packet.v0.1` JSON packet to stdout with
+`HUMAN_REVIEW_REQUIRED` and `human_approval_1_granted = false`. It labels
+decision provenance `OPERATOR_SUPPLIED_UNVERIFIED` and electrical applicability
+`NOT_VERIFIED`. The SHA binds the input bytes. The operator must verify the
+decision locator against Igor's direct decision record. HOLD produces
+no packet. The command reads the Case and stops before the HA1 prompt. The
+ordinary confirmed builder also rejects using the unversioned WU13 parent of a
+schematic extraction to proceed to the HA1 prompt.
+
 ## Checked publication
 
 The wrapper calls the existing Phase 2.32 extractor directly, without a

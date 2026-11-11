@@ -14,6 +14,7 @@ from typing import Any
 
 import project_spec_extraction as core
 from governed_case_intake import (
+    SCHEMATIC_OPEN_GAPS,
     SCHEMATIC_REVIEW_HOLD,
     SCHEMATIC_REVIEW_SCHEMA,
     GovernedIntake,
@@ -260,11 +261,7 @@ def build_schematic_review_artifacts(
         raise core.ExtractionError(
             "schematic review PDF is unavailable or its SHA changed"
         )
-    gaps = [
-        SCHEMATIC_REVIEW_HOLD,
-        "GAP: CAD specification, cabinet quantities and supply boundary are unresolved",
-        "GAP: equipment inventory, enclosure dimensions and connections require review",
-    ]
+    gaps = list(SCHEMATIC_OPEN_GAPS)
     candidates = []
     reader = PdfReader(io.BytesIO(pdf_raw), strict=False)
     for page, pdf_page in zip(source["pages"], reader.pages, strict=True):

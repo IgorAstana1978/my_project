@@ -21,7 +21,13 @@ from typing import Any, cast
 
 import cabinet_sizing as sizing
 import cabinet_sizing_module_accounting as modules
-from governed_case_intake import VERSION_RE, IntakeError, verify_versioned_extraction
+from governed_case_intake import (
+    SCHEMATIC_REVIEW_HOLD,
+    SCHEMATIC_REVIEW_SCHEMA,
+    VERSION_RE,
+    IntakeError,
+    verify_versioned_extraction,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -283,7 +289,9 @@ def resolve_case_paths(
     )
 
 
-def validate_case_directory(paths: CasePaths) -> None:
+def validate_case_directory(
+    paths: CasePaths, *, schematic_binding_sha256: str | None = None
+) -> None:
     if not paths.root.is_dir():
         raise WorkflowError("canonical production_ai_cases root does not exist")
     if paths.case_dir.parent != paths.root or paths.case_dir.name != paths.case_id:
@@ -316,16 +324,47 @@ def validate_case_directory(paths: CasePaths) -> None:
                 "version binding is outside the canonical input directory"
             )
         try:
-            verify_versioned_extraction(
+            verified_sha256 = verify_versioned_extraction(
                 input_dir,
                 case_id=paths.case_id,
                 version=paths.extraction_version,
                 base_manifest=paths.case_dir / MANIFEST_NAME,
+                allow_schematic_review=schematic_binding_sha256 is not None,
             )
         except IntakeError as error:
             raise WorkflowError(
                 f"versioned extraction binding failed: {error}"
             ) from error
+        if (
+            schematic_binding_sha256 is not None
+            and verified_sha256 != schematic_binding_sha256
+        ):
+            raise WorkflowError("schematic extraction binding SHA-256 mismatch")
+    elif schematic_binding_sha256 is not None:
+        raise WorkflowError("schematic review requires a versioned Case")
+    else:
+        for child in paths.case_dir.glob("extraction-V[0-9][0-9][0-9]"):
+            # The legacy parent is the WU13 handoff when a schematic child exists.
+            intake_path, manifest_path = (
+                child / "governed-intake.json",
+                child / MANIFEST_NAME,
+            )
+            if any(
+                path.is_symlink() or path.is_junction()
+                for path in (child, intake_path, manifest_path)
+            ):
+                raise WorkflowError("unsafe versioned Case input")
+            intake = parse_strict_json_object(
+                read_exact_bytes(intake_path), "versioned intake"
+            )
+            manifest = parse_strict_json_object(
+                read_exact_bytes(manifest_path), "versioned manifest"
+            )
+            if (
+                intake.get("schema_version") == SCHEMATIC_REVIEW_SCHEMA
+                or manifest.get("review_mode") == SCHEMATIC_REVIEW_SCHEMA
+            ):
+                raise WorkflowError(SCHEMATIC_REVIEW_HOLD)
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -500,8 +539,10 @@ def check_review_card_consistency(
             )
 
 
-def load_snapshot(paths: CasePaths) -> InputSnapshot:
-    validate_case_directory(paths)
+def load_snapshot(
+    paths: CasePaths, *, schematic_binding_sha256: str | None = None
+) -> InputSnapshot:
+    validate_case_directory(paths, schematic_binding_sha256=schematic_binding_sha256)
     manifest_bytes = read_exact_bytes(paths.manifest)
     draft_bytes = read_exact_bytes(paths.draft)
     review_bytes = read_exact_bytes(paths.review)
@@ -514,9 +555,17 @@ def load_snapshot(paths: CasePaths) -> InputSnapshot:
         REVIEW_NAME: sha256_bytes(review_bytes),
     }
     if paths.binding_path is not None:
-        hashes["version-binding.json"] = sha256_bytes(
-            read_exact_bytes(paths.binding_path)
-        )
+        binding_bytes = read_exact_bytes(paths.binding_path)
+        if schematic_binding_sha256 is not None:
+            if sha256_bytes(binding_bytes) != schematic_binding_sha256:
+                raise WorkflowError("schematic binding SHA-256 drift")
+            hashes["governed-intake.json"] = sha256_bytes(
+                read_exact_bytes(paths.binding_path.with_name("governed-intake.json"))
+            )
+            binding = parse_strict_json_object(binding_bytes, "version binding")
+            if hashes != binding["files"]:
+                raise WorkflowError("schematic input SHA-256 drift")
+        hashes["version-binding.json"] = sha256_bytes(binding_bytes)
     return InputSnapshot(
         paths=paths,
         manifest_bytes=manifest_bytes,
@@ -2273,6 +2322,20 @@ def ensure_ready_for_approval(state: CompositionState) -> None:
         )
 
 
+def prepare_cabinet_sizing(
+    case_id: str, state: CompositionState, request: Any, module_source: Any
+) -> None:
+    base = modules.size_base(case_id, state.items, request, module_source)
+    for item, selection in zip(state.items, base["items"], strict=True):
+        item["cabinet"] = copy.deepcopy(selection["cabinet"])
+    state.cabinet_sizing = modules.build_sizing_report(
+        case_id, state.items, base, module_source
+    )
+    sizing.verify_before_ha1(
+        state.cabinet_sizing, state.items, expected_case_id=case_id
+    )
+
+
 def render_final_summary(
     *,
     case_id: str,
@@ -2957,23 +3020,11 @@ def run_builder(
             )
         if review is not None:
             attach_future_review(review, snapshot, state)
-        state.cabinet_sizing = modules.size_base(
-            case_id, state.items, sizing_request, module_source
-        )
-        for item, selection in zip(
-            state.items, state.cabinet_sizing["items"], strict=True
-        ):
-            item["cabinet"] = copy.deepcopy(selection["cabinet"])
-        state.cabinet_sizing = modules.build_sizing_report(
-            case_id, state.items, state.cabinet_sizing, module_source
-        )
-        sizing.verify_before_ha1(
-            state.cabinet_sizing,
-            state.items,
-            expected_case_id=case_id,
-        )
+        prepare_cabinet_sizing(case_id, state, sizing_request, module_source)
 
         def recheck_sizing() -> None:
+            if paths.extraction_version is None:
+                validate_case_directory(paths)
             if cabinet_sizing_json is not None:
                 if (
                     sizing.load_request(cabinet_sizing_json, cabinet_sizing_sha256)

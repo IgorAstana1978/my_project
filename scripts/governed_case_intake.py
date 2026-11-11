@@ -15,6 +15,11 @@ HASH_RE = re.compile(r"[0-9a-f]{64}\Z")
 VERSION_RE = re.compile(r"V[0-9]{3}\Z")
 SCHEMATIC_REVIEW_SCHEMA = "governed_case_schematic_review_intake.v0.1"
 SCHEMATIC_REVIEW_HOLD = "HOLD before HUMAN_APPROVAL_1: schematic evidence only"
+SCHEMATIC_OPEN_GAPS = (
+    SCHEMATIC_REVIEW_HOLD,
+    "GAP: CAD specification, cabinet quantities and supply boundary are unresolved",
+    "GAP: equipment inventory, enclosure dimensions and connections require review",
+)
 
 
 class IntakeError(ValueError):
