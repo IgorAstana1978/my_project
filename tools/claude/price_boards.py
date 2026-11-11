@@ -37,11 +37,18 @@ base = resolve_active_price_baseline(
 main = load_workbook(base.path, read_only=True, data_only=False)
 
 
+# Igor's prices that the pinned baseline does not have yet; the same values
+# are in Documents\claude_reference\Таблица цен Claude (верная-2 + решения
+# Игоря).xlsx, sheet «Изменения Игоря».
+OVERRIDES = {"CT <=800/5": D(7500)}  # Igor 2026-11-10
+
+
 def row(cat):
     sheet, r, label = f.CATEGORIES[cat]
     ws = main[sheet]
     assert " ".join(str(ws.cell(r, 1).value).split()) == label, cat
-    return D(str(ws.cell(r, 2).value)), D(str(ws.cell(r, 3).value)), f"{sheet}!{r}"
+    price = OVERRIDES.get(cat, D(str(ws.cell(r, 2).value)))
+    return price, D(str(ws.cell(r, 3).value)), f"{sheet}!{r}"
 
 
 boards = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
