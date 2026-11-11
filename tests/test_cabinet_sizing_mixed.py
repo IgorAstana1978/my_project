@@ -243,6 +243,216 @@ def test_full_mixed_pass_and_exact_ledger(
         )
 
 
+def pin_non_modular_fact(
+    path: Path, fact: Any, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, str]:
+    path.write_text(json.dumps(fact), encoding="utf-8")
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    monkeypatch.setattr(
+        evidence,
+        "AUTHORIZED",
+        evidence.AUTHORIZED
+        | {(modules.NON_MODULAR_DIN_ROLE, str(path.resolve()), sha)},
+    )
+    return {"path": str(path), "sha256": sha}
+
+
+@pytest.fixture
+def mixed_with_stops(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mixed: Any
+) -> Any:
+    _, _, data, _ = mixed
+    raw = tmp_path / "TEST-YXD10-figure-1.txt"
+    raw.write_text(
+        "TEST transcription: IEK YXD10.001.1 edition 1, figure 1. "
+        "Mechanical TH35 rail end stop. Overall H/W/D 45 x 12 x 19.5 mm. "
+        "No nominal DIN module rating is specified.",
+        encoding="utf-8",
+    )
+    raw_ref = {"path": str(raw), "sha256": hashlib.sha256(raw.read_bytes()).hexdigest()}
+    data["raw_sources"].append(raw_ref)
+    ref = dict(raw_ref, locator="TEST transcription of YXD10.001.1 edition 1, figure 1")
+    identity = dict(manufacturer="IEK", sku="YXD10", revision="YXD10.001.1 ed. 1")
+    fact = dict(
+        schema_version=modules.NON_MODULAR_DIN_SCHEMA,
+        classification="NON_MODULAR_DIN_ACCESSORY",
+        nominal_modules=None,
+        width_mm=12,
+        source=ref,
+        **identity,
+    )
+    proof_path = tmp_path / "TEST-non-modular-din-fact.json"
+    shape = dict(nominal_modules=None, width_mm=12, area_mm2=None)
+    data["products"].append(
+        dict(
+            id="STOP",
+            mounting="DIN",
+            source=ref,
+            non_modular_din=pin_non_modular_fact(proof_path, fact, monkeypatch),
+            **identity,
+            **shape,
+        )
+    )
+    data["profiles"].append(
+        dict(
+            id="STOP",
+            product_ids=["STOP"],
+            left_gap_mm=1,
+            right_gap_mm=1,
+            allowed_zones=["DIN"],
+            source=ref,
+            **shape,
+        )
+    )
+    data["geometry"].append(
+        dict(
+            profile_id="STOP",
+            dimensions_mm=[45, 12, "19.5"],
+            clearance_mm=[0, 0, 1, 1],
+            pair_gap_mm=[0, 0],
+            extent_scope="INSTALLED_ASSEMBLY_WITH_CONNECTIONS",
+            source=ref,
+        )
+    )
+    for instance_id in ("STOP-LEFT", "STOP-RIGHT"):
+        data["instances"].append(
+            dict(id=instance_id, component_id=None, unit=1, product_id="STOP")
+        )
+        group = dict(
+            id=instance_id, profile_id="STOP", instance_ids=[instance_id], zone_id="DIN"
+        )
+        groups = data["candidates"][0]["groups"]
+        if instance_id == "STOP-LEFT":
+            groups.insert(0, group)
+        else:
+            groups.append(group)
+    return mixed, fact, proof_path
+
+
+@pytest.mark.parametrize("drift", ["ledger", "proof", "manufacturer_source"])
+def test_non_modular_din_stops_count_width_and_gaps_and_recompute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mixed_with_stops: Any,
+    drift: str,
+) -> None:
+    (item, req, data, path), fact, proof_path = mixed_with_stops
+    req["source_facts"]["I"] = pin_fact(path, data, monkeypatch)
+    base, binding, _ = module_source(tmp_path, monkeypatch, item, req)
+    report = modules.build_sizing_report("CASE", [item], base, binding)
+    sizing.verify_before_ha1(report, [item], expected_case_id="CASE")
+    board = report["module_ledger"]["items"][0]
+    din = board["zones"][0]
+    assert (din["occupied_modules"], din["occupied_mm"]) == ("3", "88.75")
+    assert board["reserve"]["DIN"]["measures"]["mm"]["free_percent"] == "11.25"
+    stops = [f for f in din["footprints"] if f["profile_id"] == "STOP"]
+    assert [f["footprint"] for f in stops] == [
+        {"nominal_modules": None, "width_mm": "12", "area_mm2": None}
+    ] * 2
+    placements = base["items"][0]["layout"]["placements"]
+    assert [
+        (p["group_id"], p["origin_mm"][1])
+        for p in placements
+        if p["group_id"].startswith("STOP-")
+    ] == [
+        ("STOP-LEFT", "1"),
+        ("STOP-RIGHT", "75.75"),
+    ]
+    if drift == "ledger":
+        stops[0]["footprint"]["nominal_modules"] = "0"
+        reason = "HOLD_MODULE_LEDGER_DRIFT"
+    else:
+        target = proof_path if drift == "proof" else Path(fact["source"]["path"])
+        target.write_bytes(target.read_bytes() + b" ")
+        reason = "HOLD_SOURCE_SHA_DRIFT"
+    with pytest.raises(sizing.SizingHold, match=reason):
+        sizing.verify_before_ha1(report, [item], expected_case_id="CASE")
+
+
+@pytest.mark.parametrize(
+    "fault,reason",
+    [
+        ("missing_proof", "HOLD_MODULE_NOMINAL_MODULES_REQUIRED"),
+        ("unadmitted", "HOLD_UNAPPROVED_REUSABLE_SOURCE:non_modular_din_accessory"),
+        ("wrong_class", "HOLD_MODULE_NON_MODULAR_DIN_FACT"),
+        ("wrong_sku", "HOLD_MODULE_NON_MODULAR_DIN_FACT"),
+        ("unbound_source", "HOLD_MODULE_UNBOUND_RAW_SOURCE"),
+        ("missing_width", "HOLD_MODULE_WIDTH_REQUIRED"),
+        ("width_mismatch", "HOLD_MODULE_NON_MODULAR_DIN_WIDTH"),
+        ("zero_nominal", "HOLD_MODULE_NON_MODULAR_DIN_NOMINAL"),
+        ("core", "HOLD_MODULE_NON_MODULAR_DIN_CORE_COMPONENT"),
+        ("module_bypass", "HOLD_MODULE_NON_MODULAR_DIN_SHARED_PROFILE"),
+        ("ordinary_accessory", "HOLD_MODULE_NOMINAL_MODULES_REQUIRED"),
+        ("unassigned", "HOLD_MODULE_UNASSIGNED_INSTANCE"),
+        ("profile_width", "HOLD_MODULE_SINGLE_PRODUCT_FOOTPRINT"),
+        ("geometry_width", "HOLD_MIXED_RESOURCE_GEOMETRY_CONFLICT"),
+        ("overflow", "HOLD_MODULE_ROW_OVERFLOW"),
+        ("module_overflow", "HOLD_MODULE_ROW_OVERFLOW"),
+        ("reserve", "HOLD_MODULE_RESERVE:DIN:mm"),
+        ("module_reserve", "HOLD_MODULE_RESERVE:DIN:modules"),
+    ],
+)
+def test_non_modular_din_stops_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, mixed_with_stops: Any, fault: str, reason: str
+) -> None:
+    (item, req, data, path), fact, proof_path = mixed_with_stops
+    product = data["products"][-1]
+    profile = data["profiles"][-1]
+    candidate = data["candidates"][0]
+    if fault == "missing_proof":
+        del product["non_modular_din"]
+    elif fault == "unadmitted":
+        admission = (
+            modules.NON_MODULAR_DIN_ROLE,
+            str(proof_path.resolve()),
+            product["non_modular_din"]["sha256"],
+        )
+        monkeypatch.setattr(
+            evidence,
+            "AUTHORIZED",
+            evidence.AUTHORIZED - {admission},
+        )
+    elif fault in {"wrong_class", "wrong_sku", "unbound_source"}:
+        if fault == "wrong_class":
+            fact["classification"] = "MODULAR_DIN_ACCESSORY"
+        elif fault == "wrong_sku":
+            fact["sku"] = "TEST-DIFFERENT-SKU"
+        else:
+            fact["source"] = dict(fact["source"], sha256="0" * 64)
+        product["non_modular_din"] = pin_non_modular_fact(proof_path, fact, monkeypatch)
+    elif fault == "missing_width":
+        product["width_mm"] = None
+    elif fault == "width_mismatch":
+        product["width_mm"] = 10
+    elif fault == "zero_nominal":
+        product["nominal_modules"] = 0
+    elif fault == "core":
+        data["instances"][0]["product_id"] = "STOP"
+    elif fault == "module_bypass":
+        profile["product_ids"].append(data["products"][0]["id"])
+    elif fault == "ordinary_accessory":
+        ordinary = dict(data["products"][0], id="ORDINARY", sku="TEST-MODULAR-AUX")
+        ordinary["nominal_modules"] = None
+        data["products"].append(ordinary)
+    elif fault == "unassigned":
+        candidate["groups"].pop()
+    elif fault == "profile_width":
+        profile["width_mm"] = 10
+    elif fault == "geometry_width":
+        data["geometry"][-1]["dimensions_mm"][1] = 10
+    elif fault == "overflow":
+        candidate["zones"][0]["capacity_mm"] = 88
+    elif fault == "module_overflow":
+        candidate["zones"][0]["capacity_modules"] = 2
+    elif fault == "reserve":
+        candidate["zones"][0]["capacity_mm"] = 98
+    elif fault == "module_reserve":
+        candidate["zones"][0]["capacity_modules"] = 3
+    req["source_facts"]["I"] = pin_fact(path, data, monkeypatch)
+    with pytest.raises(sizing.SizingHold, match=reason):
+        sizing.size_composition("CASE", [item], req)
+
+
 @pytest.mark.parametrize(
     "fault,reason",
     [

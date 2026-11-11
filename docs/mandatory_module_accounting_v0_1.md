@@ -89,13 +89,36 @@ RCBO, RCD, РН-47, реле, контакторы, выключатели на�
 новые виды проходят одинаковую проверку exact источника. Пустые/UNKNOWN/TBD
 SKU/revision недопустимы.
 
-Для DIN обязательны положительные source-proven `nominal_modules` и `width_mm`;
-`area_mm2=null`. Дробные значения допускаются только как явный факт источника,
+Для модульных DIN-изделий обязательны положительные source-proven
+`nominal_modules` и `width_mm`, а `area_mm2=null`. Дробные значения допускаются
+только как явный факт источника,
 с существующими Decimal/range/precision limits. Boolean, NaN и infinity
 недопустимы. Для PANEL/OTHER modules и width строго null, а area положительна.
 Здесь null означает **неприменимый DIN measure**, не неизвестный DIN footprint.
-Для DIN-аксессуара без доказанных необходимых полей получается HOLD, а не 0.
 Положительное module count не выводится из полюсов, install_type или ceil(width/18).
+
+Немодульный механический DIN-аксессуар с положительной подтверждённой
+`width_mm` и `nominal_modules=null` требует дополнительного поля продукта
+`non_modular_din` с exact `{path, sha256}`. Это отдельный факт, допускаемый
+существующим реестром для роли `non_modular_din_accessory`:
+
+```text
+schema_version = module_accounting.non_modular_din_accessory.v0.1
+classification = NON_MODULAR_DIN_ACCESSORY
+manufacturer sku revision nominal_modules width_mm source
+```
+
+Факт связывает exact производителя, SKU, ревизию, ширину и отсутствие
+номинала с источником производителя из `raw_sources` инвентаря. Пропуск поля
+или пустое значение номинала сами по себе сохраняют HOLD. Для YXD10
+ориентиром служит рис. 1 IEK YXD10.001.1, изд. 1, с полным размером 12 мм
+вдоль TH35. Реальных допусков этот контракт не добавляет.
+
+Аксессуар допускается только с `component_id=null` и в отдельном singleton
+profile. Footprint сохраняет `nominal_modules=null`, а вся ширина и оба зазора
+учитываются в миллиметровых capacity и reserve. Сумма номинальных модулей
+включает только изделия с номиналом. Проверки обеих мер, ownership,
+источников, полного installed inventory и recomputation сохраняются.
 
 ### Совместно устанавливаемые footprint profiles
 

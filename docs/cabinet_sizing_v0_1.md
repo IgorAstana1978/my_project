@@ -380,8 +380,10 @@ source fact с exact apparatus hash, Case/item, source dimensions/install/histor
 `ALL_INSTALLED_EQUIPMENT_AND_DIN_ACCESSORIES` scope; project facts перечитываются
 до расчёта и обязаны совпадать с module-backed reserve policy.
 
-Products/profiles/instances сохраняют прежние строгие module поля, включая
-положительные source-stated DIN nominal_modules. Никакой mm-only семантики нет.
+Products/profiles/instances используют строгий module contract. Модульные
+DIN-изделия требуют положительного source-stated `nominal_modules`.
+Допущенный немодульный DIN-аксессуар учитывается по ширине и зазорам в
+singleton profile согласно [контракту ledger](mandatory_module_accounting_v0_1.md).
 Geometry record: `profile_id dimensions_mm clearance_mm pair_gap_mm extent_scope
 source`. H/W/D и gaps числовые, source ref строго path/SHA/locator из raw_sources.
 Требуется reviewed technical extent `INSTALLED_ASSEMBLY_WITH_CONNECTIONS`;

@@ -17,6 +17,8 @@ EVIDENCE_SCHEMA = "module_accounting.evidence.v0.1"
 SCHEMA = "module_accounting.ledger.v0.1"
 REPORT_SCHEMA = "cabinet_sizing.module.v0.1"
 ROLE = "module_accounting"
+NON_MODULAR_DIN_ROLE = "non_modular_din_accessory"
+NON_MODULAR_DIN_SCHEMA = "module_accounting.non_modular_din_accessory.v0.1"
 SCOPE = "ALL_INSTALLED_EQUIPMENT_AND_DIN_ACCESSORIES"
 KINDS = {"DIN", "PANEL", "OTHER"}
 HASH = re.compile(r"[0-9a-f]{64}\Z")
@@ -57,10 +59,15 @@ def collection(value: Any, *, empty: bool = False) -> list[Any]:
     return value
 
 
-def unique(records: Any, fields: str, key: str) -> dict[str, dict[str, Any]]:
+def unique(
+    records: Any, fields: str, key: str, *, optional_field: str = ""
+) -> dict[str, dict[str, Any]]:
     result = {}
     for raw in collection(records):
-        record = obj(raw, fields)
+        allowed = fields
+        if optional_field and isinstance(raw, dict) and optional_field in raw:
+            allowed = f"{fields} {optional_field}"
+        record = obj(raw, allowed)
         identity = string(record[key])
         sizing.require(identity not in result, "HOLD_MODULE_DUPLICATE_ID")
         result[identity] = record
@@ -103,16 +110,19 @@ def binding(path: Path | None, sha256: str | None) -> dict[str, str] | None:
     return {"path": str(path), "sha256": sha256}
 
 
-def footprint(record: Any, kind: str) -> dict[str, Any]:
+def footprint(
+    record: Any, kind: str, *, non_modular_din: bool = False
+) -> dict[str, Any]:
     if kind == "DIN":
         sizing.require(record["area_mm2"] is None, "HOLD_MODULE_DIN_AREA")
-        sizing.require(
-            record["nominal_modules"] is not None,
-            "HOLD_MODULE_NOMINAL_MODULES_REQUIRED",
-        )
+        nominal = record["nominal_modules"]
+        if non_modular_din:
+            sizing.require(nominal is None, "HOLD_MODULE_NON_MODULAR_DIN_NOMINAL")
+        else:
+            sizing.require(nominal is not None, "HOLD_MODULE_NOMINAL_MODULES_REQUIRED")
         sizing.require(record["width_mm"] is not None, "HOLD_MODULE_WIDTH_REQUIRED")
         return {
-            "nominal_modules": number(record["nominal_modules"]),
+            "nominal_modules": None if non_modular_din else number(nominal),
             "width_mm": number(record["width_mm"]),
             "area_mm2": None,
         }
@@ -197,9 +207,12 @@ def inventory_ledger(
         "id manufacturer sku revision mounting nominal_modules "
         "width_mm area_mm2 source",
         "id",
+        optional_field="non_modular_din",
     )
+    product_shapes = {}
     product_identities = set()
-    for product in products.values():
+    non_modular_products = set()
+    for pid, product in products.items():
         for field in ("manufacturer", "sku", "revision"):
             value = string(product[field])
             sizing.require(
@@ -214,7 +227,33 @@ def inventory_ledger(
         )
         product_identities.add(identity)
         sizing.require(product["mounting"] in KINDS, "HOLD_MODULE_MOUNTING")
-        footprint(product, product["mounting"])
+        non_modular = "non_modular_din" in product
+        shape = footprint(product, product["mounting"], non_modular_din=non_modular)
+        if non_modular:
+            sizing.require(
+                product["mounting"] == "DIN", "HOLD_MODULE_NON_MODULAR_DIN_MOUNTING"
+            )
+            fact = evidence.read(product["non_modular_din"], NON_MODULAR_DIN_ROLE)
+            obj(
+                fact,
+                "schema_version classification manufacturer sku revision "
+                "nominal_modules width_mm source",
+            )
+            sizing.require(
+                fact["schema_version"] == NON_MODULAR_DIN_SCHEMA
+                and fact["classification"] == "NON_MODULAR_DIN_ACCESSORY"
+                and fact["nominal_modules"] is None
+                and tuple(fact[k] for k in ("manufacturer", "sku", "revision"))
+                == identity,
+                "HOLD_MODULE_NON_MODULAR_DIN_FACT",
+            )
+            provenance(fact["source"])
+            sizing.require(
+                number(fact["width_mm"]) == shape["width_mm"],
+                "HOLD_MODULE_NON_MODULAR_DIN_WIDTH",
+            )
+            non_modular_products.add(pid)
+        product_shapes[pid] = shape
         provenance(product["source"])
     profiles = unique(
         data["profiles"],
@@ -222,6 +261,7 @@ def inventory_ledger(
         "allowed_zones source",
         "id",
     )
+    profile_shapes = {}
     for profile in profiles.values():
         ids = collection(profile["product_ids"])
         sizing.require(
@@ -231,12 +271,18 @@ def inventory_ledger(
         kinds = {products[pid]["mounting"] for pid in ids}
         sizing.require(len(kinds) == 1, "HOLD_MODULE_MIXED_MOUNTING_FOOTPRINT")
         kind = next(iter(kinds))
-        shape = footprint(profile, kind)
+        non_modular = not non_modular_products.isdisjoint(ids)
+        sizing.require(
+            not non_modular or len(ids) == 1,
+            "HOLD_MODULE_NON_MODULAR_DIN_SHARED_PROFILE",
+        )
+        shape = footprint(profile, kind, non_modular_din=non_modular)
         if len(ids) == 1:
             sizing.require(
-                shape == footprint(products[ids[0]], kind),
+                shape == product_shapes[ids[0]],
                 "HOLD_MODULE_SINGLE_PRODUCT_FOOTPRINT",
             )
+        profile_shapes[profile["id"]] = shape
         left = number(profile["left_gap_mm"], zero=True)
         right = number(profile["right_gap_mm"], zero=True)
         sizing.require(kind == "DIN" or left + right == 0, "HOLD_MODULE_NON_DIN_GAP")
@@ -339,6 +385,10 @@ def inventory_ledger(
             if instance["component_id"] is None:
                 sizing.require(instance["unit"] == 1, "HOLD_MODULE_ACCESSORY_INSTANCE")
             else:
+                sizing.require(
+                    instance["product_id"] not in non_modular_products,
+                    "HOLD_MODULE_NON_MODULAR_DIN_CORE_COMPONENT",
+                )
                 pair = (string(instance["component_id"]), instance["unit"])
                 sizing.require(
                     pair in expected and pair not in covered,
@@ -354,7 +404,7 @@ def inventory_ledger(
                         "HOLD_MODULE_BASE_MOUNTING_CONFLICT",
                     )
                     dims = evidence.dimensions(original["dimensions_mm"])
-                    exact = footprint(product, product["mounting"])
+                    exact = product_shapes[instance["product_id"]]
                     sizing.require(
                         (
                             exact["width_mm"] <= dims[1]
@@ -390,7 +440,7 @@ def inventory_ledger(
                 and zones[zid]["kind"] == kind,
                 "HOLD_MODULE_PLACEMENT_CONSTRAINT",
             )
-            shape = footprint(profile, kind)
+            shape = profile_shapes[group["profile_id"]]
             target = totals[zid]
             if kind == "DIN":
                 width = (
@@ -398,7 +448,8 @@ def inventory_ledger(
                     + number(profile["left_gap_mm"], zero=True)
                     + number(profile["right_gap_mm"], zero=True)
                 )
-                target["occupied_modules"] += shape["nominal_modules"]
+                if shape["nominal_modules"] is not None:
+                    target["occupied_modules"] += shape["nominal_modules"]
                 target["occupied_mm"] += width
             else:
                 target["occupied_area_mm2"] += shape["area_mm2"]
